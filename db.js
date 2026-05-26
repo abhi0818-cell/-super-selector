@@ -39,7 +39,13 @@ export function createDb(cfg = {}) {
     if (client) return client;
     const sb = (typeof window !== 'undefined' ? window.supabase : null);
     if (!sb || typeof sb.createClient !== 'function') throw new SupabaseSdkMissingError();
-    client = sb.createClient(url, anonKey, { auth: { persistSession: true } });
+    client = sb.createClient(url, anonKey, {
+      auth: {
+        persistSession: true,
+        detectSessionInUrl: true,
+        flowType: 'implicit',   // no PKCE code-exchange fetch — token arrives in URL hash
+      }
+    });
     return client;
   }
 
