@@ -1024,7 +1024,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=79';
+    import { createDb, NotConfiguredError } from './db.js?v=80';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -4955,13 +4955,11 @@ p31,Sample Player,MI,bat,9.0,false
      */
     async function finalizeOneMatch(m, apiKey) {
       const matchLabel = `M${m.match_number ?? '?'} ${m.home_team_id || '—'} vs ${m.away_team_id || '—'}`;
+      // Always fetch fresh from CricAPI — a cached version may be mid-match
+      // (e.g. from the live poller stopping early). Overwrite with final result.
       let json;
-      if (m.cachedScorecard) {
-        json = await state.db.getMatchScorecard(m.id);
-      } else {
-        json = await fetchJsonWithFallback(k => `match_scorecard?apikey=${encodeURIComponent(k)}&id=${encodeURIComponent(m.external_id)}`);
-        await state.db.saveMatchScorecard(m.id, json);
-      }
+      json = await fetchJsonWithFallback(k => `match_scorecard?apikey=${encodeURIComponent(k)}&id=${encodeURIComponent(m.external_id)}`);
+      await state.db.saveMatchScorecard(m.id, json);
       const players = fromCricAPI(json, [], m.format);
       if (!players.length) throw new Error('CricAPI returned no player rows');
       const rows = []; let unmatched = 0;
