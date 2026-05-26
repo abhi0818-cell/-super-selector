@@ -1041,7 +1041,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=84';
+    import { createDb, NotConfiguredError } from './db.js?v=85';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -1441,6 +1441,9 @@ p31,Sample Player,MI,bat,9.0,false
         seasonPhase    : 'regular', // 'pre_season' | 'regular' | 'playoff'
       },
     };
+
+    // Expose state for console debugging
+    window._appState = state;
 
     // Classify a CricAPI match status into a lifecycle stage.
     // Returns: 'completed' | 'live' | 'upcoming' | 'unknown'
