@@ -841,6 +841,92 @@ export function createDb(cfg = {}) {
     },
 
     /** All XI scores indexed by match_id — for the matches admin column. */
+    // ─── Profiles ─────────────────────────────────────────────────────────
+
+    /** Upsert the signed-in user's display name + email into profiles. */
+    async upsertProfile({ userId, displayName, email }) {
+      const sb = await getClient();
+      const { error } = await sb.from('profiles').upsert({
+        id: userId, display_name: displayName, email, updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' });
+      if (error) throw error;
+    },
+
+    /** Returns a map of userId → display_name (falls back to email). */
+    async getProfiles() {
+      const sb = await getClient();
+      const { data, error } = await sb.from('profiles').select('id, display_name, email');
+      if (error) throw error;
+      const map = {};
+      (data || []).forEach(p => { map[p.id] = p.display_name || p.email || p.id.slice(0, 8); });
+      return map;
+    },
+
+    // ─── Leaderboard ──────────────────────────────────────────────────────
+
+    /**
+     * Daily leaderboard for a specific match.
+     * Returns array sorted by points desc:
+     *   [{ userId, teamName, totalPoints }]
+     */
+    async getLeaderboardDaily(matchId) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('user_teams')
+        .select('id, name, user_id, user_team_match_scores(total_points)')
+        .eq('match_id', matchId)
+        .is('squad_id', null);
+      if (error) throw error;
+      return (data || [])
+        .map(t => ({
+          userId      : t.user_id,
+          teamName    : t.name,
+          totalPoints : Number(t.user_team_match_scores?.[0]?.total_points ?? 0),
+        }))
+        .sort((a, b) => b.totalPoints - a.totalPoints);
+    },
+
+    /**
+     * Season Long leaderboard for a contest.
+     * Returns array sorted by cumulative points desc:
+     *   [{ userId, squadName, totalPoints, matchCount }]
+     */
+    async getLeaderboardSL(contestId) {
+      const sb = await getClient();
+      // Get all SL teams (squad_id IS NOT NULL) for squads in this contest
+      const { data: squads, error: sErr } = await sb
+        .from('user_squads')
+        .select('id, name, user_id')
+        .eq('contest_id', contestId);
+      if (sErr) throw sErr;
+      if (!squads?.length) return [];
+
+      const squadIds = squads.map(s => s.id);
+      const { data: teams, error: tErr } = await sb
+        .from('user_teams')
+        .select('id, squad_id, user_team_match_scores(total_points)')
+        .in('squad_id', squadIds);
+      if (tErr) throw tErr;
+
+      // Sum points per squad
+      const pointsBySquad = {};
+      const countBySquad  = {};
+      (teams || []).forEach(t => {
+        const pts = Number(t.user_team_match_scores?.[0]?.total_points ?? 0);
+        pointsBySquad[t.squad_id] = (pointsBySquad[t.squad_id] || 0) + pts;
+        if (pts > 0) countBySquad[t.squad_id] = (countBySquad[t.squad_id] || 0) + 1;
+      });
+
+      return squads
+        .map(s => ({
+          userId      : s.user_id,
+          squadName   : s.name,
+          totalPoints : pointsBySquad[s.id] || 0,
+          matchCount  : countBySquad[s.id]  || 0,
+        }))
+        .sort((a, b) => b.totalPoints - a.totalPoints);
+    },
+
     async getAllUserTeamMatchScores() {
       const sb = await getClient();
       const { data, error } = await sb
