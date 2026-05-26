@@ -467,6 +467,41 @@
     .sl-season-table tfoot td { font-weight: 700; border-top: 1px solid var(--border); background: var(--panel-2); }
     .sl-empty { padding: 28px 16px; text-align: center; color: var(--muted); font-size: 13px; }
 
+    /* ── Leaderboard ──────────────────────────────────────── */
+    #lbModal {
+      display: none; position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,0.7); backdrop-filter: blur(4px);
+      align-items: flex-start; justify-content: center; padding-top: 48px;
+    }
+    #lbModal.open { display: flex; }
+    .lb-card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+      width: 100%; max-width: 620px; max-height: 80vh; display: flex; flex-direction: column;
+      box-shadow: var(--shadow); overflow: hidden;
+    }
+    .lb-header {
+      padding: 16px 20px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .lb-header h2 { margin: 0; font-size: 15px; font-weight: 700; letter-spacing: 0.3px; }
+    .lb-tabs { display: flex; gap: 6px; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--panel-2); }
+    .lb-tab { padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1px solid var(--border); background: var(--panel); color: var(--muted); transition: all 0.15s; }
+    .lb-tab.active { background: var(--accent); color: #082f3a; border-color: var(--accent); }
+    .lb-controls { padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--panel-2); }
+    .lb-controls select { width: 100%; }
+    .lb-body { overflow-y: auto; flex: 1; }
+    .lb-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .lb-table th { padding: 8px 16px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); background: var(--panel-2); position: sticky; top: 0; }
+    .lb-table th.r { text-align: right; }
+    .lb-table td { padding: 10px 16px; border-bottom: 1px solid rgba(51,65,85,0.4); }
+    .lb-table td.r { text-align: right; font-weight: 700; color: var(--accent); }
+    .lb-table tr:first-child .lb-rank { color: var(--accent-2); font-size: 15px; }
+    .lb-rank { font-weight: 700; color: var(--muted); width: 28px; }
+    .lb-name { font-weight: 600; }
+    .lb-sub  { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .lb-medal { font-size: 16px; }
+    .lb-empty { padding: 40px 20px; text-align: center; color: var(--muted); font-size: 13px; }
+
     /* ── Auth ─────────────────────────────────────────────── */
     #loginScreen {
       display: none;
@@ -520,6 +555,27 @@
 </head>
 <body>
 
+  <!-- ── Leaderboard modal ────────────────────────────────────────────── -->
+  <div id="lbModal">
+    <div class="lb-card">
+      <div class="lb-header">
+        <h2>🏆 Leaderboard</h2>
+        <button id="lbCloseBtn">✕</button>
+      </div>
+      <div class="lb-tabs">
+        <span class="lb-tab active" data-lbtab="daily">Daily XI</span>
+        <span class="lb-tab" data-lbtab="sl">Season Long</span>
+      </div>
+      <div class="lb-controls">
+        <select id="lbMatchPicker" style="display:none"></select>
+        <select id="lbContestPicker" style="display:none"></select>
+      </div>
+      <div class="lb-body">
+        <div id="lbContent"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Login screen (shown until authenticated) ─────────────────────── -->
   <div id="loginScreen">
     <div class="login-card">
@@ -546,6 +602,7 @@
       <span id="formatPill" class="db-pill" title="Scoring format — set by the active tournament">T20</span>
       <button id="simBtn" class="primary">Start mock match</button>
       <button id="resetBtn" class="danger">Reset XI</button>
+      <button id="lbBtn" style="display:none" title="Leaderboard">🏆 Leaderboard</button>
       <button id="adminBtn" title="Tournament setup, players, schedule" style="display:none">Admin</button>
       <span id="userPill" class="user-pill" style="display:none">
         <span id="userAvatar" class="avatar">?</span>
@@ -952,7 +1009,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=62';
+    import { createDb, NotConfiguredError } from './db.js?v=64';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -1458,6 +1515,92 @@ p31,Sample Player,MI,bat,9.0,false
       clearTimeout(t._h); t._h = setTimeout(()=>{ t.style.display = 'none'; }, ms);
     }
 
+    // ─── LEADERBOARD ─────────────────────────────────────────────────────────
+
+    const lbState = { tab: 'daily', profiles: {} };
+
+    function openLeaderboard() {
+      $('#lbModal').classList.add('open');
+      renderLbPickers();
+      renderLeaderboard();
+    }
+    function closeLeaderboard() { $('#lbModal').classList.remove('open'); }
+
+    function renderLbPickers() {
+      const matchPicker   = $('#lbMatchPicker');
+      const contestPicker = $('#lbContestPicker');
+      if (lbState.tab === 'daily') {
+        matchPicker.style.display   = '';
+        contestPicker.style.display = 'none';
+        const completed = (state.matches || []).filter(m => m.status === 'completed')
+          .sort((a, b) => (b.match_number || 0) - (a.match_number || 0));
+        matchPicker.innerHTML = completed.length
+          ? completed.map(m => `<option value="${m.id}">M${m.match_number} — ${(m.home_team||'')} vs ${(m.away_team||'')}</option>`).join('')
+          : '<option value="">No completed matches yet</option>';
+        if (!lbState.matchId && completed.length) lbState.matchId = completed[0].id;
+        if (lbState.matchId) matchPicker.value = lbState.matchId;
+      } else {
+        matchPicker.style.display   = 'none';
+        contestPicker.style.display = '';
+        const contests = (state.tournaments || []).flatMap(t =>
+          (state.sl?.contests || []).filter(c => c.tournament_id === t.id)
+            .map(c => ({ id: c.id, name: `${t.name} — ${c.name || 'Season Long'}` }))
+        );
+        // Fallback: just use sl contest from state
+        const slContest = state.sl?.seasonContest;
+        contestPicker.innerHTML = slContest
+          ? `<option value="${slContest.id}">${slContest.name || 'Season Long'}</option>`
+          : '<option value="">No SL contest found</option>';
+        if (slContest) lbState.contestId = slContest.id;
+      }
+    }
+
+    async function renderLeaderboard() {
+      const el = $('#lbContent');
+      if (!state.db) { el.innerHTML = '<div class="lb-empty">Connect a database to view leaderboard.</div>'; return; }
+      el.innerHTML = '<div class="lb-empty">Loading…</div>';
+      try {
+        // Fetch profiles for display names
+        lbState.profiles = await state.db.getProfiles();
+
+        let rows = [];
+        if (lbState.tab === 'daily') {
+          const matchId = $('#lbMatchPicker').value;
+          if (!matchId) { el.innerHTML = '<div class="lb-empty">No completed matches yet.</div>'; return; }
+          rows = await state.db.getLeaderboardDaily(matchId);
+        } else {
+          const contestId = lbState.contestId || state.sl?.seasonContest?.id;
+          if (!contestId) { el.innerHTML = '<div class="lb-empty">No Season Long contest found.</div>'; return; }
+          rows = await state.db.getLeaderboardSL(contestId);
+        }
+
+        if (!rows.length) { el.innerHTML = '<div class="lb-empty">No teams saved yet for this match.</div>'; return; }
+
+        const medals = ['🥇','🥈','🥉'];
+        const tbody = rows.map((r, i) => {
+          const name     = lbState.profiles[r.userId] || 'Unknown';
+          const subLabel = lbState.tab === 'daily' ? r.teamName : `${r.squadName} · ${r.matchCount} match${r.matchCount !== 1 ? 'es' : ''}`;
+          const rank     = medals[i] || `#${i + 1}`;
+          return `<tr>
+            <td class="lb-rank">${rank}</td>
+            <td><div class="lb-name">${name}</div><div class="lb-sub">${subLabel}</div></td>
+            <td class="r">${r.totalPoints % 1 === 0 ? r.totalPoints : r.totalPoints.toFixed(1)}</td>
+          </tr>`;
+        }).join('');
+
+        el.innerHTML = `<table class="lb-table">
+          <thead><tr>
+            <th style="width:36px">#</th>
+            <th>Player</th>
+            <th class="r">Pts</th>
+          </tr></thead>
+          <tbody>${tbody}</tbody>
+        </table>`;
+      } catch (e) {
+        el.innerHTML = `<div class="lb-empty">Failed to load: ${e.message}</div>`;
+      }
+    }
+
     // ─── AUTH SETUP ──────────────────────────────────────────────────────────
     const ADMIN_EMAIL  = 'abhi0818@gmail.com';
     // Supabase project credentials — anon/publishable key is safe in client code.
@@ -1489,7 +1632,7 @@ p31,Sample Player,MI,bat,9.0,false
         return;
       }
 
-      // Create an early client just for auth (connectDb will create the real one)
+      // Create a single shared client — reused for both auth and all DB operations.
       const earlyDb = createDb({ url, anonKey: key });
 
       // Subscribe to auth changes
@@ -1499,9 +1642,9 @@ p31,Sample Player,MI,bat,9.0,false
             const user = session.user;
             state.currentUser = user;
             showApp(user);
-            // Only connect DB (loads data) once per page session
+            // Reuse earlyDb so only one GoTrueClient is ever created
             if (!state.db) {
-              await connectDb(url, key, { silent: true });
+              await connectDb(url, key, { silent: true }, earlyDb);
             }
           } else {
             state.currentUser = null;
@@ -1519,7 +1662,7 @@ p31,Sample Player,MI,bat,9.0,false
         if (user) {
           state.currentUser = user;
           showApp(user);
-          if (!state.db) await connectDb(url, key, { silent: true });
+          if (!state.db) await connectDb(url, key, { silent: true }, earlyDb);
         } else {
           showLoginScreen();
         }
@@ -1536,14 +1679,21 @@ p31,Sample Player,MI,bat,9.0,false
     function showApp(user) {
       $('#loginScreen').classList.remove('visible');
       updateHeaderUser(user);
+      // Persist display name for leaderboard (non-blocking)
+      if (user && state.db) {
+        const displayName = user.user_metadata?.full_name || user.email || '';
+        state.db.upsertProfile({ userId: user.id, displayName, email: user.email || '' })
+          .catch(e => console.warn('profile upsert failed', e));
+      }
     }
 
     function updateHeaderUser(user) {
       const pill    = $('#userPill');
       const avatar  = $('#userAvatar');
       const name    = $('#userName');
-      const signOut = $('#signOutBtn');
+      const signOut  = $('#signOutBtn');
       const adminBtn = $('#adminBtn');
+      const lbBtn    = $('#lbBtn');
 
       if (user) {
         const displayName   = user.user_metadata?.full_name || user.email || 'User';
@@ -1552,10 +1702,12 @@ p31,Sample Player,MI,bat,9.0,false
         name.textContent    = displayName;
         pill.style.display    = '';
         signOut.style.display = '';
+        lbBtn.style.display   = '';
         adminBtn.style.display = user.email === ADMIN_EMAIL ? '' : 'none';
       } else {
         pill.style.display    = 'none';
         signOut.style.display = 'none';
+        lbBtn.style.display   = 'none';
         adminBtn.style.display = 'none';
       }
     }
@@ -1571,9 +1723,9 @@ p31,Sample Player,MI,bat,9.0,false
       if (url && key) await connectDb(url, key, { silent: true });
     }
 
-    async function connectDb(url, key, opts = {}) {
+    async function connectDb(url, key, opts = {}, existingDb = null) {
       try {
-        const db = createDb({ url, anonKey: key });
+        const db = existingDb || createDb({ url, anonKey: key });
         // Probe with a cheap call to verify credentials before persisting
         await db.getTeams();
         state.db = db;
@@ -1581,6 +1733,12 @@ p31,Sample Player,MI,bat,9.0,false
         localStorage.setItem(SB_LS_KEY, key);
         $('#dbPill').textContent = 'database connected';
         $('#dbPill').classList.add('on');
+        // Upsert profile now that db is ready
+        if (state.currentUser) {
+          const u = state.currentUser;
+          db.upsertProfile({ userId: u.id, displayName: u.user_metadata?.full_name || u.email || '', email: u.email || '' })
+            .catch(e => console.warn('profile upsert failed', e));
+        }
         // Load teams + players + saved teams from DB
         try {
           const tms = await db.getTeams();
@@ -5917,6 +6075,24 @@ p31,Sample Player,MI,bat,9.0,false
     $('#saveXiBtn').addEventListener('click', saveCurrentXI);
     $('#saveMatchBtn').addEventListener('click', saveCurrentMatch);
     $('#adminBtn').addEventListener('click', () => { if (isAdmin()) openAdmin(); });
+    $('#lbBtn').addEventListener('click', openLeaderboard);
+    $('#lbCloseBtn').addEventListener('click', closeLeaderboard);
+    $('#lbModal').addEventListener('click', e => { if (e.target.id === 'lbModal') closeLeaderboard(); });
+    document.querySelectorAll('.lb-tab').forEach(t => t.addEventListener('click', () => {
+      document.querySelectorAll('.lb-tab').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      lbState.tab = t.dataset.lbtab;
+      renderLbPickers();
+      renderLeaderboard();
+    }));
+    $('#lbMatchPicker').addEventListener('change', e => {
+      lbState.matchId = e.target.value;
+      renderLeaderboard();
+    });
+    $('#lbContestPicker').addEventListener('change', e => {
+      lbState.contestId = e.target.value;
+      renderLeaderboard();
+    });
     $('#magicLinkBtn').addEventListener('click', async () => {
       const url   = SB_URL  || localStorage.getItem(SB_LS_URL) || '';
       const key   = SB_ANON || localStorage.getItem(SB_LS_KEY) || '';
