@@ -1009,7 +1009,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=69';
+    import { createDb, NotConfiguredError } from './db.js?v=70';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -3973,8 +3973,8 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     class LiveMatchPoller {
-      constructor({url, squad=[], format='T20', interval=1800000, matchId='', onUpdate, onPoll, onError}) {
-        Object.assign(this, { url, squad, format, interval, matchId, onUpdate, onPoll, onError });
+      constructor({url, headers={}, squad=[], format='T20', interval=1800000, matchId='', onUpdate, onPoll, onError}) {
+        Object.assign(this, { url, headers, squad, format, interval, matchId, onUpdate, onPoll, onError });
         this._timer=null; this._inflight=false; this._lastHash=null;
         this.lastPollAt=null; this.nextPollAt=null;
       }
@@ -3996,7 +3996,7 @@ p31,Sample Player,MI,bat,9.0,false
         this.nextPollAt = Date.now() + this.interval;
         setPollTs(this.matchId, this.lastPollAt);
         try {
-          const res = await fetch(this.url); if (!res.ok) throw new Error('HTTP '+res.status);
+          const res = await fetch(this.url, { headers: this.headers }); if (!res.ok) throw new Error('HTTP '+res.status);
           const payload = await res.json();
           // Surface CricAPI-level failures as real errors so onError / toast fires.
           if (payload?.status === 'failure') {
@@ -4079,15 +4079,15 @@ p31,Sample Player,MI,bat,9.0,false
       // ── No cached scorecard — need an API key to poll live ───────────────────
       if (!key) { toast('Enter your CricAPI key first.'); return; }
 
-      // Route through the local CORS proxy (started by start.command).
-      // If the proxy isn't running, the fetch will fail and the user will see
-      // a "Failed to fetch" / network error toast.
-      const proxyBase = 'http://localhost:8081/cricapi';
+      // Route through the Supabase Edge Function proxy (handles CORS).
+      const proxyBase = 'https://gepltclaeczgtruvekci.supabase.co/functions/v1/swift-task';
+      const proxyHeaders = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
       const liveMatch = findNextMatch(); // may be the currently-live match
       const pollInterval = calcPollInterval(state.format, liveMatch?.start_time);
       const pollMins = Math.round(pollInterval / 60_000);
       state.poller = new LiveMatchPoller({
         url: `${proxyBase}/match_scorecard?apikey=${encodeURIComponent(key)}&id=${encodeURIComponent(id)}`,
+        headers: proxyHeaders,
         squad, format: state.format, interval: pollInterval, matchId: id,
         onUpdate: (players, payload) => {
           state.lastScorecard = payload;
@@ -4788,7 +4788,8 @@ p31,Sample Player,MI,bat,9.0,false
 
     async function fetchJsonFromProxy(path) {
       incrementApiCallCount();
-      const res = await fetch('http://localhost:8081/cricapi/' + path);
+      const res = await fetch('https://gepltclaeczgtruvekci.supabase.co/functions/v1/swift-task/' + path,
+        { headers: { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` } });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const json = await res.json();
       if (json.status === 'failure') throw new Error(json.reason || 'CricAPI failure');
