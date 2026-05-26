@@ -1009,7 +1009,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=64';
+    import { createDb, NotConfiguredError } from './db.js?v=66';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -1632,20 +1632,16 @@ p31,Sample Player,MI,bat,9.0,false
         return;
       }
 
-      // Create a single shared client — reused for both auth and all DB operations.
-      const earlyDb = createDb({ url, anonKey: key });
+      // Single shared client — created once, reused everywhere.
+      const sharedDb = getSharedDb(url, key);
 
       // Subscribe to auth changes
       try {
-        await earlyDb.onAuthStateChange(async (event, session) => {
+        await sharedDb.onAuthStateChange(async (event, session) => {
           if (session) {
-            const user = session.user;
-            state.currentUser = user;
-            showApp(user);
-            // Reuse earlyDb so only one GoTrueClient is ever created
-            if (!state.db) {
-              await connectDb(url, key, { silent: true }, earlyDb);
-            }
+            state.currentUser = session.user;
+            showApp(session.user);
+            if (!state.db) await connectDb(url, key, { silent: true });
           } else {
             state.currentUser = null;
             showLoginScreen();
@@ -1658,11 +1654,11 @@ p31,Sample Player,MI,bat,9.0,false
 
       // Check current session immediately (subscription fires async)
       try {
-        const user = await earlyDb.getUser();
+        const user = await sharedDb.getUser();
         if (user) {
           state.currentUser = user;
           showApp(user);
-          if (!state.db) await connectDb(url, key, { silent: true }, earlyDb);
+          if (!state.db) await connectDb(url, key, { silent: true });
         } else {
           showLoginScreen();
         }
@@ -1716,6 +1712,13 @@ p31,Sample Player,MI,bat,9.0,false
     const SB_LS_URL = 'ss_supabase_url';
     const SB_LS_KEY = 'ss_supabase_key';
 
+    // Single shared db instance — never call createDb() more than once.
+    let _db = null;
+    function getSharedDb(url, key) {
+      if (!_db) _db = createDb({ url, anonKey: url && key ? key : undefined });
+      return _db;
+    }
+
     async function initDb() {
       const url = localStorage.getItem(SB_LS_URL) || '';
       const key = localStorage.getItem(SB_LS_KEY) || '';
@@ -1723,9 +1726,9 @@ p31,Sample Player,MI,bat,9.0,false
       if (url && key) await connectDb(url, key, { silent: true });
     }
 
-    async function connectDb(url, key, opts = {}, existingDb = null) {
+    async function connectDb(url, key, opts = {}) {
       try {
-        const db = existingDb || createDb({ url, anonKey: key });
+        const db = getSharedDb(url, key);
         // Probe with a cheap call to verify credentials before persisting
         await db.getTeams();
         state.db = db;
@@ -1837,6 +1840,7 @@ p31,Sample Player,MI,bat,9.0,false
         state.db = null;
         $('#dbPill').textContent = 'local mode';
         $('#dbPill').classList.remove('on');
+        console.error('[connectDb] failed:', e);
         if (!opts.silent) toast('Could not connect: ' + (e.message || e), 4000);
       }
     }
