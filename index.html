@@ -1024,7 +1024,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=80';
+    import { createDb, NotConfiguredError } from './db.js?v=81';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -1619,7 +1619,7 @@ p31,Sample Player,MI,bat,9.0,false
     // ─── AUTH SETUP ──────────────────────────────────────────────────────────
     // Set REQUIRE_AUTH = false to bypass the login screen (dev/testing mode).
     // Set back to true when you want users to sign in before accessing the app.
-    const REQUIRE_AUTH = false;
+    const REQUIRE_AUTH = true;
     const ADMIN_EMAIL  = 'abhi0818@gmail.com';
     // Supabase project credentials — anon/publishable key is safe in client code.
     // RLS policies enforce per-user data isolation server-side.
