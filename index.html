@@ -1009,7 +1009,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=71';
+    import { createDb, NotConfiguredError } from './db.js?v=72';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -1636,34 +1636,41 @@ p31,Sample Player,MI,bat,9.0,false
       const sharedDb = getSharedDb(url, key);
 
       // Subscribe to auth changes
+      let appShown = false;
       try {
         await sharedDb.onAuthStateChange(async (event, session) => {
           if (session) {
+            appShown = true;
             state.currentUser = session.user;
             showApp(session.user);
             if (!state.db) await connectDb(url, key, { silent: true });
           } else {
-            state.currentUser = null;
-            showLoginScreen();
+            // Only show login if we haven't already shown the app this session
+            if (!appShown) {
+              state.currentUser = null;
+              showLoginScreen();
+            }
           }
         });
       } catch (e) {
         console.warn('Auth subscription failed — falling back to no-auth mode.', e);
         showApp(null);
+        return;
       }
 
-      // Check current session immediately (subscription fires async)
+      // Check current session immediately (getSession reads localStorage — no network call)
       try {
         const user = await sharedDb.getUser();
         if (user) {
+          appShown = true;
           state.currentUser = user;
           showApp(user);
           if (!state.db) await connectDb(url, key, { silent: true });
-        } else {
+        } else if (!appShown) {
           showLoginScreen();
         }
       } catch (e) {
-        showLoginScreen();
+        if (!appShown) showLoginScreen();
       }
     }
 

@@ -79,8 +79,10 @@ export function createDb(cfg = {}) {
     /** Returns the current user object (or null if not signed in). */
     async getUser() {
       const sb = await getClient();
-      const { data: { user } } = await sb.auth.getUser();
-      return user ?? null;
+      // Use getSession() — reads localStorage, no network call, won't hang in Safari.
+      // getUser() would make a /auth/v1/user request which can hang.
+      const { data: { session } } = await sb.auth.getSession();
+      return session?.user ?? null;
     },
 
     /**
