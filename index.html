@@ -1024,7 +1024,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=78';
+    import { createDb, NotConfiguredError } from './db.js?v=79';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -4152,9 +4152,9 @@ p31,Sample Player,MI,bat,9.0,false
       // ── No cached scorecard — need an API key to poll live ───────────────────
       if (!key) { toast('Enter your CricAPI key first.'); return; }
 
-      // Route through the Supabase Edge Function proxy (handles CORS).
-      const proxyBase = 'https://gepltclaeczgtruvekci.supabase.co/functions/v1/swift-task';
-      const proxyHeaders = { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` };
+      // CricAPI supports CORS — call it directly from the browser, no proxy needed.
+      const proxyBase = 'https://api.cricapi.com/v1';
+      const proxyHeaders = {};
       const liveMatch = findNextMatch(); // may be the currently-live match
       const pollInterval = calcPollInterval(state.format, liveMatch?.start_time);
       const pollMins = Math.round(pollInterval / 60_000);
@@ -4861,8 +4861,7 @@ p31,Sample Player,MI,bat,9.0,false
 
     async function fetchJsonFromProxy(path) {
       incrementApiCallCount();
-      const res = await fetch('https://gepltclaeczgtruvekci.supabase.co/functions/v1/swift-task/' + path,
-        { headers: { 'apikey': SB_ANON, 'Authorization': `Bearer ${SB_ANON}` } });
+      const res = await fetch('https://api.cricapi.com/v1/' + path);
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const json = await res.json();
       if (json.status === 'failure') throw new Error(json.reason || 'CricAPI failure');
