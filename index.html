@@ -581,26 +581,43 @@
     <div class="login-card">
       <span class="login-dot"></span>
       <h1>Super Selector</h1>
+      <p>Fantasy cricket</p>
 
-      <!-- Step 1: email -->
-      <div id="loginStep1">
-        <p>Fantasy cricket — enter your email to sign in</p>
-        <input id="loginEmailInput" type="email" placeholder="you@example.com" autocomplete="email" />
-        <button id="magicLinkBtn">Send code</button>
+      <!-- Tabs -->
+      <div style="display:flex;gap:0;margin-bottom:24px;border-bottom:1px solid var(--border);">
+        <button id="tabSignIn" onclick="switchLoginTab('signin')"
+          style="flex:1;background:none;border:none;border-bottom:2px solid var(--accent);
+                 color:var(--text);font-weight:600;padding:8px;cursor:pointer;font-size:14px;">Sign in</button>
+        <button id="tabSignUp" onclick="switchLoginTab('signup')"
+          style="flex:1;background:none;border:none;border-bottom:2px solid transparent;
+                 color:var(--muted);font-weight:500;padding:8px;cursor:pointer;font-size:14px;">Create account</button>
       </div>
 
-      <!-- Step 2: enter 6-digit code -->
-      <div id="loginStep2" style="display:none">
-        <p id="loginStep2Msg" style="color:var(--good);font-size:14px;margin:0 0 20px;">
-          ✓ Code sent! Check your inbox for a 6-digit code.
-        </p>
-        <input id="loginOtpInput" type="text" inputmode="numeric" maxlength="6"
-               placeholder="6-digit code" autocomplete="one-time-code"
-               style="width:100%;padding:11px 14px;border-radius:8px;font-size:22px;
-                      letter-spacing:8px;text-align:center;background:var(--panel-2);
-                      color:var(--text);border:1px solid var(--border);margin-bottom:10px;outline:none;" />
-        <button id="verifyOtpBtn" class="primary" style="width:100%;padding:12px;font-size:15px;font-weight:600;">Verify code</button>
-        <button id="loginBackBtn" style="width:100%;margin-top:8px;background:transparent;border:none;color:var(--muted);font-size:13px;cursor:pointer;">← Use a different email</button>
+      <!-- Sign in form -->
+      <div id="loginFormSignIn">
+        <input id="loginEmailInput" type="email" placeholder="Email" autocomplete="email" />
+        <input id="loginPasswordInput" type="password" placeholder="Password" autocomplete="current-password"
+               style="width:100%;padding:11px 14px;border-radius:8px;font-size:15px;
+                      background:var(--panel-2);color:var(--text);border:1px solid var(--border);
+                      margin-bottom:10px;outline:none;" />
+        <button id="signInBtn" class="primary" style="width:100%;padding:12px;font-size:15px;font-weight:600;">Sign in</button>
+      </div>
+
+      <!-- Create account form -->
+      <div id="loginFormSignUp" style="display:none">
+        <input id="signupEmailInput" type="email" placeholder="Email" autocomplete="email"
+               style="width:100%;padding:11px 14px;border-radius:8px;font-size:15px;
+                      background:var(--panel-2);color:var(--text);border:1px solid var(--border);
+                      margin-bottom:10px;outline:none;" />
+        <input id="signupPasswordInput" type="password" placeholder="Password (min 6 characters)" autocomplete="new-password"
+               style="width:100%;padding:11px 14px;border-radius:8px;font-size:15px;
+                      background:var(--panel-2);color:var(--text);border:1px solid var(--border);
+                      margin-bottom:10px;outline:none;" />
+        <input id="signupConfirmInput" type="password" placeholder="Confirm password" autocomplete="new-password"
+               style="width:100%;padding:11px 14px;border-radius:8px;font-size:15px;
+                      background:var(--panel-2);color:var(--text);border:1px solid var(--border);
+                      margin-bottom:10px;outline:none;" />
+        <button id="signUpBtn" class="primary" style="width:100%;padding:12px;font-size:15px;font-weight:600;">Create account</button>
       </div>
 
       <div id="loginError" style="margin-top:12px;font-size:13px;color:var(--bad);min-height:18px;"></div>
@@ -1024,7 +1041,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=82';
+    import { createDb, NotConfiguredError } from './db.js?v=83';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -6168,62 +6185,73 @@ p31,Sample Player,MI,bat,9.0,false
       lbState.contestId = e.target.value;
       renderLeaderboard();
     });
-    // Step 1 — send OTP code
-    $('#magicLinkBtn').addEventListener('click', async () => {
-      const url   = SB_URL  || localStorage.getItem(SB_LS_URL) || '';
-      const key   = SB_ANON || localStorage.getItem(SB_LS_KEY) || '';
-      const email = $('#loginEmailInput').value.trim();
-      if (!url || !key) { $('#loginError').textContent = 'Supabase not configured.'; return; }
-      if (!email) { $('#loginError').textContent = 'Please enter your email address.'; return; }
+    // ── Login tab switcher ────────────────────────────────────────────────
+    function switchLoginTab(tab) {
+      const isSignIn = tab === 'signin';
+      $('#loginFormSignIn').style.display  = isSignIn ? '' : 'none';
+      $('#loginFormSignUp').style.display  = isSignIn ? 'none' : '';
+      $('#tabSignIn').style.borderBottomColor = isSignIn ? 'var(--accent)' : 'transparent';
+      $('#tabSignIn').style.color          = isSignIn ? 'var(--text)' : 'var(--muted)';
+      $('#tabSignIn').style.fontWeight     = isSignIn ? '600' : '500';
+      $('#tabSignUp').style.borderBottomColor = isSignIn ? 'transparent' : 'var(--accent)';
+      $('#tabSignUp').style.color          = isSignIn ? 'var(--muted)' : 'var(--text)';
+      $('#tabSignUp').style.fontWeight     = isSignIn ? '500' : '600';
+      $('#loginError').textContent = '';
+    }
+
+    // ── Sign in ───────────────────────────────────────────────────────────
+    $('#signInBtn').addEventListener('click', async () => {
+      const url      = SB_URL  || localStorage.getItem(SB_LS_URL) || '';
+      const key      = SB_ANON || localStorage.getItem(SB_LS_KEY) || '';
+      const email    = $('#loginEmailInput').value.trim();
+      const password = $('#loginPasswordInput').value;
+      if (!email)    { $('#loginError').textContent = 'Enter your email.'; return; }
+      if (!password) { $('#loginError').textContent = 'Enter your password.'; return; }
       try {
         $('#loginError').textContent = '';
-        $('#magicLinkBtn').disabled = true;
-        $('#magicLinkBtn').textContent = 'Sending…';
-        await getSharedDb(url, key).signInWithMagicLink(email);
-        $('#loginStep1').style.display = 'none';
-        $('#loginStep2').style.display = 'block';
-        $('#loginOtpInput').focus();
+        $('#signInBtn').disabled = true;
+        $('#signInBtn').textContent = 'Signing in…';
+        await getSharedDb(url, key).signInWithPassword(email, password);
+        // onAuthStateChange fires → showApp()
       } catch (e) {
-        $('#magicLinkBtn').disabled = false;
-        $('#magicLinkBtn').textContent = 'Send code';
-        $('#loginError').textContent = e.message || 'Failed to send code. Try again.';
+        $('#signInBtn').disabled = false;
+        $('#signInBtn').textContent = 'Sign in';
+        $('#loginError').textContent = e.message?.includes('Invalid login')
+          ? 'Incorrect email or password.'
+          : (e.message || 'Sign in failed.');
       }
+    });
+    $('#loginPasswordInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') $('#signInBtn').click();
     });
     $('#loginEmailInput').addEventListener('keydown', e => {
-      if (e.key === 'Enter') $('#magicLinkBtn').click();
+      if (e.key === 'Enter') $('#loginPasswordInput').focus();
     });
 
-    // Step 2 — verify OTP code
-    $('#verifyOtpBtn').addEventListener('click', async () => {
-      const url   = SB_URL  || localStorage.getItem(SB_LS_URL) || '';
-      const key   = SB_ANON || localStorage.getItem(SB_LS_KEY) || '';
-      const email = $('#loginEmailInput').value.trim();
-      const token = $('#loginOtpInput').value.trim();
-      if (!token || token.length < 6) { $('#loginError').textContent = 'Enter the 6-digit code from your email.'; return; }
+    // ── Create account ────────────────────────────────────────────────────
+    $('#signUpBtn').addEventListener('click', async () => {
+      const url      = SB_URL  || localStorage.getItem(SB_LS_URL) || '';
+      const key      = SB_ANON || localStorage.getItem(SB_LS_KEY) || '';
+      const email    = $('#signupEmailInput').value.trim();
+      const password = $('#signupPasswordInput').value;
+      const confirm  = $('#signupConfirmInput').value;
+      if (!email)               { $('#loginError').textContent = 'Enter your email.'; return; }
+      if (password.length < 6)  { $('#loginError').textContent = 'Password must be at least 6 characters.'; return; }
+      if (password !== confirm)  { $('#loginError').textContent = 'Passwords don\'t match.'; return; }
       try {
         $('#loginError').textContent = '';
-        $('#verifyOtpBtn').disabled = true;
-        $('#verifyOtpBtn').textContent = 'Verifying…';
-        const sb = await getSharedDb(url, key)._getRawClient();
-        const { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
-        if (error) throw error;
-        // onAuthStateChange will fire and call showApp()
+        $('#signUpBtn').disabled = true;
+        $('#signUpBtn').textContent = 'Creating…';
+        await getSharedDb(url, key).signUpWithPassword(email, password);
+        // onAuthStateChange fires → showApp()
       } catch (e) {
-        $('#verifyOtpBtn').disabled = false;
-        $('#verifyOtpBtn').textContent = 'Verify code';
-        $('#loginError').textContent = e.message || 'Invalid or expired code. Request a new one.';
+        $('#signUpBtn').disabled = false;
+        $('#signUpBtn').textContent = 'Create account';
+        $('#loginError').textContent = e.message || 'Sign up failed.';
       }
     });
-    $('#loginOtpInput').addEventListener('keydown', e => {
-      if (e.key === 'Enter') $('#verifyOtpBtn').click();
-    });
-    $('#loginBackBtn').addEventListener('click', () => {
-      $('#loginStep2').style.display = 'none';
-      $('#loginStep1').style.display = 'block';
-      $('#magicLinkBtn').disabled = false;
-      $('#magicLinkBtn').textContent = 'Send code';
-      $('#loginOtpInput').value = '';
-      $('#loginError').textContent = '';
+    $('#signupConfirmInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') $('#signUpBtn').click();
     });
     $('#signOutBtn').addEventListener('click', () => {
       // Bypass SDK (fetch hangs in Safari) — clear auth token directly from localStorage

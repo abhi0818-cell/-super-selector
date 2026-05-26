@@ -65,10 +65,23 @@ export function createDb(cfg = {}) {
      */
     async signInWithMagicLink(email) {
       const sb = await getClient();
-      // No emailRedirectTo — tells Supabase to send a 6-digit OTP code
-      // instead of a clickable magic link.
       const { error } = await sb.auth.signInWithOtp({ email });
       if (error) throw error;
+    },
+
+    /** Sign in with email + password. */
+    async signInWithPassword(email, password) {
+      const sb = await getClient();
+      const { error } = await sb.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+    },
+
+    /** Create a new account with email + password. */
+    async signUpWithPassword(email, password) {
+      const sb = await getClient();
+      const { data, error } = await sb.auth.signUp({ email, password });
+      if (error) throw error;
+      return data;
     },
 
     /** Sign out the current user. */
