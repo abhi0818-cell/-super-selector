@@ -1009,7 +1009,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=68';
+    import { createDb, NotConfiguredError } from './db.js?v=69';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -6121,9 +6121,13 @@ p31,Sample Player,MI,bat,9.0,false
     $('#loginEmailInput').addEventListener('keydown', e => {
       if (e.key === 'Enter') $('#magicLinkBtn').click();
     });
-    $('#signOutBtn').addEventListener('click', async () => {
-      if (state.db) { try { await state.db.signOut(); } catch (_) {} }
+    $('#signOutBtn').addEventListener('click', () => {
+      // Bypass SDK (fetch hangs in Safari) — clear auth token directly from localStorage
+      const PROJECT_REF = 'gepltclaeczgtruvekci';
+      try { localStorage.removeItem(`sb-${PROJECT_REF}-auth-token`); } catch (_) {}
+      try { localStorage.removeItem(`sb-${PROJECT_REF}-auth-token-code-verifier`); } catch (_) {}
       state.currentUser = null;
+      state.db = null;
       showLoginScreen();
     });
     $('#adminCloseBtn').addEventListener('click', closeAdmin);
