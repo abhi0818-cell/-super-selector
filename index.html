@@ -1009,7 +1009,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=72';
+    import { createDb, NotConfiguredError } from './db.js?v=73';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -1627,49 +1627,81 @@ p31,Sample Player,MI,bat,9.0,false
       if ($('#sbKey')) $('#sbKey').value = key;
 
       if (!url || !key) {
-        // No Supabase config yet — skip auth, show app directly (dev/local mode)
         showApp(null);
         return;
       }
 
-      // Single shared client — created once, reused everywhere.
+      // Detect magic-link redirect: hash has access_token OR query has code
+      const hashParams  = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+      const queryParams = new URLSearchParams(window.location.search);
+      const hasMagicToken = hashParams.has('access_token') || queryParams.has('code');
+      console.log('[initAuth] hasMagicToken:', hasMagicToken, '| hash:', window.location.hash.slice(0,40), '| search:', window.location.search.slice(0,40));
+
       const sharedDb = getSharedDb(url, key);
 
-      // Subscribe to auth changes
       let appShown = false;
+
+      // If a magic-link token is in the URL, give the SDK up to 3 s to process it
+      // before falling back to the session check below.
+      if (hasMagicToken) {
+        console.log('[initAuth] magic token detected — waiting for SDK to process…');
+        await new Promise(resolve => {
+          let done = false;
+          const finish = () => { if (!done) { done = true; resolve(); } };
+          // Resolve as soon as SDK fires a SIGNED_IN event
+          sharedDb.onAuthStateChange(async (event, session) => {
+            console.log('[initAuth] onAuthStateChange event:', event, '| user:', session?.user?.email);
+            if (session) {
+              appShown = true;
+              state.currentUser = session.user;
+              showApp(session.user);
+              if (!state.db) connectDb(url, key, { silent: true }).catch(() => {});
+            }
+            finish();
+          }).catch(finish);
+          // Safety timeout — proceed after 3 s regardless
+          setTimeout(finish, 3000);
+        });
+        if (appShown) {
+          // Clean the token out of the URL bar so refresh doesn't re-process it
+          history.replaceState(null, '', window.location.pathname);
+          return;
+        }
+        console.warn('[initAuth] SDK did not fire SIGNED_IN within 3 s — falling through');
+      }
+
+      // Normal path: subscribe then check stored session
       try {
         await sharedDb.onAuthStateChange(async (event, session) => {
+          console.log('[initAuth] auth event:', event, '| user:', session?.user?.email);
           if (session) {
             appShown = true;
             state.currentUser = session.user;
             showApp(session.user);
-            if (!state.db) await connectDb(url, key, { silent: true });
+            if (!state.db) connectDb(url, key, { silent: true }).catch(() => {});
           } else {
-            // Only show login if we haven't already shown the app this session
-            if (!appShown) {
-              state.currentUser = null;
-              showLoginScreen();
-            }
+            if (!appShown) { state.currentUser = null; showLoginScreen(); }
           }
         });
       } catch (e) {
-        console.warn('Auth subscription failed — falling back to no-auth mode.', e);
+        console.warn('[initAuth] auth subscription failed:', e);
         showApp(null);
         return;
       }
 
-      // Check current session immediately (getSession reads localStorage — no network call)
       try {
         const user = await sharedDb.getUser();
+        console.log('[initAuth] getUser result:', user?.email ?? 'null');
         if (user) {
           appShown = true;
           state.currentUser = user;
           showApp(user);
-          if (!state.db) await connectDb(url, key, { silent: true });
+          if (!state.db) connectDb(url, key, { silent: true }).catch(() => {});
         } else if (!appShown) {
           showLoginScreen();
         }
       } catch (e) {
+        console.warn('[initAuth] getUser error:', e);
         if (!appShown) showLoginScreen();
       }
     }
