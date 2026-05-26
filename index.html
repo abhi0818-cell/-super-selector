@@ -585,10 +585,10 @@
 
       <!-- Tabs -->
       <div style="display:flex;gap:0;margin-bottom:24px;border-bottom:1px solid var(--border);">
-        <button id="tabSignIn" onclick="switchLoginTab('signin')"
+        <button id="tabSignIn"
           style="flex:1;background:none;border:none;border-bottom:2px solid var(--accent);
                  color:var(--text);font-weight:600;padding:8px;cursor:pointer;font-size:14px;">Sign in</button>
-        <button id="tabSignUp" onclick="switchLoginTab('signup')"
+        <button id="tabSignUp"
           style="flex:1;background:none;border:none;border-bottom:2px solid transparent;
                  color:var(--muted);font-weight:500;padding:8px;cursor:pointer;font-size:14px;">Create account</button>
       </div>
@@ -1041,7 +1041,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=83';
+    import { createDb, NotConfiguredError } from './db.js?v=84';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -6186,6 +6186,8 @@ p31,Sample Player,MI,bat,9.0,false
       renderLeaderboard();
     });
     // ── Login tab switcher ────────────────────────────────────────────────
+    $('#tabSignIn').addEventListener('click', () => switchLoginTab('signin'));
+    $('#tabSignUp').addEventListener('click', () => switchLoginTab('signup'));
     function switchLoginTab(tab) {
       const isSignIn = tab === 'signin';
       $('#loginFormSignIn').style.display  = isSignIn ? '' : 'none';
