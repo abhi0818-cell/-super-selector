@@ -581,14 +581,29 @@
     <div class="login-card">
       <span class="login-dot"></span>
       <h1>Super Selector</h1>
-      <p>Fantasy cricket — enter your email to sign in</p>
-      <input id="loginEmailInput" type="email" placeholder="you@example.com" autocomplete="email" />
-      <button id="magicLinkBtn">Send magic link</button>
-      <div id="loginSent">
-        ✓ Link sent! Check your inbox and click the link to sign in.<br>
-        <span style="color:var(--muted);font-size:12px">You can close this tab — clicking the link will open the app.</span>
+
+      <!-- Step 1: email -->
+      <div id="loginStep1">
+        <p>Fantasy cricket — enter your email to sign in</p>
+        <input id="loginEmailInput" type="email" placeholder="you@example.com" autocomplete="email" />
+        <button id="magicLinkBtn">Send code</button>
       </div>
-      <div id="loginError"></div>
+
+      <!-- Step 2: enter 6-digit code -->
+      <div id="loginStep2" style="display:none">
+        <p id="loginStep2Msg" style="color:var(--good);font-size:14px;margin:0 0 20px;">
+          ✓ Code sent! Check your inbox for a 6-digit code.
+        </p>
+        <input id="loginOtpInput" type="text" inputmode="numeric" maxlength="6"
+               placeholder="6-digit code" autocomplete="one-time-code"
+               style="width:100%;padding:11px 14px;border-radius:8px;font-size:22px;
+                      letter-spacing:8px;text-align:center;background:var(--panel-2);
+                      color:var(--text);border:1px solid var(--border);margin-bottom:10px;outline:none;" />
+        <button id="verifyOtpBtn" class="primary" style="width:100%;padding:12px;font-size:15px;font-weight:600;">Verify code</button>
+        <button id="loginBackBtn" style="width:100%;margin-top:8px;background:transparent;border:none;color:var(--muted);font-size:13px;cursor:pointer;">← Use a different email</button>
+      </div>
+
+      <div id="loginError" style="margin-top:12px;font-size:13px;color:var(--bad);min-height:18px;"></div>
     </div>
   </div>
 
@@ -1009,7 +1024,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=73';
+    import { createDb, NotConfiguredError } from './db.js?v=75';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -1636,6 +1651,19 @@ p31,Sample Player,MI,bat,9.0,false
       const queryParams = new URLSearchParams(window.location.search);
       const hasMagicToken = hashParams.has('access_token') || queryParams.has('code');
       console.log('[initAuth] hasMagicToken:', hasMagicToken, '| hash:', window.location.hash.slice(0,40), '| search:', window.location.search.slice(0,40));
+
+      // Handle error redirects from Supabase (e.g. expired OTP)
+      if (hashParams.has('error')) {
+        const errCode = hashParams.get('error_code') || hashParams.get('error') || 'unknown';
+        history.replaceState(null, '', window.location.pathname);
+        const msg = errCode.includes('expired') || errCode.includes('otp')
+          ? 'That link has expired. Please request a new one.'
+          : `Sign-in failed: ${errCode}. Please request a new link.`;
+        // Show login screen with the error message pre-filled
+        showLoginScreen();
+        if ($('#loginError')) $('#loginError').textContent = msg;
+        return;
+      }
 
       const sharedDb = getSharedDb(url, key);
 
@@ -6137,28 +6165,62 @@ p31,Sample Player,MI,bat,9.0,false
       lbState.contestId = e.target.value;
       renderLeaderboard();
     });
+    // Step 1 — send OTP code
     $('#magicLinkBtn').addEventListener('click', async () => {
       const url   = SB_URL  || localStorage.getItem(SB_LS_URL) || '';
       const key   = SB_ANON || localStorage.getItem(SB_LS_KEY) || '';
       const email = $('#loginEmailInput').value.trim();
-      if (!url || !key) { $('#loginError').textContent = 'Supabase not configured — add credentials in Admin → Settings.'; return; }
+      if (!url || !key) { $('#loginError').textContent = 'Supabase not configured.'; return; }
       if (!email) { $('#loginError').textContent = 'Please enter your email address.'; return; }
       try {
         $('#loginError').textContent = '';
         $('#magicLinkBtn').disabled = true;
         $('#magicLinkBtn').textContent = 'Sending…';
         await getSharedDb(url, key).signInWithMagicLink(email);
-        $('#loginSent').style.display = 'block';
-        $('#magicLinkBtn').style.display = 'none';
-        $('#loginEmailInput').style.display = 'none';
+        $('#loginStep1').style.display = 'none';
+        $('#loginStep2').style.display = 'block';
+        $('#loginOtpInput').focus();
       } catch (e) {
         $('#magicLinkBtn').disabled = false;
-        $('#magicLinkBtn').textContent = 'Send magic link';
-        $('#loginError').textContent = e.message || 'Failed to send link. Try again.';
+        $('#magicLinkBtn').textContent = 'Send code';
+        $('#loginError').textContent = e.message || 'Failed to send code. Try again.';
       }
     });
     $('#loginEmailInput').addEventListener('keydown', e => {
       if (e.key === 'Enter') $('#magicLinkBtn').click();
+    });
+
+    // Step 2 — verify OTP code
+    $('#verifyOtpBtn').addEventListener('click', async () => {
+      const url   = SB_URL  || localStorage.getItem(SB_LS_URL) || '';
+      const key   = SB_ANON || localStorage.getItem(SB_LS_KEY) || '';
+      const email = $('#loginEmailInput').value.trim();
+      const token = $('#loginOtpInput').value.trim();
+      if (!token || token.length < 6) { $('#loginError').textContent = 'Enter the 6-digit code from your email.'; return; }
+      try {
+        $('#loginError').textContent = '';
+        $('#verifyOtpBtn').disabled = true;
+        $('#verifyOtpBtn').textContent = 'Verifying…';
+        const sb = await getSharedDb(url, key)._getRawClient();
+        const { error } = await sb.auth.verifyOtp({ email, token, type: 'email' });
+        if (error) throw error;
+        // onAuthStateChange will fire and call showApp()
+      } catch (e) {
+        $('#verifyOtpBtn').disabled = false;
+        $('#verifyOtpBtn').textContent = 'Verify code';
+        $('#loginError').textContent = e.message || 'Invalid or expired code. Request a new one.';
+      }
+    });
+    $('#loginOtpInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') $('#verifyOtpBtn').click();
+    });
+    $('#loginBackBtn').addEventListener('click', () => {
+      $('#loginStep2').style.display = 'none';
+      $('#loginStep1').style.display = 'block';
+      $('#magicLinkBtn').disabled = false;
+      $('#magicLinkBtn').textContent = 'Send code';
+      $('#loginOtpInput').value = '';
+      $('#loginError').textContent = '';
     });
     $('#signOutBtn').addEventListener('click', () => {
       // Bypass SDK (fetch hangs in Safari) — clear auth token directly from localStorage

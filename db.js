@@ -52,6 +52,9 @@ export function createDb(cfg = {}) {
   return {
     isConfigured() { return configured; },
 
+    /** Expose the raw Supabase client for one-off calls (e.g. verifyOtp). */
+    async _getRawClient() { return getClient(); },
+
     // ─── Auth ─────────────────────────────────────────────────────────────
 
     /**
