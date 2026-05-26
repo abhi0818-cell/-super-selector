@@ -1024,7 +1024,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=77';
+    import { createDb, NotConfiguredError } from './db.js?v=78';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -1626,8 +1626,9 @@ p31,Sample Player,MI,bat,9.0,false
     const SB_URL  = 'https://gepltclaeczgtruvekci.supabase.co';
     const SB_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdlcGx0Y2xhZWN6Z3RydXZla2NpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1MTc5NTUsImV4cCI6MjA5NDA5Mzk1NX0.DW2Fzfw-gaabIbns_CUydbvOwuoko-ACEAH_g1_5Sm8';
 
-    /** Returns true when the signed-in user is the admin. */
+    /** Returns true when the signed-in user is the admin, or auth is bypassed. */
     function isAdmin() {
+      if (!REQUIRE_AUTH) return true;
       return !!(state.currentUser && state.currentUser.email === ADMIN_EMAIL);
     }
 
