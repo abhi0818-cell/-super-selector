@@ -1041,7 +1041,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=87';
+    import { createDb, NotConfiguredError } from './db.js?v=88';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -2195,7 +2195,7 @@ p31,Sample Player,MI,bat,9.0,false
      * When there is no prior locked XI (first match of the season) prevXI is empty
      * so 0 pending transfers are shown.
      */
-    async function slLoadDraft() {
+    async function slLoadDraft({ refreshOnly = false } = {}) {
       if (!state.db || !state.sl.squad) return;
       const squadId = state.sl.squad.id;
 
@@ -2212,18 +2212,22 @@ p31,Sample Player,MI,bat,9.0,false
         : { playerIds: [], captainId: null, vcId: null };
 
       // 3. Populate the picker: draft > lastLockedXI > empty
-      if (draft?.playerIds?.length === 11) {
-        state.sl.xiPlayers = [...draft.playerIds];
-        state.sl.xiCaptain = draft.captainId ?? null;
-        state.sl.xiVc      = draft.vcId      ?? null;
-      } else if (lastLocked?.playerIds?.length) {
-        state.sl.xiPlayers = [...lastLocked.playerIds];
-        state.sl.xiCaptain = lastLocked.captainId ?? null;
-        state.sl.xiVc      = lastLocked.vcId      ?? null;
-      } else {
-        state.sl.xiPlayers = [];
-        state.sl.xiCaptain = null;
-        state.sl.xiVc      = null;
+      // Skip if refreshOnly=true (e.g. pool dropdown changed) — preserve the
+      // user's in-progress picks and only update the transfer baseline above.
+      if (!refreshOnly) {
+        if (draft?.playerIds?.length === 11) {
+          state.sl.xiPlayers = [...draft.playerIds];
+          state.sl.xiCaptain = draft.captainId ?? null;
+          state.sl.xiVc      = draft.vcId      ?? null;
+        } else if (lastLocked?.playerIds?.length) {
+          state.sl.xiPlayers = [...lastLocked.playerIds];
+          state.sl.xiCaptain = lastLocked.captainId ?? null;
+          state.sl.xiVc      = lastLocked.vcId      ?? null;
+        } else {
+          state.sl.xiPlayers = [];
+          state.sl.xiCaptain = null;
+          state.sl.xiVc      = null;
+        }
       }
 
       // 4. Refresh transfer count — use next upcoming match for phase detection.
@@ -2245,7 +2249,7 @@ p31,Sample Player,MI,bat,9.0,false
     async function slOnMatchChanged() {
       if (state.mode !== 'season_long' || !state.sl.initialized || !state.sl.squad) return;
       await slCheckAutoLock();
-      await slLoadDraft(); // refresh prevXI in case a match has started since last load
+      await slLoadDraft({ refreshOnly: true }); // refresh prevXI/transfer baseline only — don't overwrite in-progress XI
       renderSlXiTab();
       renderPool();
     }
