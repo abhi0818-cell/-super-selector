@@ -1041,7 +1041,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=89';
+    import { createDb, NotConfiguredError } from './db.js?v=91';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -5331,14 +5331,18 @@ p31,Sample Player,MI,bat,9.0,false
     const XI_MULTIPLIERS = { captain: 2, vice_captain: 1.5, normal: 1 };
     async function computeAndSaveXIScoresForMatch(matchId) {
       if (!state.db || !matchId) return 0;
-      // Daily teams only (squadId == null) — SL teams are scored via computeAndSaveSLScoresForMatch.
-      const candidates = state.savedTeams
-        .filter(t => t.matchId === matchId && !t.squadId)
-        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-      const xis = candidates.slice(0, 1);
+      // Fetch ALL daily teams for this match across all users (not just state.savedTeams
+      // which is scoped to the current user). This ensures every participant's team
+      // gets scored when an admin runs finalize/recalculate.
+      let xis;
+      try { xis = await state.db.getAllDailyTeamsForMatch(matchId); } catch (e) {
+        console.error('[XI scores] getAllDailyTeamsForMatch failed:', e.message, e); return 0;
+      }
+      console.log(`[XI scores] match ${matchId} — found ${xis.length} team(s):`, xis.map(x => ({ id: x.id, name: x.name, players: x.playerIds.length, captain: x.captainId })));
       if (!xis.length) return 0;
       // Pull raw points per player for this match
       const stats = await state.db.getPlayerStatsForMatch(matchId);
+      console.log(`[XI scores] player stats rows: ${stats.length}`, stats.slice(0,3));
       const rawByPlayer = Object.fromEntries(stats.map(s => [s.player_id, Number(s.raw_points)]));
       // Compute each XI's total, applying captain/VC multipliers
       const scores = xis.map(xi => {
@@ -5350,9 +5354,15 @@ p31,Sample Player,MI,bat,9.0,false
                      : 1;
           total += raw * mult;
         }
-        return { userTeamId: xi.id, totalPoints: Math.round(total * 10) / 10 };
+        const result = { userTeamId: xi.id, totalPoints: Math.round(total * 10) / 10 };
+        console.log(`[XI scores] ${xi.name}: ${result.totalPoints} pts (${xi.playerIds.length} players, captain=${xi.captainId})`);
+        return result;
       });
-      const n = await state.db.upsertUserTeamMatchScores(matchId, scores);
+      console.log('[XI scores] upserting scores:', scores);
+      let n;
+      try { n = await state.db.upsertUserTeamMatchScores(matchId, scores); }
+      catch (e) { console.error('[XI scores] upsertUserTeamMatchScores failed:', e.message, e); return 0; }
+      console.log(`[XI scores] upserted ${n} score row(s)`);
       // Refresh local cache for rendering
       try {
         const all = await state.db.getAllUserTeamMatchScores();

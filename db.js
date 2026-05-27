@@ -479,6 +479,35 @@ export function createDb(cfg = {}) {
     },
 
     /**
+     * Returns ALL daily teams (squad_id IS NULL) saved for a specific match,
+     * across every user. Used by the scoring pipeline so admin recalculation
+     * covers every participant's team, not just the currently signed-in user's.
+     *
+     * @param {string} matchId
+     * @returns {Promise<Array<{id, name, captainId, viceCaptainId, matchId, playerIds}>>}
+     */
+    async getAllDailyTeamsForMatch(matchId) {
+      if (!matchId) return [];
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('user_teams')
+        .select('id, name, captain_id, vice_captain_id, match_id, created_at, user_team_players(player_id)')
+        .eq('match_id', matchId)
+        .is('squad_id', null)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data || []).map(t => ({
+        id           : t.id,
+        name         : t.name,
+        captainId    : t.captain_id,
+        viceCaptainId: t.vice_captain_id,
+        matchId      : t.match_id,
+        createdAt    : t.created_at,
+        playerIds    : (t.user_team_players ?? []).map(x => x.player_id),
+      }));
+    },
+
+    /**
      * Upsert a Season Long XI into user_teams + user_team_players so that the
      * shared computeAndSaveXIScoresForMatch scoring pipeline can pick it up.
      * Identifies the row by (squad_id, match_id) — creates on first save,
