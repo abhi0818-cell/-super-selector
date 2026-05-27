@@ -419,10 +419,14 @@ export function createDb(cfg = {}) {
      *  Includes squadId so callers can distinguish SL teams from daily teams. */
     async listUserTeams() {
       const sb = await getClient();
-      const { data, error } = await sb
+      const { data: { user } } = await sb.auth.getUser();
+      const uid = user?.id;
+      const q = sb
         .from('user_teams')
         .select('id, name, format, captain_id, vice_captain_id, match_id, squad_id, created_at, user_team_players(player_id)')
         .order('created_at', { ascending: false });
+      if (uid) q.eq('user_id', uid);
+      const { data, error } = await q;
       if (error) throw error;
       return data.map(t => ({
         id: t.id,
@@ -442,13 +446,17 @@ export function createDb(cfg = {}) {
      *  uses the daily XI, not the SL XI saved for the same match. */
     async getUserTeamForMatch(matchId) {
       const sb = await getClient();
-      const { data, error } = await sb
+      const { data: { user } } = await sb.auth.getUser();
+      const uid = user?.id;
+      const q = sb
         .from('user_teams')
         .select('id, name, format, captain_id, vice_captain_id, match_id, created_at, user_team_players(player_id)')
         .eq('match_id', matchId)
         .is('squad_id', null)          // daily teams only
         .order('created_at', { ascending: false })
         .limit(1);
+      if (uid) q.eq('user_id', uid);
+      const { data, error } = await q;
       if (error) throw error;
       const t = (data || [])[0];
       if (!t) return null;
@@ -1221,11 +1229,14 @@ export function createDb(cfg = {}) {
      */
     async getOrCreateSquad(contestId) {
       const sb = await getClient();
-      const { data, error } = await sb
+      const { data: { user } } = await sb.auth.getUser();
+      const uid = user?.id;
+      const q = sb
         .from('user_squads')
         .select('*')
-        .eq('contest_id', contestId)
-        .maybeSingle();
+        .eq('contest_id', contestId);
+      if (uid) q.eq('user_id', uid);
+      const { data, error } = await q.maybeSingle();
       if (error) throw error;
       return data ?? null;
     },
