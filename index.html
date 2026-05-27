@@ -1041,7 +1041,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=88';
+    import { createDb, NotConfiguredError } from './db.js?v=89';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -2329,8 +2329,15 @@ p31,Sample Player,MI,bat,9.0,false
       // season-level: prevXI = last locked XI across all matches.
       // prevSet is used below to highlight transferred-in players.
       // draftChanges = diff between picker and prevXI (pending transfers before next lock).
+      // If the last locked match is completed (auto-locked retroactively), this squad
+      // hasn't had a real active lock yet — treat as first match (no transfer cost).
+      const lastLockedMatchStatus = state.sl.lastLockedXI?.matchId
+        ? (state.matches.find(m => m.id === state.sl.lastLockedXI.matchId)?.status ?? null)
+        : null;
+      const isFirstActiveLock = !prev.length || lastLockedMatchStatus === 'completed';
+
       const prevSet      = new Set(prev);
-      const draftChanges = prev.length ? slTransferCount() : 0;
+      const draftChanges = isFirstActiveLock ? 0 : (prev.length ? slTransferCount() : 0);
 
       // Would saving the current draft exceed the season budget?
       const wouldExceedCap = seasonRemaining !== null && draftChanges > seasonRemaining;
@@ -2520,10 +2527,14 @@ p31,Sample Player,MI,bat,9.0,false
         state.sl.draft = { playerIds: [...xi], captainId: cap, vcId: vc };
 
         // How many changes from the last locked XI (preview only — not counted yet).
-        // If there is no prior locked XI at all, this is the first team of the season — 0 transfers.
+        // If there is no prior locked XI, OR the last locked match was already completed
+        // (auto-locked retroactively), this is effectively the first active team — 0 transfers.
         const prevSet  = new Set(state.sl.prevXI?.playerIds ?? []);
-        const noBaseline = prevSet.size === 0;
-        const changes  = noBaseline ? 0 : xi.filter(id => !prevSet.has(id)).length;
+        const lastLockedMatchStatus = state.sl.lastLockedXI?.matchId
+          ? (state.matches.find(m => m.id === state.sl.lastLockedXI.matchId)?.status ?? null)
+          : null;
+        const isFirstActiveLock = prevSet.size === 0 || lastLockedMatchStatus === 'completed';
+        const changes  = isFirstActiveLock ? 0 : xi.filter(id => !prevSet.has(id)).length;
         const nextLock = slNextLockMatch();
         const lockNote = nextLock
           ? ` Locks at M${nextLock.match_number ?? '?'} start.`

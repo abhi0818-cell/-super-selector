@@ -1388,6 +1388,7 @@ export function createDb(cfg = {}) {
         playerIds: xi.map(r => r.player_id),
         captainId: xi.find(r => r.is_captain)?.player_id ?? null,
         vcId     : xi.find(r => r.is_vc)?.player_id     ?? null,
+        matchId  : latestMatchId,
       };
     },
 
@@ -1712,11 +1713,19 @@ export function createDb(cfg = {}) {
         squadId, matchId, sorted, contestConfig.start_match_number ?? null
       );
 
+      // If the previous lock was for a completed match (auto-locked retroactively),
+      // this is the squad's first active participation — treat as no baseline (0 transfers).
+      const prevMatchStatus = prev.matchId
+        ? (allMatches.find(m => m.id === prev.matchId)?.status ?? null)
+        : null;
+      const isFirstActiveLock = !prev.playerIds?.length || prevMatchStatus === 'completed';
+      const baselinePlayerIds = isFirstActiveLock ? [] : prev.playerIds;
+
       // Write XI + transfers
       const result = await this.saveMatchXI(
         squadId, matchId,
         draft.playerIds, draft.captainId, draft.vcId,
-        prev.playerIds,
+        baselinePlayerIds,
         contestConfig
       );
 
