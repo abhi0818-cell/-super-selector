@@ -953,7 +953,7 @@ export function createDb(cfg = {}) {
      */
     async getLeaderboardSL(contestId) {
       const sb = await getClient();
-      // Get all SL teams (squad_id IS NOT NULL) for squads in this contest
+      // Get all squads in this contest
       const { data: squads, error: sErr } = await sb
         .from('user_squads')
         .select('id, name, user_id')
@@ -962,27 +962,33 @@ export function createDb(cfg = {}) {
       if (!squads?.length) return [];
 
       const squadIds = squads.map(s => s.id);
-      const { data: teams, error: tErr } = await sb
-        .from('user_teams')
-        .select('id, squad_id, user_team_match_scores(total_points)')
-        .in('squad_id', squadIds);
-      if (tErr) throw tErr;
 
-      // Sum points per squad
+      // SL scores live in user_match_xi_scores (one row per player per squad per match).
+      // user_team_match_scores is the daily pipeline and never receives SL data.
+      const { data: scores, error: scErr } = await sb
+        .from('user_match_xi_scores')
+        .select('squad_id, match_id, total_points')
+        .in('squad_id', squadIds);
+      if (scErr) throw scErr;
+
+      // Sum all player points per squad; count distinct matches where squad scored > 0
       const pointsBySquad = {};
-      const countBySquad  = {};
-      (teams || []).forEach(t => {
-        const pts = Number(t.user_team_match_scores?.[0]?.total_points ?? 0);
-        pointsBySquad[t.squad_id] = (pointsBySquad[t.squad_id] || 0) + pts;
-        if (pts > 0) countBySquad[t.squad_id] = (countBySquad[t.squad_id] || 0) + 1;
+      const matchesBySquad = {};
+      (scores || []).forEach(s => {
+        const pts = Number(s.total_points ?? 0);
+        pointsBySquad[s.squad_id]  = (pointsBySquad[s.squad_id]  || 0) + pts;
+        if (pts > 0) {
+          if (!matchesBySquad[s.squad_id]) matchesBySquad[s.squad_id] = new Set();
+          matchesBySquad[s.squad_id].add(s.match_id);
+        }
       });
 
       return squads
         .map(s => ({
           userId      : s.user_id,
           squadName   : s.name,
-          totalPoints : pointsBySquad[s.id] || 0,
-          matchCount  : countBySquad[s.id]  || 0,
+          totalPoints : pointsBySquad[s.id]         || 0,
+          matchCount  : matchesBySquad[s.id]?.size  || 0,
         }))
         .sort((a, b) => b.totalPoints - a.totalPoints);
     },
