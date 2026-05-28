@@ -1041,7 +1041,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=96';
+    import { createDb, NotConfiguredError } from './db.js?v=97';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -1599,7 +1599,6 @@ p31,Sample Player,MI,bat,9.0,false
       if (!state.db) { el.innerHTML = '<div class="lb-empty">Connect a database to view leaderboard.</div>'; return; }
       el.innerHTML = '<div class="lb-empty">Loading…</div>';
       try {
-        // Fetch profiles for display names
         lbState.profiles = await state.db.getProfiles();
 
         let rows = [];
@@ -1616,25 +1615,127 @@ p31,Sample Player,MI,bat,9.0,false
         if (!rows.length) { el.innerHTML = '<div class="lb-empty">No teams saved yet for this match.</div>'; return; }
 
         const medals = ['🥇','🥈','🥉'];
+        const isSL   = lbState.tab !== 'daily';
+        const roleOrder = { wk: 0, bat: 1, ar: 2, bowl: 3 };
+
         const tbody = rows.map((r, i) => {
           const name     = lbState.profiles[r.userId] || 'Unknown';
-          const subLabel = lbState.tab === 'daily' ? r.teamName : `${r.squadName} · ${r.matchCount} match${r.matchCount !== 1 ? 'es' : ''}`;
+          const subLabel = isSL ? `${r.squadName} · ${r.matchCount} match${r.matchCount !== 1 ? 'es' : ''}` : r.teamName;
           const rank     = medals[i] || `#${i + 1}`;
-          return `<tr>
+          const pts      = r.totalPoints % 1 === 0 ? r.totalPoints : r.totalPoints.toFixed(1);
+          const detailId = isSL ? `lb_detail_${r.squadId?.replace(/-/g,'') ?? i}` : '';
+          const mainRow  = `<tr class="${isSL ? 'lb-expandable' : ''}" data-squad="${r.squadId || ''}" data-detail="${detailId}" style="${isSL ? 'cursor:pointer;' : ''}">
             <td class="lb-rank">${rank}</td>
-            <td><div class="lb-name">${name}</div><div class="lb-sub">${subLabel}</div></td>
-            <td class="r">${r.totalPoints % 1 === 0 ? r.totalPoints : r.totalPoints.toFixed(1)}</td>
+            <td><div class="lb-name">${escapeHtml(name)} ${isSL ? '<span style="font-size:10px;color:var(--muted);">▾</span>' : ''}</div><div class="lb-sub">${escapeHtml(subLabel)}</div></td>
+            <td class="r">${pts}</td>
           </tr>`;
+          const detailRow = isSL ? `<tr id="${detailId}" style="display:none;"><td colspan="3" style="padding:0;"></td></tr>` : '';
+          return mainRow + detailRow;
         }).join('');
 
         el.innerHTML = `<table class="lb-table">
           <thead><tr>
             <th style="width:36px">#</th>
-            <th>Player</th>
+            <th>Player${isSL ? ' <span style="font-size:9px;color:var(--muted);font-weight:400;">(tap to expand)</span>' : ''}</th>
             <th class="r">Pts</th>
           </tr></thead>
           <tbody>${tbody}</tbody>
         </table>`;
+
+        // Wire SL expand/collapse
+        if (isSL) {
+          el.querySelectorAll('.lb-expandable').forEach(row => {
+            row.addEventListener('click', async () => {
+              const detailId  = row.dataset.detail;
+              const squadId   = row.dataset.squad;
+              const detailRow = el.querySelector('#' + detailId);
+              if (!detailRow) return;
+              const isOpen = detailRow.style.display !== 'none';
+              // Toggle caret
+              const caret = row.querySelector('span[style*="▾"], span[style*="▴"]');
+              if (isOpen) {
+                detailRow.style.display = 'none';
+                if (caret) caret.textContent = '▾';
+                return;
+              }
+              if (caret) caret.textContent = '▴';
+              detailRow.style.display = '';
+              const cell = detailRow.querySelector('td');
+              // If already loaded, just show
+              if (cell.innerHTML.trim()) return;
+              cell.innerHTML = '<div style="padding:10px 8px;color:var(--muted);font-size:12px;">Loading…</div>';
+              try {
+                const season = await state.db.getSquadSeason(squadId);
+                if (!season.matches.length) {
+                  cell.innerHTML = '<div style="padding:10px 8px;color:var(--muted);font-size:12px;">No scored matches yet.</div>';
+                  return;
+                }
+                const penMap = {};
+                (season.transfers || []).forEach(t => {
+                  penMap[t.match_id] = (penMap[t.match_id] || 0) + Number(t.points_deducted ?? 0);
+                });
+                let running = 0;
+                const matchRows = [...season.matches]
+                  .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0))
+                  .map(m => {
+                    const pen = penMap[m.match_id] || 0;
+                    const net = m.xi_total - pen;
+                    running  += net;
+                    const innerDetailId = detailId + '_m' + (m.match_id || '').replace(/-/g, '');
+                    const sortedPlayers = [...(m.players || [])].sort((a, b) => (roleOrder[a.role] ?? 9) - (roleOrder[b.role] ?? 9));
+                    const playerRows = sortedPlayers.map(p => {
+                      const badge = p.is_captain ? '<span class="cap-badge">C</span>' : p.is_vc ? '<span class="vc-badge">VC</span>' : '';
+                      return `<tr>
+                        <td style="padding:3px 8px;font-size:11px;">${escapeHtml(p.player_name)}${badge}</td>
+                        <td style="padding:3px 8px;font-size:11px;color:var(--muted);">${p.team_id || '—'}</td>
+                        <td style="padding:3px 8px;font-size:11px;text-align:right;color:var(--accent);">${Number(p.total_points).toFixed(1)}</td>
+                      </tr>`;
+                    }).join('');
+                    return `
+                      <tr class="sl-match-row" data-detail="${innerDetailId}" style="cursor:pointer;background:var(--panel-2);">
+                        <td style="padding:5px 8px;font-size:12px;font-weight:600;">M${m.match_number ?? '?'} · ${m.home_team_id ?? '?'} vs ${m.away_team_id ?? '?'} <span style="font-size:10px;color:var(--muted);">▾</span></td>
+                        <td style="padding:5px 8px;font-size:12px;text-align:right;">${net.toFixed(1)}</td>
+                        <td style="padding:5px 8px;font-size:12px;text-align:right;color:var(--muted);">${running.toFixed(1)}</td>
+                      </tr>
+                      <tr id="${innerDetailId}" style="display:none;">
+                        <td colspan="3" style="padding:0;">
+                          <table style="width:100%;border-collapse:collapse;">
+                            <thead><tr>
+                              <th style="padding:3px 8px;font-size:10px;color:var(--muted);text-align:left;background:var(--panel);">Player</th>
+                              <th style="padding:3px 8px;font-size:10px;color:var(--muted);background:var(--panel);">Team</th>
+                              <th style="padding:3px 8px;font-size:10px;color:var(--muted);text-align:right;background:var(--panel);">Pts</th>
+                            </tr></thead>
+                            <tbody>${playerRows}</tbody>
+                          </table>
+                        </td>
+                      </tr>`;
+                  }).join('');
+                cell.innerHTML = `
+                  <table style="width:100%;border-collapse:collapse;font-size:12px;border-top:1px solid var(--border);">
+                    <thead><tr>
+                      <th style="padding:5px 8px;text-align:left;color:var(--muted);font-size:10px;background:var(--panel-2);">Match</th>
+                      <th style="padding:5px 8px;text-align:right;color:var(--muted);font-size:10px;background:var(--panel-2);">Net</th>
+                      <th style="padding:5px 8px;text-align:right;color:var(--muted);font-size:10px;background:var(--panel-2);">Running</th>
+                    </tr></thead>
+                    <tbody>${matchRows}</tbody>
+                  </table>`;
+                // Wire inner match expand/collapse
+                cell.querySelectorAll('.sl-match-row').forEach(mRow => {
+                  mRow.addEventListener('click', () => {
+                    const mid = el.querySelector('#' + mRow.dataset.detail);
+                    if (!mid) return;
+                    const open = mid.style.display !== 'none';
+                    mid.style.display = open ? 'none' : '';
+                    const c = mRow.querySelector('span[style*="▾"], span[style*="▴"]');
+                    if (c) c.textContent = open ? '▾' : '▴';
+                  });
+                });
+              } catch (e) {
+                cell.innerHTML = `<div style="padding:10px 8px;color:var(--bad);font-size:12px;">Failed: ${e.message}</div>`;
+              }
+            });
+          });
+        }
       } catch (e) {
         el.innerHTML = `<div class="lb-empty">Failed to load: ${e.message}</div>`;
       }

@@ -986,6 +986,7 @@ export function createDb(cfg = {}) {
       return squads
         .map(s => ({
           userId      : s.user_id,
+          squadId     : s.id,
           squadName   : s.name,
           totalPoints : pointsBySquad[s.id]         || 0,
           matchCount  : matchesBySquad[s.id]?.size  || 0,
