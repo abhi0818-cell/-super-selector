@@ -6311,6 +6311,30 @@ p31,Sample Player,MI,bat,9.0,false
       try { localStorage.removeItem(`sb-${PROJECT_REF}-auth-token-code-verifier`); } catch (_) {}
       state.currentUser = null;
       state.db = null;
+      // Reset all user-specific state so the next user starts completely fresh.
+      // Without this, state.sl.initialized stays true and the next user sees the
+      // previous user's SL team instead of their own.
+      state.selected = [];
+      state.captain = null;
+      state.viceCaptain = null;
+      state.activeSavedTeamId = null;
+      state.savedTeams = [];
+      state.activeMatchId = null;
+      state.sl.initialized     = false;
+      state.sl.loading         = false;
+      state.sl.contests        = [];
+      state.sl.seasonContest   = null;
+      state.sl.squad           = null;
+      state.sl.activeSlTab     = 'xi';
+      state.sl.prevXI          = { playerIds: [], captainId: null, vcId: null };
+      state.sl.xiPlayers       = [];
+      state.sl.xiCaptain       = null;
+      state.sl.xiVc            = null;
+      state.sl.lastLockedXI    = null;
+      state.sl.seasonData      = null;
+      state.sl.seasonXferCount = 0;
+      state.sl.seasonXferCap   = null;
+      state.sl.seasonPhase     = 'regular';
       showLoginScreen();
     });
     $('#adminCloseBtn').addEventListener('click', closeAdmin);
