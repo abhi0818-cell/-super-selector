@@ -1165,8 +1165,25 @@ export function createDb(cfg = {}) {
      *   Returns whichever formats have been saved. Missing formats are absent
      *   from the result so callers can fall back to defaults per-format.
      */
-    async getScoringRules() {
+    /**
+     * Load scoring-rule overrides for a tournament.
+     * Primary source: tournaments.scoring_rules JSONB column (tournament-scoped).
+     * Fallback: legacy global scoring_rules table (pre-v10 data).
+     *
+     * @param {string} [tournamentId]
+     * @returns {Promise<{T20?:object, ODI?:object, TEST?:object}>}
+     */
+    async getScoringRules(tournamentId) {
       const sb = await getClient();
+      if (tournamentId) {
+        const { data, error } = await sb
+          .from('tournaments')
+          .select('scoring_rules')
+          .eq('id', tournamentId)
+          .single();
+        if (!error && data?.scoring_rules) return data.scoring_rules;
+      }
+      // Legacy fallback: global scoring_rules table (kept for backward compat)
       const { data, error } = await sb.from('scoring_rules').select('format, rules');
       if (error) throw error;
       const out = {};
@@ -1175,23 +1192,45 @@ export function createDb(cfg = {}) {
     },
 
     /**
-     * Upsert one format's rules.
+     * Save one format's rules into the tournament row (tournaments.scoring_rules JSONB).
+     * Merges — other formats are preserved.
+     *
+     * @param {string} tournamentId
      * @param {'T20'|'ODI'|'TEST'} format
-     * @param {object} rules         the full rules object for that format
+     * @param {object} rules
      */
-    async saveScoringRules(format, rules) {
+    async saveScoringRules(tournamentId, format, rules) {
       if (!['T20', 'ODI', 'TEST'].includes(format)) throw new Error('saveScoringRules: bad format');
+      if (!tournamentId) throw new Error('saveScoringRules: tournamentId required');
       const sb = await getClient();
+      // Read current JSONB so we can merge rather than overwrite other formats
+      const { data: t, error: tErr } = await sb
+        .from('tournaments').select('scoring_rules').eq('id', tournamentId).single();
+      if (tErr) throw tErr;
+      const merged = { ...(t?.scoring_rules || {}), [format]: rules };
       const { error } = await sb
-        .from('scoring_rules')
-        .upsert({ format, rules, updated_at: new Date().toISOString() }, { onConflict: 'format' });
+        .from('tournaments').update({ scoring_rules: merged }).eq('id', tournamentId);
       if (error) throw error;
     },
 
-    /** Delete a format's overrides — reverts to in-code defaults on next load. */
-    async resetScoringRules(format) {
+    /**
+     * Remove one format's overrides from the tournament row — reverts to in-code defaults.
+     *
+     * @param {string} tournamentId
+     * @param {'T20'|'ODI'|'TEST'} format
+     */
+    async resetScoringRules(tournamentId, format) {
+      if (!tournamentId) throw new Error('resetScoringRules: tournamentId required');
       const sb = await getClient();
-      const { error } = await sb.from('scoring_rules').delete().eq('format', format);
+      const { data: t, error: tErr } = await sb
+        .from('tournaments').select('scoring_rules').eq('id', tournamentId).single();
+      if (tErr) throw tErr;
+      const merged = { ...(t?.scoring_rules || {}) };
+      delete merged[format];
+      const { error } = await sb
+        .from('tournaments')
+        .update({ scoring_rules: Object.keys(merged).length ? merged : null })
+        .eq('id', tournamentId);
       if (error) throw error;
     },
 

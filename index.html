@@ -870,6 +870,26 @@
           </div>
           <small style="color:var(--muted); display:block; margin-top:8px;">After creating, go to Teams → add franchises, then Players → import the pool, then Schedule → sync fixtures.</small>
         </div>
+        <!-- Scoring rules — editable during setup, locked once tournament starts -->
+        <div id="tournamentScoringSection" style="display:none; border:1px solid var(--border); border-radius:8px; padding:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:8px;">
+            <div>
+              <div style="font-size:13px; font-weight:600;">Scoring Rules</div>
+              <div id="tournamentScoringStatus" style="font-size:11px; color:var(--muted); margin-top:2px;"></div>
+            </div>
+            <div id="tournamentScoringActions" style="display:flex; gap:6px; flex-shrink:0;">
+              <button id="tournamentRulesSaveBtn" class="primary" style="font-size:12px; padding:5px 12px;">Save rules</button>
+              <button id="tournamentRulesResetBtn" class="danger" style="font-size:12px; padding:5px 12px;">Reset to defaults</button>
+            </div>
+          </div>
+          <div class="rules-tabs" style="margin-bottom:12px;" id="tournamentRulesTabs">
+            <span class="tab active" data-tfmt="T20">T20</span>
+            <span class="tab" data-tfmt="ODI">ODI</span>
+            <span class="tab" data-tfmt="TEST">Test</span>
+            <span class="dirty-pill" id="tournamentRulesDirty">unsaved</span>
+          </div>
+          <div id="tournamentRulesEditor"></div>
+        </div>
       </div>
 
       <div class="modal-body" id="adminTableView">
@@ -985,23 +1005,22 @@ p31,Sample Player,MI,bat,9.0,false
           <span class="csv-summary" id="csvSummary"></span>
         </div>
       </div>
-      <!-- Scoring tab -->
+      <!-- Scoring tab — display only -->
       <div class="modal-body" id="adminScoringView" style="display:none; padding:16px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
           <div>
             <div style="font-size:13px; font-weight:600;">Scoring Rules</div>
-            <div style="font-size:11px; color:var(--muted); margin-top:2px;">Active format: <span id="rulesFormatLabel" style="color:var(--accent); font-weight:600;"></span> — edits apply to live scores immediately</div>
-          </div>
-          <div style="display:flex; gap:8px;">
-            <button id="rulesSaveBtn" class="primary" style="font-size:12px; padding:5px 12px;">Save rules</button>
-            <button id="rulesResetBtn" class="danger" style="font-size:12px; padding:5px 12px;">Reset to defaults</button>
+            <div style="font-size:11px; color:var(--muted); margin-top:2px;">
+              Active format: <span id="rulesFormatLabel" style="color:var(--accent); font-weight:600;"></span>
+              — <span id="scoringTabHint">set rules in the <strong style="color:var(--accent); cursor:pointer;" id="scoringTabTournamentLink">Tournament tab</strong> before the first match</span>
+            </div>
           </div>
         </div>
         <div class="rules-tabs" style="margin-bottom:12px;">
           <span class="tab active" data-fmt="T20">T20</span>
           <span class="tab" data-fmt="ODI">ODI</span>
           <span class="tab" data-fmt="TEST">Test</span>
-          <span class="dirty-pill" id="rulesDirty">unsaved</span>
+          <span class="dirty-pill" id="rulesDirty" style="display:none;"></span>
         </div>
         <div id="rulesEditor"></div>
       </div>
@@ -1041,7 +1060,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=98';
+    import { createDb, NotConfiguredError } from './db.js?v=100';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -1448,6 +1467,11 @@ p31,Sample Player,MI,bat,9.0,false
 
     // Expose state for console debugging
     window._appState = state;
+
+    /** True once any match in the active tournament is no longer upcoming. */
+    function isTournamentStarted() {
+      return (state.matches || []).some(m => m.status === 'in_progress' || m.status === 'completed');
+    }
 
     // Classify a CricAPI match status into a lifecycle stage.
     // Returns: 'completed' | 'live' | 'upcoming' | 'unknown'
@@ -2015,9 +2039,9 @@ p31,Sample Player,MI,bat,9.0,false
           }
           console.log(`[boot] Defaulted match to next upcoming: M${nextMatch.match_number}`);
         }
-        // Load saved scoring-rule overrides
+        // Load scoring-rule overrides from the active tournament (falls back to legacy table)
         try {
-          const overrides = await db.getScoringRules();
+          const overrides = await db.getScoringRules(state.activeTournamentId);
           Object.entries(overrides || {}).forEach(([fmt, rules]) => {
             if (SCORING_RULES[fmt]) SCORING_RULES[fmt] = { ...DEFAULT_SCORING_RULES[fmt], ...rules };
           });
@@ -2155,11 +2179,21 @@ p31,Sample Player,MI,bat,9.0,false
       applyTournamentFormat(tournament);
       try { state.matches = await state.db.listMatches(id); }
       catch (e) { console.warn('listMatches failed after tournament switch', e); }
+      // Reload scoring rules for the new tournament
+      try {
+        const overrides = await state.db.getScoringRules(id);
+        SCORING_RULES = JSON.parse(JSON.stringify(DEFAULT_SCORING_RULES)); // reset first
+        Object.entries(overrides || {}).forEach(([fmt, rules]) => {
+          if (SCORING_RULES[fmt]) SCORING_RULES[fmt] = { ...DEFAULT_SCORING_RULES[fmt], ...rules };
+        });
+      } catch (e) { console.warn('Could not reload scoring rules on tournament switch', e); }
       await loadPlayersForActiveTournament();
       renderMatchSelector();
       renderMatchesAdmin();
       renderPool();
       renderAdmin();
+      renderTournamentScoringRules();
+      renderRulesEditor();
       const fmt = tournament?.format || 'T20';
       toast(`Switched to ${tournament?.name ?? 'tournament'} · ${fmt} scoring.`);
     }
@@ -4360,12 +4394,28 @@ p31,Sample Player,MI,bat,9.0,false
           renderFantasyScorecard();
           $('#scorecardSection').setAttribute('open', '');
 
-          // Quota-stretch: stop polling on match completion (one fetch covers it).
-          const stage = matchLifecycle(payload);
+        },
+        onPoll: (players, payload) => {
+          // Always update lastScorecard with fresh payload so renders use latest data.
+          state.lastScorecard = payload;
+          // Persist to localStorage (fast restore on reload)
+          saveScorecard(id, payload);
+          // Also persist to DB match_scorecards table (survives localStorage clears)
+          const localMatch = state.matches.find(m => m.external_id === id);
+          if (localMatch && state.db) {
+            state.db.saveMatchScorecard(localMatch.id, payload).catch(() => {});
+          }
+          render();
+          renderScorecard();
+          renderFantasyScorecard();
+          const syncedAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          state._lastSyncedAt = syncedAt;
 
-          // ── Auto-update match status in DB from API ────────────────────────
-          // Maps lifecycle → our status so the admin table + auto-lock stay current
-          // without requiring a manual CricAPI sync.
+          // ── Auto-update match status on every poll ─────────────────────────
+          // Moved here from onUpdate so status flips even when player data hasn't
+          // changed (e.g. toss underway → no batting stats yet, or final ball →
+          // scorecard already frozen but status string changes to "X won by Y").
+          const stage = matchLifecycle(payload);
           const apiStatus = stage === 'completed' ? 'completed'
                           : stage === 'live'      ? 'in_progress'
                           : null;
@@ -4398,22 +4448,6 @@ p31,Sample Player,MI,bat,9.0,false
             $('#liveLabel').textContent = `Live — synced with CricAPI (polling every ~${pollMins} min)`;
             $('#liveDot').classList.add('on');
           }
-        },
-        onPoll: (players, payload) => {
-          // Always update lastScorecard with fresh payload so renders use latest data.
-          state.lastScorecard = payload;
-          // Persist to localStorage (fast restore on reload)
-          saveScorecard(id, payload);
-          // Also persist to DB match_scorecards table (survives localStorage clears)
-          const localMatch = state.matches.find(m => m.external_id === id);
-          if (localMatch && state.db) {
-            state.db.saveMatchScorecard(localMatch.id, payload).catch(() => {});
-          }
-          render();
-          renderScorecard();
-          renderFantasyScorecard();
-          const syncedAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          state._lastSyncedAt = syncedAt;
         },
         onError: (e) => {
           if (isKeyExhaustedError(e.message)) {
@@ -4483,7 +4517,8 @@ p31,Sample Player,MI,bat,9.0,false
       $('#adminCsvView').style.display        = 'none';
       // Toolbar (search + import) is only useful for players
       document.querySelector('.admin-toolbar').style.display = (tab === 'players') ? 'flex' : 'none';
-      if (tab === 'teams')         renderTeamsAdmin();
+      if (tab === 'tournament')    renderTournamentScoringRules();
+      else if (tab === 'teams')    renderTeamsAdmin();
       else if (tab === 'schedule') renderMatchesAdmin();
       else if (tab === 'scoring')  renderRulesEditor();
       else if (tab === 'contests') renderContestsAdmin();
@@ -6238,82 +6273,134 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     // ─── RULES EDITOR ────────────────────────────────────────────────────────
-    function renderRulesEditor() {
-      const fmt = state.rulesEditing;
-      $('#rulesFormatLabel').textContent = `(${fmt})`;
-      // Sync the format tab pills
-      document.querySelectorAll('.rules-tabs .tab').forEach(t => {
-        t.classList.toggle('active', t.dataset.fmt === fmt);
-      });
-      $('#rulesDirty').classList.toggle('on', state.rulesDirty);
 
+    /**
+     * Build the rule-grid HTML for a given format.
+     * readOnly=true → plain text values (no inputs).
+     */
+    function buildRulesGrid(fmt, readOnly) {
       const cur = SCORING_RULES[fmt];
       const def = DEFAULT_SCORING_RULES[fmt];
-      const editor = $('#rulesEditor');
-
-      // Group rule keys by their RULE_META group
+      if (!cur) return '';
       const grouped = {};
       Object.keys(cur).forEach(key => {
         const meta = RULE_META[key];
         if (!meta) return;
         (grouped[meta.group] ||= []).push(key);
       });
-
-      // Render in canonical group order
-      editor.innerHTML = RULE_GROUP_ORDER.filter(g => grouped[g]?.length).map(group => {
+      return RULE_GROUP_ORDER.filter(g => grouped[g]?.length).map(group => {
         const rows = grouped[group].map(key => {
           const v = cur[key];
-          const dv = def[key];
-          const changed = (Number(v) !== Number(dv));
+          const dv = def?.[key];
+          const changed = dv !== undefined && Number(v) !== Number(dv);
+          const cell = readOnly
+            ? `<span class="rule-input ${changed ? 'changed' : ''}" style="display:inline-block;min-width:48px;text-align:right;padding:4px 6px;background:var(--panel);border-radius:4px;font-size:12px;">${v}</span>`
+            : `<input type="number" step="0.5" class="rule-input ${changed ? 'changed' : ''}" data-key="${key}" value="${v}" />`;
           return `
-            <label class="lbl" title="default: ${dv}">${RULE_META[key].label}</label>
-            <input type="number" step="0.5" class="rule-input ${changed?'changed':''}" data-key="${key}" value="${v}" />
+            <label class="lbl" title="default: ${dv ?? '—'}">${RULE_META[key].label}</label>
+            ${cell}
           `;
         }).join('');
-        return `
-          <div class="rule-group-title">${group}</div>
-          <div class="rule-grid">${rows}</div>
-        `;
+        return `<div class="rule-group-title">${group}</div><div class="rule-grid">${rows}</div>`;
       }).join('');
+    }
 
-      // Wire inputs
-      editor.querySelectorAll('input.rule-input').forEach(inp => {
-        inp.addEventListener('input', e => {
-          const key = e.target.dataset.key;
-          const num = parseFloat(e.target.value);
-          if (Number.isFinite(num)) {
-            SCORING_RULES[fmt][key] = num;
-            state.rulesDirty = true;
-            $('#rulesDirty').classList.add('on');
-            // Mark changed/unchanged tint
-            const def = DEFAULT_SCORING_RULES[fmt][key];
-            e.target.classList.toggle('changed', Number(num) !== Number(def));
-            render(); // recompute live scores
-          }
-        });
+    /**
+     * Tournament tab — scoring rules section.
+     * Editable when tournament hasn't started; locked + read-only once it has.
+     */
+    function renderTournamentScoringRules() {
+      const section = $('#tournamentScoringSection');
+      if (!section) return;
+      if (!state.activeTournamentId) { section.style.display = 'none'; return; }
+      section.style.display = 'block';
+
+      const locked   = isTournamentStarted();
+      const fmt      = state.rulesEditing || 'T20';
+      const statusEl = $('#tournamentScoringStatus');
+      const actions  = $('#tournamentScoringActions');
+      const dirtyPill = $('#tournamentRulesDirty');
+
+      statusEl.innerHTML = locked
+        ? '<span style="color:var(--accent-2);">🔒 Locked — tournament in progress. Rules are final.</span>'
+        : 'Customise points for each format before the first match starts.';
+
+      if (actions) actions.style.display = locked ? 'none' : 'flex';
+      if (dirtyPill) dirtyPill.classList.toggle('on', !locked && state.rulesDirty);
+
+      // Sync format tab pills
+      document.querySelectorAll('#tournamentRulesTabs .tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.tfmt === fmt);
+        t.style.pointerEvents = locked ? 'none' : '';
+        t.style.opacity       = locked ? '0.7' : '';
       });
+
+      const editor = $('#tournamentRulesEditor');
+      if (!editor) return;
+      editor.innerHTML = buildRulesGrid(fmt, locked);
+
+      if (!locked) {
+        editor.querySelectorAll('input.rule-input').forEach(inp => {
+          inp.addEventListener('input', e => {
+            const key = e.target.dataset.key;
+            const num = parseFloat(e.target.value);
+            if (Number.isFinite(num)) {
+              SCORING_RULES[fmt][key] = num;
+              state.rulesDirty = true;
+              if (dirtyPill) dirtyPill.classList.add('on');
+              const dv = DEFAULT_SCORING_RULES[fmt]?.[key];
+              e.target.classList.toggle('changed', Number(num) !== Number(dv));
+              render();
+            }
+          });
+        });
+      }
+    }
+
+    /**
+     * Scoring tab — always read-only display of the current rules.
+     */
+    function renderRulesEditor() {
+      const fmt = state.rulesEditing;
+      $('#rulesFormatLabel').textContent = `(${fmt})`;
+      document.querySelectorAll('.rules-tabs .tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.fmt === fmt);
+      });
+      // Update hint based on tournament state
+      const hint = $('#scoringTabHint');
+      if (hint) {
+        hint.innerHTML = isTournamentStarted()
+          ? '<span style="color:var(--accent-2);">🔒 Locked — tournament in progress</span>'
+          : 'set rules in the <strong style="color:var(--accent); cursor:pointer;" id="scoringTabTournamentLink">Tournament tab</strong> before the first match';
+      }
+      const editor = $('#rulesEditor');
+      editor.innerHTML = buildRulesGrid(fmt, /* readOnly */ true);
     }
 
     async function saveRules() {
       if (!state.db) { toast('Connect a database first to persist rules.'); return; }
+      if (!state.activeTournamentId) { toast('No active tournament — create one first.'); return; }
+      if (isTournamentStarted()) { toast('Rules are locked — tournament is already in progress.', 4000); return; }
       try {
         const fmt = state.rulesEditing;
-        await state.db.saveScoringRules(fmt, SCORING_RULES[fmt]);
+        await state.db.saveScoringRules(state.activeTournamentId, fmt, SCORING_RULES[fmt]);
         state.rulesDirty = false;
-        $('#rulesDirty').classList.remove('on');
-        toast(`Saved ${fmt} rules.`);
+        $('#tournamentRulesDirty')?.classList.remove('on');
+        toast(`Saved ${fmt} scoring rules.`);
       } catch (e) { toast('Save failed: ' + e.message, 4000); }
     }
 
     async function resetRules() {
+      if (isTournamentStarted()) { toast('Rules are locked — tournament is already in progress.', 4000); return; }
       const fmt = state.rulesEditing;
       if (!confirm(`Reset ${fmt} rules to the built-in defaults?`)) return;
       SCORING_RULES[fmt] = JSON.parse(JSON.stringify(DEFAULT_SCORING_RULES[fmt]));
       state.rulesDirty = false;
-      if (state.db) {
-        try { await state.db.resetScoringRules(fmt); } catch (e) { toast('DB reset failed: ' + e.message); }
+      if (state.db && state.activeTournamentId) {
+        try { await state.db.resetScoringRules(state.activeTournamentId, fmt); }
+        catch (e) { toast('DB reset failed: ' + e.message); }
       }
-      renderRulesEditor(); render();
+      renderTournamentScoringRules(); renderRulesEditor(); render();
       toast(`${fmt} rules reset to defaults.`);
     }
 
@@ -6515,11 +6602,22 @@ p31,Sample Player,MI,bat,9.0,false
       const v = e.target.value.trim();
       if (v) localStorage.setItem(API_KEY_LS, v);
     });
-    $('#rulesSaveBtn').addEventListener('click', saveRules);
-    $('#rulesResetBtn').addEventListener('click', resetRules);
+    // Scoring tab format tabs (display-only — no save/reset buttons there)
     document.querySelectorAll('.rules-tabs .tab').forEach(t => t.addEventListener('click', () => {
       state.rulesEditing = t.dataset.fmt;
       renderRulesEditor();
+    }));
+    // "Tournament tab" link inside the Scoring tab hint
+    document.addEventListener('click', e => {
+      if (e.target.id === 'scoringTabTournamentLink') switchAdminTab('tournament');
+    });
+    // Tournament tab scoring section
+    $('#tournamentRulesSaveBtn').addEventListener('click', saveRules);
+    $('#tournamentRulesResetBtn').addEventListener('click', resetRules);
+    document.querySelectorAll('#tournamentRulesTabs .tab').forEach(t => t.addEventListener('click', () => {
+      if (isTournamentStarted()) return; // locked — ignore clicks
+      state.rulesEditing = t.dataset.tfmt;
+      renderTournamentScoringRules();
     }));
     $('#sbConnectBtn').addEventListener('click', () => {
       const url = $('#sbUrl').value.trim(); const key = $('#sbKey').value.trim();
