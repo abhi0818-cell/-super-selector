@@ -1041,7 +1041,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=92';
+    import { createDb, NotConfiguredError } from './db.js?v=93';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -2248,7 +2248,7 @@ p31,Sample Player,MI,bat,9.0,false
      */
     async function slOnMatchChanged() {
       if (state.mode !== 'season_long' || !state.sl.initialized || !state.sl.squad) return;
-      await slCheckAutoLock();
+      await slCheckAutoLock({ preserveXI: true }); // keep in-memory picks, only refresh baseline
       await slLoadDraft({ refreshOnly: true }); // refresh prevXI/transfer baseline only — don't overwrite in-progress XI
       renderSlXiTab();
       renderPool();
@@ -2614,7 +2614,11 @@ p31,Sample Player,MI,bat,9.0,false
      * Check for any matches that have started but have no locked XI yet.
      * Called on every SL tab render. Idempotent — skips if already locked.
      */
-    async function slCheckAutoLock() {
+    // preserveXI: true  → called from slOnMatchChanged (match dropdown changed while user
+    //                      is actively working) — refresh baseline only, keep in-memory picks.
+    // preserveXI: false → called from initSeasonLong (cold boot) — full reload so the XI
+    //                      is populated from the newly-locked match when no draft exists yet.
+    async function slCheckAutoLock({ preserveXI = false } = {}) {
       if (!state.db || !state.sl.squad) return;
       const squadId = state.sl.squad.id;
       const now     = Date.now();
@@ -2633,11 +2637,10 @@ p31,Sample Player,MI,bat,9.0,false
           didLock = true;
         }
       }
-      // If anything was locked, refresh prevXI/lastLockedXI so the SL tab reflects it.
-      // Always use refreshOnly:true here — we only need to update the transfer baseline,
-      // NOT overwrite the user's current in-memory XI picks.
-      // The full XI restore (no refreshOnly) happens only on initial load in initSeasonLong.
-      if (didLock) await slLoadDraft({ refreshOnly: true });
+      // Refresh after lock. preserveXI controls whether we overwrite the in-memory XI:
+      // - cold boot (preserveXI=false): full reload so xiPlayers is set from the locked XI
+      // - match change (preserveXI=true): baseline only, don't wipe in-progress picks
+      if (didLock) await slLoadDraft({ refreshOnly: preserveXI });
     }
 
     // ─── SEASON TAB ──────────────────────────────────────────────────────────
