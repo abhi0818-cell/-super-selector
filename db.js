@@ -1260,12 +1260,16 @@ export function createDb(cfg = {}) {
       const sb = await getClient();
       const { data: { user } } = await sb.auth.getUser();
       const uid = user?.id;
+      // IMPORTANT: query builder is immutable — must chain or reassign.
+      // Also always filter by user_id: the leaderboard RLS policy allows all
+      // authenticated users to read all squads, so without this filter
+      // maybeSingle() returns the first squad in the contest (wrong user).
       const q = sb
         .from('user_squads')
         .select('*')
         .eq('contest_id', contestId);
-      if (uid) q.eq('user_id', uid);
-      const { data, error } = await q.maybeSingle();
+      const finalQ = uid ? q.eq('user_id', uid) : q;
+      const { data, error } = await finalQ.maybeSingle();
       if (error) throw error;
       return data ?? null;
     },
