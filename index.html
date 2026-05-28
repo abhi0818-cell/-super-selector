@@ -1041,7 +1041,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=95';
+    import { createDb, NotConfiguredError } from './db.js?v=96';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -2857,26 +2857,32 @@ p31,Sample Player,MI,bat,9.0,false
      * Only fires when the polled match == the locked XI match.
      */
     async function persistLiveSlScores(liveMatchId) {
-      const locked = state.sl.lastLockedXI;
-      if (!locked?.playerIds?.length || !state.db || !state.sl.squad) return;
-      if (locked.matchId !== liveMatchId) return; // polling a different match
-      const squadId = state.sl.squad.id;
-      const { playerIds, captainId, vcId, matchId } = locked;
+      if (!state.db || !liveMatchId) return;
 
-      const scores = playerIds.map(id => {
-        const p = PLAYERS.find(x => x.id === id); if (!p) return null;
-        const stats     = state.stats[id] || {};
-        const captaincy = id === captainId ? 'captain' : id === vcId ? 'vice_captain' : 'normal';
-        const result    = calculateScore({ name: p.name, role: p.role, captaincy, ...stats }, state.format);
-        return { playerId: id, basePoints: result.rawPoints, multiplier: result.multiplier, totalPoints: result.totalPoints };
-      }).filter(Boolean);
+      // Score ALL squads that have a locked XI for this match, not just the current user's.
+      // This keeps the leaderboard live for everyone while any user is watching.
+      let squadXIs;
+      try { squadXIs = await state.db.getAllSquadXIsForMatch(liveMatchId); }
+      catch (e) { console.warn('[SL live] getAllSquadXIsForMatch failed:', e.message); return; }
+      if (!Object.keys(squadXIs).length) return;
 
-      if (!scores.length) return;
-      try {
-        await state.db.upsertSquadMatchScores(squadId, matchId, scores);
-        // Invalidate Season cache so next open shows updated totals
-        state.sl.seasonData = null;
-      } catch (e) { console.warn('[SL persist]', e.message); }
+      let anyUpdated = false;
+      for (const [squadId, rows] of Object.entries(squadXIs)) {
+        const scores = rows.map(r => {
+          const p = PLAYERS.find(x => x.id === r.player_id); if (!p) return null;
+          const stats     = state.stats[r.player_id] || {};
+          const captaincy = r.is_captain ? 'captain' : r.is_vc ? 'vice_captain' : 'normal';
+          const result    = calculateScore({ name: p.name, role: p.role, captaincy, ...stats }, state.format);
+          return { playerId: r.player_id, basePoints: result.rawPoints, multiplier: result.multiplier, totalPoints: result.totalPoints };
+        }).filter(Boolean);
+        if (!scores.length) continue;
+        try {
+          await state.db.upsertSquadMatchScores(squadId, liveMatchId, scores);
+          anyUpdated = true;
+        } catch (e) { console.warn(`[SL live] upsert failed for squad ${squadId}:`, e.message); }
+      }
+      // Invalidate Season cache so the Season tab reflects latest live totals
+      if (anyUpdated) state.sl.seasonData = null;
     }
 
     // ─── DAILY LIVE SCORE TAB ───────────────────────────────────────────────
