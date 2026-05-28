@@ -1897,6 +1897,17 @@ p31,Sample Player,MI,bat,9.0,false
             console.warn('Boot XI references players not in current pool — skipping auto-load.');
           }
         }
+        // Always default the match dropdown to the next upcoming match if nothing else set it.
+        // This means a fresh user (or new match) sees M73 pre-selected instead of "All matches".
+        if (!state.activeMatchId && nextMatch) {
+          state.activeMatchId = nextMatch.id;
+          if (nextMatch.format) {
+            state.format       = nextMatch.format;
+            state.rulesEditing = nextMatch.format;
+            const fmtPill = $('#formatPill'); if (fmtPill) fmtPill.textContent = nextMatch.format;
+          }
+          console.log(`[boot] Defaulted match to next upcoming: M${nextMatch.match_number}`);
+        }
         // Load saved scoring-rule overrides
         try {
           const overrides = await db.getScoringRules();
