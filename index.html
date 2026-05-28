@@ -1041,7 +1041,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=97';
+    import { createDb, NotConfiguredError } from './db.js?v=98';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -1675,12 +1675,18 @@ p31,Sample Player,MI,bat,9.0,false
                   penMap[t.match_id] = (penMap[t.match_id] || 0) + Number(t.points_deducted ?? 0);
                 });
                 let running = 0;
-                const matchRows = [...season.matches]
+                // Compute net + running totals in ascending order, then reverse for display
+                const matchRowData = [...season.matches]
                   .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0))
                   .map(m => {
                     const pen = penMap[m.match_id] || 0;
                     const net = m.xi_total - pen;
                     running  += net;
+                    return { m, net, runningAtMatch: running };
+                  });
+                const matchRows = [...matchRowData]
+                  .reverse()
+                  .map(({ m, net, runningAtMatch }) => {
                     const innerDetailId = detailId + '_m' + (m.match_id || '').replace(/-/g, '');
                     const sortedPlayers = [...(m.players || [])].sort((a, b) => (roleOrder[a.role] ?? 9) - (roleOrder[b.role] ?? 9));
                     const playerRows = sortedPlayers.map(p => {
@@ -1695,7 +1701,7 @@ p31,Sample Player,MI,bat,9.0,false
                       <tr class="sl-match-row" data-detail="${innerDetailId}" style="cursor:pointer;background:var(--panel-2);">
                         <td style="padding:5px 8px;font-size:12px;font-weight:600;">M${m.match_number ?? '?'} · ${m.home_team_id ?? '?'} vs ${m.away_team_id ?? '?'} <span style="font-size:10px;color:var(--muted);">▾</span></td>
                         <td style="padding:5px 8px;font-size:12px;text-align:right;">${net.toFixed(1)}</td>
-                        <td style="padding:5px 8px;font-size:12px;text-align:right;color:var(--muted);">${running.toFixed(1)}</td>
+                        <td style="padding:5px 8px;font-size:12px;text-align:right;color:var(--muted);">${runningAtMatch.toFixed(1)}</td>
                       </tr>
                       <tr id="${innerDetailId}" style="display:none;">
                         <td colspan="3" style="padding:0;">
