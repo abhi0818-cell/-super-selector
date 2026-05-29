@@ -777,6 +777,8 @@
               <div class="stat" id="slXiStatOS"><div class="label">Overseas</div><div class="value">0/4</div></div>
             </div>
             <div id="slXferInfoBar" style="font-size:12px; padding:4px 0 6px; color:var(--muted);"></div>
+            <!-- Booster pills (shown when contest has available_boosters) -->
+            <div id="slBoosterBar" style="display:none; padding:6px 0 8px;"></div>
             <!-- Selected XI list -->
             <div id="slXiList" style="margin-bottom:6px;"></div>
             <div class="save-bar">
@@ -1088,7 +1090,17 @@ p31,Sample Player,MI,bat,9.0,false
         no_ball:-1, wide:-1 },
     };
     let SCORING_RULES = JSON.parse(JSON.stringify(DEFAULT_SCORING_RULES));
-    const MULTIPLIERS = { captain: 2, vice_captain: 1.5, normal: 1 };
+    const MULTIPLIERS = { captain: 2, triple_captain: 3, vice_captain: 1.5, normal: 1 };
+
+    // ─── BOOSTER METADATA ────────────────────────────────────────────────────
+    const BOOSTER_META = {
+      triple_captain : { label: 'Triple Captain',   icon: '👑', desc: 'Captain scores 3× instead of 2× for one match.' },
+      wildcard       : { label: 'Wildcard',          icon: '🃏', desc: 'Make unlimited free transfers for one match window — no deduction.' },
+      free_hit       : { label: 'Free Hit',          icon: '🎯', desc: 'Like Wildcard but your permanent XI reverts automatically after the match.' },
+      os_double      : { label: 'OS Double',         icon: '✈️', desc: 'All overseas players in your XI score 2× their base points.' },
+      indian_double  : { label: 'Indian Double',     icon: '🇮🇳', desc: 'All Indian (non-overseas) players in your XI score 2× their base points.' },
+      team_double    : { label: 'Team Double',       icon: '⚡', desc: 'Every player in your XI scores 2× their base points for the match.' },
+    };
 
     // ─── RULE METADATA (for the editor UI) ───────────────────────────────────
     const RULE_META = {
@@ -1178,16 +1190,30 @@ p31,Sample Player,MI,bat,9.0,false
       return { points:Object.values(b).reduce((a,c)=>a+c,0), breakdown:b };
     }
     // rulesOverride: optional flat rules object for a specific league — overrides global SCORING_RULES[fmt].
-    function calculateScore(player,fmt='T20',rulesOverride){
-      const {name,role,captaincy='normal',batting,bowling,fielding}=player;
+    // booster:       optional active booster key for this player's squad + match.
+    //   'triple_captain' → captain multiplier becomes 3× (vice-captain stays 1.5×)
+    //   'os_double'      → overseas players (is_overseas=true) get an extra 2× on raw points
+    //   'indian_double'  → domestic players (is_overseas=false) get an extra 2× on raw points
+    //   'team_double'    → all players get an extra 2× on raw points
+    //   'wildcard'/'free_hit' → no scoring effect (handled in transfer logic only)
+    function calculateScore(player,fmt='T20',rulesOverride,booster){
+      const {name,role,captaincy='normal',batting,bowling,fielding,is_overseas=false}=player;
       const breakdown={}; let raw=0;
       if(batting){ const r=calcBatting({...batting,role},fmt,rulesOverride); breakdown.batting=r.breakdown; raw+=r.points; }
       if(bowling){ const r=calcBowling(bowling,fmt,rulesOverride);           breakdown.bowling=r.breakdown; raw+=r.points; }
       if(fielding){ const r=calcFielding(fielding,fmt,rulesOverride);        breakdown.fielding=r.breakdown; raw+=r.points; }
-      const mult=MULTIPLIERS[captaincy]||1;
+      // Captaincy multiplier — triple_captain promotes captain from 2× to 3×
+      const captancyKey = (booster === 'triple_captain' && captaincy === 'captain') ? 'triple_captain' : captaincy;
+      const captMult = MULTIPLIERS[captancyKey] || 1;
+      // Player-class booster multiplier (applied to raw points before captaincy mult)
+      let boosterMult = 1;
+      if(booster === 'team_double')                              boosterMult = 2;
+      else if(booster === 'os_double'     &&  is_overseas)      boosterMult = 2;
+      else if(booster === 'indian_double' && !is_overseas)      boosterMult = 2;
+      const mult = captMult * boosterMult;
       return { name, totalPoints: Math.round(raw*mult*10)/10, multiplier:mult, rawPoints: Math.round(raw*10)/10, breakdown };
     }
-    function scoreTeam(players,fmt='T20'){ return players.map(p=>calculateScore(p,fmt)).sort((a,b)=>b.totalPoints-a.totalPoints); }
+    function scoreTeam(players,fmt='T20',booster){ return players.map(p=>calculateScore(p,fmt,null,booster)).sort((a,b)=>b.totalPoints-a.totalPoints); }
 
     // ─── ADAPTER (CricAPI subset) ────────────────────────────────────────────
     const int=v=>parseInt(v,10)||0;
@@ -1460,13 +1486,14 @@ p31,Sample Player,MI,bat,9.0,false
         contests       : [],
         seasonContest  : null,  // the season_long contest row
         squad          : null,  // user_squads row (null = not joined yet)
-        activeSlTab    : 'xi',  // 'xi' | 'live' | 'season'
+        activeSlTab    : 'xi',  // 'xi' | 'live' | 'season' | 'leagues'
         prevXI         : { playerIds: [], captainId: null, vcId: null }, // last match's XI (carry-over)
         xiPlayers      : [],    // IDs chosen for this match's XI
         xiCaptain      : null,
         xiVc           : null,
         lastLockedXI   : null,  // {playerIds, captainId, vcId, matchNumber, matchId} — most recently locked XI
-        seasonData     : null,  // last getSquadSeason() result
+        seasonData        : null,  // last getSquadSeason() result
+        boosterActivations: null,  // cached array from db.getBoosterActivations — null = not loaded
         seasonXferCount: 0,     // transfers used in the active phase window
         seasonXferCap  : null, // active phase cap (null = unlimited)
         seasonPhase    : 'regular', // 'pre_season' | 'regular' | 'playoff'
@@ -2405,6 +2432,36 @@ p31,Sample Player,MI,bat,9.0,false
         }
       }
 
+      // 3b. Free Hit revert: if the last locked match had a free_hit active AND
+      //     that match is now completed, restore the pre-free-hit snapshot as the
+      //     current draft so the permanent squad wasn't permanently altered.
+      if (!refreshOnly && lastLocked?.matchId) {
+        const lastLockedMatchStatus = state.matches.find(m => m.id === lastLocked.matchId)?.status ?? null;
+        if (lastLockedMatchStatus === 'completed') {
+          try {
+            const snapshot = await state.db.getFreeHitSnapshot(squadId, lastLocked.matchId);
+            if (snapshot?.playerIds?.length === 11) {
+              // Only revert if the current draft still matches the free-hit XI
+              // (i.e. user hasn't manually overridden it since)
+              const currentDraftIds = new Set(state.sl.draft?.playerIds ?? []);
+              const lockedIds       = new Set(lastLocked.playerIds ?? []);
+              const draftMatchesLocked =
+                currentDraftIds.size === lockedIds.size &&
+                [...currentDraftIds].every(id => lockedIds.has(id));
+              if (draftMatchesLocked) {
+                const revertDraft = { playerIds: snapshot.playerIds, captainId: snapshot.captainId, vcId: snapshot.vcId };
+                await state.db.saveDraft(squadId, revertDraft);
+                state.sl.draft     = revertDraft;
+                state.sl.xiPlayers = [...revertDraft.playerIds];
+                state.sl.xiCaptain = revertDraft.captainId ?? null;
+                state.sl.xiVc      = revertDraft.vcId      ?? null;
+                console.log('[SL free_hit] Reverted draft to pre-free-hit snapshot.');
+              }
+            }
+          } catch (e) { console.warn('[SL free_hit] Revert check failed:', e.message); }
+        }
+      }
+
       // 4. Refresh transfer count — use next upcoming match for phase detection.
       // slNextLockMatch() requires start_time; if no start_time is set (e.g. playoff
       // match not yet scheduled), fall back to the next non-completed match by
@@ -2663,6 +2720,14 @@ p31,Sample Player,MI,bat,9.0,false
                 : xi.length < 11 ? 'Pick ' + (11 - xi.length) + ' more from the pool.'
                 : !cap ? 'Set a captain (tap C).' : !vc ? 'Set a vice-captain (tap V).' : 'C and VC must differ.';
       }
+
+      // Booster pills — async, fire-and-forget; renders into #slBoosterBar independently
+      if (state.sl.squad && state.sl.seasonContest?.available_boosters) {
+        renderSlBoosterBar();
+      } else {
+        const bar = $('#slBoosterBar');
+        if (bar) bar.style.display = 'none';
+      }
     }
 
     function slSetCaptain(id) {
@@ -2683,6 +2748,116 @@ p31,Sample Player,MI,bat,9.0,false
      * No match target, no transfer counting — transfers are counted at lock time
      * (when the next match's start_time arrives).
      */
+    // ─── BOOSTER BAR ─────────────────────────────────────────────────────────
+
+    /**
+     * Render the booster pill row on the Pick XI tab.
+     * Fetches activations fresh each time; updates #slBoosterBar in place.
+     * Hides the bar entirely when the active contest has no boosters.
+     */
+    async function renderSlBoosterBar() {
+      const bar = $('#slBoosterBar');
+      if (!bar) return;
+
+      const contest   = state.sl.seasonContest;
+      const available = contest?.available_boosters;
+      if (!available || !Object.keys(available).length) {
+        bar.style.display = 'none'; return;
+      }
+
+      bar.style.display = '';
+      bar.innerHTML = '<span style="font-size:11px;color:var(--muted);">Boosters loading…</span>';
+
+      // Determine the next upcoming (unlocked) match — boosters are activated per match
+      const now          = Date.now();
+      const nextMatch    = state.matches
+        .filter(m => m.start_time && new Date(m.start_time).getTime() > now && m.status !== 'completed')
+        .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))[0] ?? null;
+
+      // Fetch all activations for this squad
+      let activations = state.sl.boosterActivations;
+      if (!activations) {
+        try {
+          activations = await state.db.getBoosterActivations(state.sl.squad?.id);
+          state.sl.boosterActivations = activations;
+        } catch (e) {
+          bar.innerHTML = `<span style="font-size:11px;color:var(--bad);">Could not load boosters: ${escapeHtml(e.message)}</span>`;
+          return;
+        }
+      }
+
+      // Which booster (if any) is active for the next match?
+      const activeForNext = nextMatch
+        ? (activations.find(a => a.match_id === nextMatch.id)?.booster ?? null)
+        : null;
+
+      // Build pills
+      const pills = Object.entries(available).map(([key, totalUses]) => {
+        const meta       = BOOSTER_META[key]; if (!meta) return '';
+        const usedCount  = activations.filter(a => a.booster === key).length;
+        const remaining  = totalUses - usedCount;
+        const isActive   = activeForNext === key;
+        const isSpent    = remaining <= 0;
+
+        let pillStyle = `display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:20px;font-size:12px;font-weight:600;cursor:${isSpent ? 'default' : 'pointer'};border:1px solid;transition:all .15s;`;
+        if (isActive)     pillStyle += 'background:rgba(34,211,238,0.18);border-color:var(--accent);color:var(--accent);';
+        else if (isSpent) pillStyle += 'background:var(--panel-2);border-color:var(--border);color:var(--muted);opacity:0.55;';
+        else              pillStyle += 'background:var(--panel-2);border-color:var(--border);color:var(--text);';
+
+        const label   = isActive ? `${meta.icon} ${meta.label} ✓ Active`
+                      : isSpent  ? `${meta.icon} ${meta.label} (used)`
+                      : `${meta.icon} ${meta.label} (${remaining} left)`;
+        const matchNote = nextMatch ? `M${nextMatch.match_number ?? '?'}` : 'no upcoming match';
+
+        return `<button
+          class="sl-booster-pill"
+          data-booster="${key}"
+          data-active="${isActive}"
+          data-spent="${isSpent}"
+          title="${escapeHtml(meta.desc)} · ${remaining}/${totalUses} uses remaining"
+          style="${pillStyle}"
+        >${label}</button>`;
+      }).filter(Boolean).join('');
+
+      const matchLabel = nextMatch
+        ? `<span style="font-size:11px;color:var(--muted);margin-left:6px;">for M${nextMatch.match_number ?? '?'} · ${nextMatch.home_team_id ?? '?'} vs ${nextMatch.away_team_id ?? '?'}</span>`
+        : `<span style="font-size:11px;color:var(--muted);margin-left:6px;">no upcoming match to activate for</span>`;
+
+      bar.innerHTML = `<div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">⚡ Boosters ${matchLabel}</div><div style="display:flex;flex-wrap:wrap;gap:6px;">${pills}</div>`;
+
+      // Wire pill clicks
+      bar.querySelectorAll('.sl-booster-pill').forEach(pill => {
+        if (pill.dataset.spent === 'true') return;
+        pill.addEventListener('click', async () => {
+          const booster  = pill.dataset.booster;
+          const isActive = pill.dataset.active === 'true';
+
+          if (!nextMatch) { toast('No upcoming match to activate a booster for.', 3000); return; }
+          if (!state.db)  { toast('Not connected.', 3000); return; }
+
+          if (isActive) {
+            // Deactivate
+            try {
+              await state.db.deactivateBooster(state.sl.squad.id, nextMatch.id, booster);
+              state.sl.boosterActivations = null; // invalidate cache
+              toast(`${BOOSTER_META[booster].label} deactivated.`, 2500);
+              renderSlBoosterBar();
+            } catch (e) { toast('Deactivate failed: ' + e.message, 4000); }
+          } else {
+            // Activate — for free_hit, snapshot is taken at lock time; pass null here
+            try {
+              await state.db.activateBooster(
+                state.sl.squad.id, nextMatch.id, booster, contest, null
+              );
+              state.sl.boosterActivations = null;
+              toast(`${BOOSTER_META[booster].label} activated for M${nextMatch.match_number ?? '?'}!`, 3000);
+              renderSlBoosterBar();
+            } catch (e) { toast(e.message, 4000); }
+          }
+        });
+      });
+    }
+
     async function saveSlXiHandler() {
       if (!state.db || !state.sl.squad) { toast('Not connected.'); return; }
 
@@ -2748,6 +2923,25 @@ p31,Sample Player,MI,bat,9.0,false
       const squadId = state.sl.squad.id;
 
       try {
+        // Check for an active wildcard or free_hit booster — if present, transfers
+        // are free for this match (no deduction, no count against the season budget).
+        let activeBooster = null;
+        try { activeBooster = await state.db.getActiveBoosterForMatch(squadId, matchId); } catch {}
+        const bypassTransfers = activeBooster === 'wildcard' || activeBooster === 'free_hit';
+
+        // Free Hit: snapshot the current draft BEFORE locking so it can be restored afterwards.
+        if (activeBooster === 'free_hit') {
+          const draft = state.sl.draft ?? {};
+          if (draft.playerIds?.length === 11) {
+            try {
+              // Re-activate with snapshot (overwrite the placeholder row saved at activation time)
+              await state.db.deactivateBooster(squadId, matchId, 'free_hit');
+              await state.db.activateBooster(squadId, matchId, 'free_hit',
+                contest, { playerIds: draft.playerIds, captainId: draft.captainId, vcId: draft.vcId });
+            } catch (e) { console.warn('[SL lock] free_hit snapshot update failed:', e.message); }
+          }
+        }
+
         // Lock the draft → user_match_xi + user_transfers
         const result = await state.db.lockMatchXI(squadId, matchId, {
           total_transfers_allowed    : contest.total_transfers_allowed    ?? null,
@@ -2755,6 +2949,7 @@ p31,Sample Player,MI,bat,9.0,false
           playoff_start_match_number : contest.playoff_start_match_number ?? null,
           playoff_transfers_allowed  : contest.playoff_transfers_allowed  ?? null,
           allMatches                 : state.matches,
+          bypassTransfers,
         });
 
         // Also write to user_teams for the scoring pipeline
@@ -3070,10 +3265,11 @@ p31,Sample Player,MI,bat,9.0,false
           if (!squadId || !contestId) return;
           const { squad: sq, contest: ct } = userSquads.find(u => u.squad.id === squadId) || {};
           if (!sq || !ct) return;
-          state.sl.seasonContest = ct;
-          state.sl.squad         = sq;
-          state.sl.seasonData    = null;  // clear cached season data
-          state.sl.initialized   = false;
+          state.sl.seasonContest     = ct;
+          state.sl.squad             = sq;
+          state.sl.seasonData        = null;  // clear cached season data
+          state.sl.boosterActivations = null; // clear booster cache for new squad
+          state.sl.initialized       = false;
           await initSeasonLong();
           renderSlLeaguesTab(); // re-render to update Active badge
           toast(`Switched to league: ${ct.name}`, 3000);
@@ -4735,6 +4931,40 @@ p31,Sample Player,MI,bat,9.0,false
       else                         renderAdmin();
     }
 
+    /**
+     * Build the HTML for the booster configuration panel inside a contest card.
+     * Shows one row per booster type: checkbox (enabled) + number input (uses).
+     * contestId is used to build unique input IDs; available is the current JSONB value or null.
+     */
+    function buildBoosterConfigHtml(contestId, available) {
+      const av = available || {};
+      const rows = Object.entries(BOOSTER_META).map(([key, meta]) => {
+        const enabled = key in av;
+        const count   = av[key] ?? 1;
+        const uid     = `boost_${key}_${contestId.replace(/-/g,'')}`;
+        return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);">
+          <input type="checkbox" id="${uid}_chk" data-booster="${key}" class="boost-chk" ${enabled ? 'checked' : ''} style="flex-shrink:0;" />
+          <label for="${uid}_chk" style="font-size:12px;flex:1;cursor:pointer;">
+            ${meta.icon} <strong>${meta.label}</strong>
+            <span style="color:var(--muted);font-size:11px;margin-left:4px;">${meta.desc}</span>
+          </label>
+          <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+            <span style="font-size:11px;color:var(--muted);">Uses:</span>
+            <input type="number" min="1" max="10" value="${count}" id="${uid}_count"
+              style="width:50px;font-size:12px;padding:3px 6px;" ${enabled ? '' : 'disabled'} />
+          </div>
+        </div>`;
+      }).join('');
+      return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border);">
+        <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--muted);">⚡ Boosters</div>
+        <div id="boostGrid_${contestId.replace(/-/g,'')}">${rows}</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+          <button class="primary boost-save-btn" data-contest="${contestId}" style="font-size:12px;padding:4px 12px;">Save Boosters</button>
+          <span class="boost-status" data-contest="${contestId}" style="font-size:11px;color:var(--muted);"></span>
+        </div>
+      </div>`;
+    }
+
     async function renderContestsAdmin() {
       const wrap = $('#adminContestsList');
       if (!state.db) {
@@ -4790,6 +5020,7 @@ p31,Sample Player,MI,bat,9.0,false
                 ${numRow('Season start match number','Season-long scoring and transfers only apply from this match number onward. Leave blank to include all matches.',`startMN_${c.id}`,startMN,'All matches')}
                 ${numRow('Playoff start match number','Match number where the playoff phase begins (uses a separate transfer budget). Leave blank if no playoff phase.',`playoffStartMN_${c.id}`,playoffStartMN,'No playoffs')}
                 ${numRow('Playoff transfer budget','Separate transfer allowance for the playoff phase. Leave blank for unlimited playoff transfers.',`playoffBudget_${c.id}`,playoffBudget,'Unlimited')}
+                ${buildBoosterConfigHtml(c.id, c.available_boosters)}
               ` : `<div style="font-size:12px;color:var(--muted);">No configurable options for daily contests.</div>`}
             </div>`;
         }).join('') +
@@ -4842,6 +5073,7 @@ p31,Sample Player,MI,bat,9.0,false
                   <button class="primary pl-cap-save" data-contest="${c.id}" style="font-size:12px; padding:4px 10px;">Save</button>
                   <span class="pl-cap-status" data-contest="${c.id}" style="font-size:11px; color:var(--muted);"></span>
                 </div>
+                ${buildBoosterConfigHtml(c.id, c.available_boosters)}
               </div>`;
             }).join('');
           })()}
@@ -4853,6 +5085,25 @@ p31,Sample Player,MI,bat,9.0,false
               <input id="plName" type="text" placeholder="League name (e.g. The Office League)" style="font-size:13px;" />
               <div style="display:flex; gap:6px; align-items:center;">
                 <input id="plMaxMembers" type="number" min="2" max="100" placeholder="Max members (optional)" style="font-size:13px; flex:1;" />
+              </div>
+              <!-- Boosters for new league -->
+              <div style="border:1px solid var(--border); border-radius:6px; padding:10px; margin-top:2px;">
+                <div style="font-size:12px; font-weight:600; margin-bottom:8px; color:var(--muted);">⚡ Boosters <span style="font-weight:400;">(check to enable, set how many uses each member gets)</span></div>
+                <div id="plBoostersGrid">
+                  ${Object.entries(BOOSTER_META).map(([key, meta]) => `
+                    <div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);">
+                      <input type="checkbox" id="plBoost_${key}" data-booster="${key}" class="pl-new-boost-chk" style="flex-shrink:0;" />
+                      <label for="plBoost_${key}" style="font-size:12px;flex:1;cursor:pointer;">
+                        ${meta.icon} <strong>${meta.label}</strong>
+                        <span style="color:var(--muted);font-size:11px;margin-left:4px;">${meta.desc}</span>
+                      </label>
+                      <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+                        <span style="font-size:11px;color:var(--muted);">Uses:</span>
+                        <input type="number" min="1" max="10" value="1" id="plBoost_${key}_count"
+                          style="width:50px;font-size:12px;padding:3px 6px;" disabled />
+                      </div>
+                    </div>`).join('')}
+                </div>
               </div>
               <label style="font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; cursor:pointer;">
                 <input type="checkbox" id="plCustomRules" />
@@ -4964,7 +5215,58 @@ p31,Sample Player,MI,bat,9.0,false
           });
         });
 
+        // ── Booster checkbox → enable/disable count input ─────────────────────
+        wrap.querySelectorAll('.boost-chk').forEach(chk => {
+          chk.addEventListener('change', () => {
+            // Find sibling count input (same parent div)
+            const countInp = chk.closest('div').querySelector('input[type="number"]');
+            if (countInp) countInp.disabled = !chk.checked;
+          });
+        });
+
+        // ── Booster Save buttons ──────────────────────────────────────────────
+        wrap.querySelectorAll('.boost-save-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const contestId = btn.dataset.contest;
+            const statusEl  = wrap.querySelector(`.boost-status[data-contest="${contestId}"]`);
+            const gridId    = `boostGrid_${contestId.replace(/-/g,'')}`;
+            const grid      = wrap.querySelector(`#${gridId}`);
+            if (!grid) return;
+            // Collect enabled boosters + their counts
+            const boosters = {};
+            grid.querySelectorAll('.boost-chk').forEach(chk => {
+              if (chk.checked) {
+                const key      = chk.dataset.booster;
+                const countInp = chk.closest('div').querySelector('input[type="number"]');
+                const count    = parseInt(countInp?.value || '1', 10);
+                boosters[key]  = Number.isFinite(count) && count >= 1 ? count : 1;
+              }
+            });
+            btn.disabled = true; statusEl.textContent = 'Saving…'; statusEl.style.color = 'var(--muted)';
+            try {
+              const payload = Object.keys(boosters).length ? boosters : null;
+              await state.db.updateContestBoosters(contestId, payload);
+              // Update in-memory so the active contest reflects new boosters
+              const mc = state.sl.contests?.find(x => x.id === contestId);
+              if (mc) mc.available_boosters = payload;
+              if (state.sl.seasonContest?.id === contestId) state.sl.seasonContest.available_boosters = payload;
+              statusEl.textContent = payload ? `✓ Saved (${Object.keys(payload).length} booster${Object.keys(payload).length !== 1 ? 's' : ''})` : '✓ Boosters cleared.';
+              statusEl.style.color = 'var(--good,#4ade80)';
+            } catch (e) {
+              statusEl.textContent = 'Save failed: ' + e.message; statusEl.style.color = 'var(--bad)';
+            } finally { btn.disabled = false; }
+          });
+        });
+
         // ── New private league form ───────────────────────────────────────────
+        // Toggle count inputs on new-league booster checkboxes
+        wrap.querySelectorAll('.pl-new-boost-chk').forEach(chk => {
+          chk.addEventListener('change', () => {
+            const countInp = document.getElementById(`plBoost_${chk.dataset.booster}_count`);
+            if (countInp) countInp.disabled = !chk.checked;
+          });
+        });
+
         // State for the new-league scoring rules (starts as a copy of current tournament rules)
         let plFmt = 'T20';
         const plRules = JSON.parse(JSON.stringify(SCORING_RULES));
@@ -5024,10 +5326,22 @@ p31,Sample Player,MI,bat,9.0,false
               });
               if (Object.keys(changed).length) scoringRules = changed;
             }
+            // Collect enabled boosters from the new-league booster grid
+            const newLeagueBoosters = {};
+            wrap.querySelectorAll('.pl-new-boost-chk').forEach(chk => {
+              if (chk.checked) {
+                const key      = chk.dataset.booster;
+                const countInp = document.getElementById(`plBoost_${key}_count`);
+                const count    = parseInt(countInp?.value || '1', 10);
+                newLeagueBoosters[key] = Number.isFinite(count) && count >= 1 ? count : 1;
+              }
+            });
+
             const league = await state.db.createPrivateLeague(state.activeTournamentId, {
               name,
               scoringRules,
-              maxMembers: Number.isFinite(maxM) && maxM >= 2 ? maxM : null,
+              maxMembers      : Number.isFinite(maxM) && maxM >= 2 ? maxM : null,
+              availableBoosters: Object.keys(newLeagueBoosters).length ? newLeagueBoosters : null,
             });
             statusEl.textContent = `✓ League created — invite code: ${league.invite_code}`;
             statusEl.style.color = 'var(--good,#4ade80)';
@@ -5975,31 +6289,58 @@ p31,Sample Player,MI,bat,9.0,false
         return SCORING_RULES[fmt];
       }
 
+      // Cache active boosters per squad for this match
+      const squadBoosterMap = {};   // squadId → booster key or null
+      async function getBoosterForSquad(squadId) {
+        if (squadId in squadBoosterMap) return squadBoosterMap[squadId];
+        try {
+          const b = await state.db.getActiveBoosterForMatch(squadId, matchId);
+          squadBoosterMap[squadId] = b;
+          return b;
+        } catch { squadBoosterMap[squadId] = null; return null; }
+      }
+
       let totalSaved = 0;
       for (const [squadId, rows] of Object.entries(squadXIs)) {
-        const contest      = await getContestForSquad(squadId);
-        const hasCustom    = !!(contest?.scoring_rules?.[fmt]);
+        const contest        = await getContestForSquad(squadId);
+        const hasCustom      = !!(contest?.scoring_rules?.[fmt]);
         const effectiveRules = hasCustom ? await rulesForContest(contest) : null;
+        const booster        = await getBoosterForSquad(squadId);
 
         const scores = rows.map(r => {
-          const s    = statsByPlayer[r.player_id];
-          const mult = r.is_captain ? 2 : r.is_vc ? 1.5 : 1;
+          const s = statsByPlayer[r.player_id];
+          const p = PLAYERS.find(x => x.id === r.player_id);
+
+          // Captaincy key — triple_captain only promotes the captain slot
+          const captaincy = r.is_captain
+            ? (booster === 'triple_captain' ? 'triple_captain' : 'captain')
+            : r.is_vc ? 'vice_captain' : 'normal';
+
           let raw;
           if (hasCustom && s !== undefined && effectiveRules) {
             // Re-score from raw stats using the league's custom rules
-            const p = PLAYERS.find(x => x.id === r.player_id);
             const result = calculateScore({
-              name     : p?.name ?? '',
-              role     : p?.role ?? 'bat',
-              captaincy: 'normal',
-              batting  : s.batting  ?? null,
-              bowling  : s.bowling  ?? null,
-              fielding : s.fielding ?? null,
+              name      : p?.name       ?? '',
+              role      : p?.role       ?? 'bat',
+              is_overseas: p?.is_overseas ?? false,
+              captaincy : 'normal',   // apply captaincy multiplier below
+              batting   : s.batting   ?? null,
+              bowling   : s.bowling   ?? null,
+              fielding  : s.fielding  ?? null,
             }, fmt, effectiveRules);
             raw = result.rawPoints;
           } else {
             raw = Number(s?.raw_points ?? 0);
           }
+
+          // Apply captaincy + booster multipliers
+          const captMult = MULTIPLIERS[captaincy] || 1;
+          let boosterMult = 1;
+          if (booster === 'team_double')                                        boosterMult = 2;
+          else if (booster === 'os_double'     &&  (p?.is_overseas ?? false))  boosterMult = 2;
+          else if (booster === 'indian_double' && !(p?.is_overseas ?? false))  boosterMult = 2;
+          const mult = captMult * boosterMult;
+
           return {
             playerId   : r.player_id,
             basePoints : raw,

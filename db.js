@@ -1288,7 +1288,7 @@ export function createDb(cfg = {}) {
       // Falls back gracefully if columns don't exist yet.
       const { data, error } = await sb
         .from('contests')
-        .select('id, name, contest_type, description, is_active, free_transfers_per_match, extra_transfer_point_cost, total_transfers_allowed, start_match_number, playoff_start_match_number, playoff_transfers_allowed, is_private, invite_code, scoring_rules, max_members')
+        .select('id, name, contest_type, description, is_active, free_transfers_per_match, extra_transfer_point_cost, total_transfers_allowed, start_match_number, playoff_start_match_number, playoff_transfers_allowed, is_private, invite_code, scoring_rules, max_members, available_boosters')
         .eq('tournament_id', tournamentId)
         .eq('is_active', true)
         .order('contest_type');   // 'daily' < 'season_long' alphabetically
@@ -1331,6 +1331,7 @@ export function createDb(cfg = {}) {
         invite_code                : c.invite_code                ?? null,
         scoring_rules              : c.scoring_rules              ?? null,
         max_members                : c.max_members                ?? null,
+        available_boosters         : c.available_boosters         ?? null,
       }));
     },
 
@@ -1383,6 +1384,7 @@ export function createDb(cfg = {}) {
         invite_code                 : code,
         scoring_rules               : opts.scoringRules              ?? null,
         max_members                 : opts.maxMembers                ?? null,
+        available_boosters          : opts.availableBoosters         ?? null,
         total_transfers_allowed     : opts.totalTransfersAllowed     ?? null,
         free_transfers_per_match    : opts.freeTransfersPerMatch     ?? null,
         extra_transfer_point_cost   : opts.extraTransferPointCost    ?? 4,
@@ -1798,7 +1800,11 @@ export function createDb(cfg = {}) {
           .map(m => m.id));
       })();
 
-      if (previousPlayerIds.length > 0) {
+      // bypassTransfers: set by wildcard / free_hit booster — XI is saved but no
+      // transfers are counted, logged, or deducted for this match.
+      const bypassTransfers = !!(contestConfig.bypassTransfers);
+
+      if (!bypassTransfers && previousPlayerIds.length > 0) {
         const prevSet = new Set(previousPlayerIds);
         const currSet = new Set(playerIds);
         const playersOut = previousPlayerIds.filter(id => !currSet.has(id));
@@ -2194,6 +2200,184 @@ export function createDb(cfg = {}) {
         transfers  : xferRows || [],
         seasonTotal: +seasonTotal.toFixed(1),
       };
+    },
+
+    // ─── Boosters ─────────────────────────────────────────────────────────────
+
+    /**
+     * All valid booster keys (in display order).
+     * The behaviour of each is implemented in the scoring / transfer pipelines.
+     */
+    BOOSTER_KEYS: [
+      'triple_captain',
+      'wildcard',
+      'free_hit',
+      'os_double',
+      'indian_double',
+      'team_double',
+    ],
+
+    /**
+     * Activate a booster for a squad + match.
+     * Enforces: match not yet started, booster available in contest, uses not exhausted.
+     *
+     * For free_hit: pass snapshotXI = { playerIds, captainId, vcId } — stored so
+     * the XI can be reverted automatically after the match.
+     *
+     * @param {string}       squadId
+     * @param {string}       matchId
+     * @param {string}       booster         one of BOOSTER_KEYS
+     * @param {object|null}  contestConfig   contest row (must include available_boosters)
+     * @param {object|null}  snapshotXI      free_hit only: {playerIds, captainId, vcId}
+     * @returns {Promise<object>}  the new activation row
+     */
+    async activateBooster(squadId, matchId, booster, contestConfig = {}, snapshotXI = null) {
+      if (!squadId) throw new Error('activateBooster: squadId required');
+      if (!matchId) throw new Error('activateBooster: matchId required');
+      if (!booster) throw new Error('activateBooster: booster required');
+
+      const available = contestConfig?.available_boosters;
+      if (!available || !(booster in available)) {
+        throw new Error(`Booster "${booster}" is not available in this contest.`);
+      }
+      const totalUses = available[booster] ?? 0;
+      if (totalUses < 1) throw new Error(`Booster "${booster}" is not offered in this contest.`);
+
+      const sb = await getClient();
+
+      // Check how many times this squad has already used this booster
+      const { count: usedCount, error: cErr } = await sb
+        .from('user_booster_activations')
+        .select('id', { count: 'exact', head: true })
+        .eq('squad_id', squadId)
+        .eq('booster', booster);
+      if (cErr) throw cErr;
+      if ((usedCount ?? 0) >= totalUses) {
+        throw new Error(`You have already used all ${totalUses} ${booster.replace(/_/g,' ')} boost${totalUses > 1 ? 's' : ''}.`);
+      }
+
+      // Insert the activation (UNIQUE constraint on squad_id + match_id + booster prevents duplicates)
+      const row = {
+        squad_id: squadId,
+        match_id: matchId,
+        booster,
+        snapshot: snapshotXI ? {
+          playerIds: snapshotXI.playerIds,
+          captainId: snapshotXI.captainId,
+          vcId     : snapshotXI.vcId,
+        } : null,
+      };
+      const { data, error } = await sb
+        .from('user_booster_activations')
+        .insert(row)
+        .select()
+        .single();
+      if (error) {
+        if (error.code === '23505') throw new Error(`You already have ${booster.replace(/_/g,' ')} active for this match.`);
+        throw error;
+      }
+      return data;
+    },
+
+    /**
+     * Cancel (deactivate) a booster for a squad + match.
+     * Should only be called before the match has started.
+     *
+     * @param {string} squadId
+     * @param {string} matchId
+     * @param {string} booster
+     */
+    async deactivateBooster(squadId, matchId, booster) {
+      const sb = await getClient();
+      const { error } = await sb
+        .from('user_booster_activations')
+        .delete()
+        .eq('squad_id', squadId)
+        .eq('match_id', matchId)
+        .eq('booster', booster);
+      if (error) throw error;
+    },
+
+    /**
+     * All booster activations for a squad (across all matches).
+     * Used to compute "uses remaining" for each booster type.
+     *
+     * @param {string} squadId
+     * @returns {Promise<Array<{id, match_id, booster, activated_at, snapshot}>>}
+     */
+    async getBoosterActivations(squadId) {
+      if (!squadId) return [];
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('user_booster_activations')
+        .select('id, match_id, booster, activated_at, snapshot')
+        .eq('squad_id', squadId)
+        .order('activated_at');
+      if (error) throw error;
+      return data || [];
+    },
+
+    /**
+     * Return the active booster (if any) for a specific squad + match.
+     * Boosters that affect scoring (triple_captain, os_double, indian_double, team_double)
+     * or transfers (wildcard, free_hit) are all retrieved here.
+     *
+     * Returns null if no booster is active for this match.
+     *
+     * @param {string} squadId
+     * @param {string} matchId
+     * @returns {Promise<string|null>}   booster key or null
+     */
+    async getActiveBoosterForMatch(squadId, matchId) {
+      if (!squadId || !matchId) return null;
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('user_booster_activations')
+        .select('booster')
+        .eq('squad_id', squadId)
+        .eq('match_id', matchId)
+        .maybeSingle();
+      if (error) throw error;
+      return data?.booster ?? null;
+    },
+
+    /**
+     * Retrieve the free_hit snapshot for a squad + match.
+     * Returns null if no free_hit was activated or no snapshot was stored.
+     *
+     * @param {string} squadId
+     * @param {string} matchId
+     * @returns {Promise<{playerIds, captainId, vcId}|null>}
+     */
+    async getFreeHitSnapshot(squadId, matchId) {
+      if (!squadId || !matchId) return null;
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('user_booster_activations')
+        .select('snapshot')
+        .eq('squad_id', squadId)
+        .eq('match_id', matchId)
+        .eq('booster', 'free_hit')
+        .maybeSingle();
+      if (error) throw error;
+      return data?.snapshot ?? null;
+    },
+
+    /**
+     * Update the available_boosters JSONB on a contest.
+     * Pass null to remove all boosters from the contest.
+     *
+     * @param {string}      contestId
+     * @param {object|null} boosters  e.g. { triple_captain: 1, wildcard: 1 }
+     */
+    async updateContestBoosters(contestId, boosters) {
+      if (!contestId) throw new Error('updateContestBoosters: contestId required');
+      const sb = await getClient();
+      const { error } = await sb
+        .from('contests')
+        .update({ available_boosters: boosters ?? null })
+        .eq('id', contestId);
+      if (error) throw error;
     },
   };
 }
