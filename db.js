@@ -1514,6 +1514,45 @@ export function createDb(cfg = {}) {
     },
 
     /**
+     * Return all squads (+ their contests) that the signed-in user belongs to
+     * for a given tournament.  Used by the Leagues tab to list every league the
+     * user is a member of.
+     *
+     * @param {string} tournamentId
+     * @returns {Promise<Array<{squad: object, contest: object}>>}
+     */
+    async getUserSquads(tournamentId) {
+      if (!tournamentId) throw new Error('getUserSquads: tournamentId required');
+      const sb = await getClient();
+      const { data: { user } } = await sb.auth.getUser();
+      const uid = user?.id;
+      if (!uid) return [];
+
+      // 1. All squads owned by this user
+      const { data: squads, error: sErr } = await sb
+        .from('user_squads')
+        .select('*')
+        .eq('user_id', uid);
+      if (sErr) throw sErr;
+      if (!squads?.length) return [];
+
+      // 2. Fetch the contests for those squads that belong to this tournament
+      const contestIds = [...new Set(squads.map(s => s.contest_id))];
+      const { data: contests, error: cErr } = await sb
+        .from('contests')
+        .select('id, name, contest_type, is_active, is_private, invite_code, scoring_rules, max_members')
+        .in('id', contestIds)
+        .eq('tournament_id', tournamentId)
+        .eq('is_active', true);
+      if (cErr) throw cErr;
+      const contestMap = Object.fromEntries((contests || []).map(c => [c.id, c]));
+
+      return squads
+        .filter(s => contestMap[s.contest_id])
+        .map(s => ({ squad: s, contest: contestMap[s.contest_id] }));
+    },
+
+    /**
      * Join a season-long contest — creates a lightweight user_squads entry.
      * No players, no budget — just a named entry for the season.
      * @param {string} contestId
