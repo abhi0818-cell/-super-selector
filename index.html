@@ -1530,6 +1530,7 @@ p31,Sample Player,MI,bat,9.0,false
       const data = payload?.data ?? payload ?? {};
       // Some CricAPI responses include matchEnded / matchStarted booleans
       if (data.matchEnded === true) return 'completed';
+      if (data.matchStarted === true) return 'live';
       const status = String(data.status || payload?.status || '').toLowerCase();
       // Completion indicators (varied API copy)
       if (/won by|tied|no result|abandoned|match (ended|completed|drawn)|result|drawn/i.test(status)) return 'completed';
@@ -1537,14 +1538,16 @@ p31,Sample Player,MI,bat,9.0,false
       if (/match started|in progress|innings break|live|stumps|tea|lunch|drinks|day [123456789]/i.test(status)) return 'live';
       // Toss done = match is effectively live (lineups confirmed, play about to start)
       if (/toss/i.test(status)) return 'live';
-      // Upcoming
-      if (/match not started|scheduled|fixture|upcoming/i.test(status)) return 'upcoming';
-      // Structural signal: if the payload has innings data the match has already started,
-      // even when the status string is just e.g. "Team A vs Team B, 73rd Match - 1st innings"
+      // Structural signal: innings data present = match has already started.
+      // Check this BEFORE the "scheduled" string check so that a status like
+      // "73rd Match - 1st innings" (which CricAPI sometimes emits for live IPL games)
+      // doesn't fall through to 'upcoming' just because it lacks a live keyword.
       const innings = data.scorecard ?? data.innings ?? data.scores ?? null;
       if (Array.isArray(innings) && innings.length > 0) return 'live';
       // Status string contains match-play keywords → live
       if (/innings|over|wicket/i.test(status)) return 'live';
+      // Upcoming — only classify as upcoming AFTER confirming no structural live signal
+      if (/match not started|scheduled|fixture|upcoming/i.test(status)) return 'upcoming';
       if (!status) return 'unknown';
       return 'unknown';
     }
@@ -4993,14 +4996,22 @@ p31,Sample Player,MI,bat,9.0,false
           state._lastSyncedAt = syncedAt;
 
           // ── Auto-update match status on every poll ─────────────────────────
-          // Moved here from onUpdate so status flips even when player data hasn't
-          // changed (e.g. toss underway → no batting stats yet, or final ball →
-          // scorecard already frozen but status string changes to "X won by Y").
           const stage = matchLifecycle(payload);
-          const apiStatus = stage === 'completed' ? 'completed'
-                          : stage === 'live'      ? 'in_progress'
-                          : null;
           const pollLocalMatch = state.matches.find(m => m.external_id === id);
+
+          // Derive target status:
+          //   1. matchLifecycle gives a definitive answer → use it
+          //   2. matchLifecycle is 'unknown' but the poller got a scorecard with
+          //      actual player rows → the match must be running; mark in_progress
+          //   3. matchLifecycle is 'unknown' and no player rows yet → leave alone
+          let apiStatus = stage === 'completed' ? 'completed'
+                        : stage === 'live'      ? 'in_progress'
+                        : null;
+          if (!apiStatus && stage === 'unknown' && pollLocalMatch?.status !== 'completed') {
+            const hasPlayers = fromCricAPI(payload, [], state.format).length > 0;
+            if (hasPlayers) apiStatus = 'in_progress';
+          }
+
           if (apiStatus && pollLocalMatch && state.db && pollLocalMatch.status !== apiStatus) {
             state.db.updateMatch(pollLocalMatch.id, { status: apiStatus })
               .then(upd => {
