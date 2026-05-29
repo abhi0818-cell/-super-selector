@@ -562,13 +562,12 @@
         <h2>🏆 Leaderboard</h2>
         <button id="lbCloseBtn">✕</button>
       </div>
-      <div class="lb-tabs">
+      <div class="lb-tabs" id="lbTabsRow">
+        <!-- Tabs built dynamically by renderLbTabs() -->
         <span class="lb-tab active" data-lbtab="daily">Daily XI</span>
-        <span class="lb-tab" data-lbtab="sl">Season Long</span>
       </div>
       <div class="lb-controls">
         <select id="lbMatchPicker" style="display:none"></select>
-        <select id="lbContestPicker" style="display:none"></select>
       </div>
       <div class="lb-body">
         <div id="lbContent"></div>
@@ -1532,13 +1531,21 @@ p31,Sample Player,MI,bat,9.0,false
       // Some CricAPI responses include matchEnded / matchStarted booleans
       if (data.matchEnded === true) return 'completed';
       const status = String(data.status || payload?.status || '').toLowerCase();
-      if (!status) return 'unknown';
       // Completion indicators (varied API copy)
       if (/won by|tied|no result|abandoned|match (ended|completed|drawn)|result|drawn/i.test(status)) return 'completed';
-      // Live indicators
+      // Live indicators — explicit keywords
       if (/match started|in progress|innings break|live|stumps|tea|lunch|drinks|day [123456789]/i.test(status)) return 'live';
+      // Toss done = match is effectively live (lineups confirmed, play about to start)
+      if (/toss/i.test(status)) return 'live';
       // Upcoming
-      if (/match not started|scheduled|fixture|upcoming|toss/i.test(status)) return 'upcoming';
+      if (/match not started|scheduled|fixture|upcoming/i.test(status)) return 'upcoming';
+      // Structural signal: if the payload has innings data the match has already started,
+      // even when the status string is just e.g. "Team A vs Team B, 73rd Match - 1st innings"
+      const innings = data.scorecard ?? data.innings ?? data.scores ?? null;
+      if (Array.isArray(innings) && innings.length > 0) return 'live';
+      // Status string contains match-play keywords → live
+      if (/innings|over|wicket/i.test(status)) return 'live';
+      if (!status) return 'unknown';
       return 'unknown';
     }
 
@@ -1632,21 +1639,67 @@ p31,Sample Player,MI,bat,9.0,false
 
     // ─── LEADERBOARD ─────────────────────────────────────────────────────────
 
-    const lbState = { tab: 'daily', profiles: {} };
+    // lbState.tab = 'daily'  →  Daily XI leaderboard
+    // lbState.tab = <contestId>  →  that SL / private-league leaderboard
+    const lbState = { tab: 'daily', profiles: {}, matchId: null };
 
     function openLeaderboard() {
       $('#lbModal').classList.add('open');
+      renderLbTabs();
       renderLbPickers();
       renderLeaderboard();
     }
     function closeLeaderboard() { $('#lbModal').classList.remove('open'); }
 
+    /**
+     * Build the tab pill row dynamically:
+     *   Daily XI  |  Season Long  |  🔒 Private League A  |  🔒 Private League B  …
+     *
+     * lbState.tab holds either 'daily' or the contest ID of the active SL/private tab.
+     */
+    function renderLbTabs() {
+      const tabsRow = $('#lbTabsRow');
+      if (!tabsRow) return;
+
+      // All SL contests (public first, then private alphabetically)
+      const slContests = (state.sl?.contests || [])
+        .filter(c => c.contest_type === 'season_long')
+        .sort((a, b) => {
+          if (!a.is_private && b.is_private) return -1;
+          if (a.is_private && !b.is_private) return 1;
+          return (a.name || '').localeCompare(b.name || '');
+        });
+
+      // Ensure lbState.tab is valid — fall back to 'daily' or first SL contest
+      const validIds = slContests.map(c => c.id);
+      if (lbState.tab !== 'daily' && !validIds.includes(lbState.tab)) {
+        lbState.tab = slContests[0]?.id ?? 'daily';
+      }
+
+      const pills = [
+        `<span class="lb-tab${lbState.tab === 'daily' ? ' active' : ''}" data-lbtab="daily">Daily XI</span>`,
+        ...slContests.map(c => {
+          const label = c.is_private ? `🔒 ${escapeHtml(c.name)}` : escapeHtml(c.name || 'Season Long');
+          return `<span class="lb-tab${lbState.tab === c.id ? ' active' : ''}" data-lbtab="${c.id}">${label}</span>`;
+        }),
+      ];
+      tabsRow.innerHTML = pills.join('');
+
+      // Wire click handlers
+      tabsRow.querySelectorAll('.lb-tab').forEach(t => {
+        t.addEventListener('click', () => {
+          lbState.tab = t.dataset.lbtab;
+          renderLbTabs();
+          renderLbPickers();
+          renderLeaderboard();
+        });
+      });
+    }
+
     function renderLbPickers() {
-      const matchPicker   = $('#lbMatchPicker');
-      const contestPicker = $('#lbContestPicker');
+      const matchPicker = $('#lbMatchPicker');
       if (lbState.tab === 'daily') {
-        matchPicker.style.display   = '';
-        contestPicker.style.display = 'none';
+        matchPicker.style.display = '';
         const completed = (state.matches || []).filter(m => m.status === 'completed')
           .sort((a, b) => (b.match_number || 0) - (a.match_number || 0));
         matchPicker.innerHTML = completed.length
@@ -1655,33 +1708,7 @@ p31,Sample Player,MI,bat,9.0,false
         if (!lbState.matchId && completed.length) lbState.matchId = completed[0].id;
         if (lbState.matchId) matchPicker.value = lbState.matchId;
       } else {
-        matchPicker.style.display   = 'none';
-        contestPicker.style.display = '';
-        // Build options: public SL contest first, then private leagues (sorted by name)
-        const allContests = (state.sl?.contests || [])
-          .filter(c => c.contest_type === 'season_long')
-          .sort((a, b) => {
-            if (!a.is_private && b.is_private) return -1;  // public first
-            if (a.is_private && !b.is_private) return 1;
-            return (a.name || '').localeCompare(b.name || '');
-          });
-        if (allContests.length) {
-          contestPicker.innerHTML = allContests.map(c =>
-            `<option value="${c.id}">${c.is_private ? '🔒 ' : ''}${escapeHtml(c.name || 'Season Long')}</option>`
-          ).join('');
-          // Default to whatever was last selected, or the first public SL contest
-          if (!lbState.contestId || !allContests.find(c => c.id === lbState.contestId)) {
-            const def = allContests.find(c => !c.is_private) ?? allContests[0];
-            lbState.contestId = def.id;
-          }
-          contestPicker.value = lbState.contestId;
-        } else {
-          const fallback = state.sl?.seasonContest;
-          contestPicker.innerHTML = fallback
-            ? `<option value="${fallback.id}">${escapeHtml(fallback.name || 'Season Long')}</option>`
-            : '<option value="">No SL contest found</option>';
-          if (fallback) lbState.contestId = fallback.id;
-        }
+        matchPicker.style.display = 'none';
       }
     }
 
@@ -1698,7 +1725,8 @@ p31,Sample Player,MI,bat,9.0,false
           if (!matchId) { el.innerHTML = '<div class="lb-empty">No completed matches yet.</div>'; return; }
           rows = await state.db.getLeaderboardDaily(matchId);
         } else {
-          const contestId = lbState.contestId || state.sl?.seasonContest?.id;
+          // lbState.tab holds the contest ID for all SL / private-league tabs
+          const contestId = lbState.tab !== 'daily' ? lbState.tab : (state.sl?.seasonContest?.id ?? null);
           if (!contestId) { el.innerHTML = '<div class="lb-empty">No Season Long contest found.</div>'; return; }
           rows = await state.db.getLeaderboardSL(contestId);
         }
@@ -2369,9 +2397,16 @@ p31,Sample Player,MI,bat,9.0,false
         const contests = await state.db.getContests(state.activeTournamentId);
         state.sl.contests = contests;
 
-        // Respect a pre-set contest (e.g. user switched to a private league).
-        // Only auto-detect the main SL contest when no contest has been selected yet.
-        if (!state.sl.seasonContest) {
+        // Determine which contest to activate:
+        //   - If a contest was pre-set (e.g. user switched to a private league via the
+        //     Leagues tab), find its fully-hydrated copy in the fresh `contests` list so
+        //     all fields (including available_boosters) are present.
+        //   - Otherwise, auto-detect the main non-private season_long contest.
+        if (state.sl.seasonContest?.id) {
+          // Refresh from the full list — getUserSquads may have returned a partial object.
+          const fresh = contests.find(c => c.id === state.sl.seasonContest.id);
+          if (fresh) state.sl.seasonContest = fresh;
+        } else {
           state.sl.seasonContest = contests.find(c => c.contest_type === 'season_long' && !c.is_private) ?? null;
         }
         if (!state.sl.seasonContest) {
@@ -2696,14 +2731,17 @@ p31,Sample Player,MI,bat,9.0,false
         xiList.innerHTML = '<div class="empty" style="padding:8px 0; font-size:12px;">No players selected — tap from the pool on the left.</div>';
         if (totalStatEl) totalStatEl.textContent = '0.0';
       } else {
-        // Compute live scores for all XI players using same engine as daily mode
+        // Compute live scores for all XI players using same engine as daily mode.
+        // Apply the active booster for the next lock match if one is set.
+        const xiLockMatch  = slNextLockMatch() ?? slSaveTarget;
+        const xiBooster    = getCachedBoosterForMatch(xiLockMatch?.id);
         const slScoreInputs = xi.map(id => {
           const p = PLAYERS.find(x => x.id === id); if (!p) return null;
           const stats = state.stats[id] || {};
           const captaincy = id === cap ? 'captain' : id === vc ? 'vice_captain' : 'normal';
-          return { name: p.name, role: p.role, captaincy, ...stats };
+          return { name: p.name, role: p.role, captaincy, is_overseas: !!p.overseas, ...stats };
         }).filter(Boolean);
-        const slScored  = scoreTeam(slScoreInputs, state.format);
+        const slScored  = scoreTeam(slScoreInputs, state.format, xiBooster);
         const slByName  = Object.fromEntries(slScored.map(s => [s.name, s]));
         const slTotal   = slScored.reduce((a, s) => a + s.totalPoints, 0);
 
@@ -2715,6 +2753,9 @@ p31,Sample Player,MI,bat,9.0,false
           const badge = isCap ? '<span class="cap-badge">C</span>' : isVc ? '<span class="vc-badge">VC</span>' : '';
           const isNew = prev.length && !prevSet.has(id);
           const score = slByName[p.name];
+          const multBadge = score && score.multiplier > 1
+            ? `<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:rgba(34,211,238,0.2);color:var(--accent);margin-left:3px;">${score.multiplier}×</span>`
+            : '';
           const breakdown = score && Object.keys(score.breakdown).length
             ? Object.entries(score.breakdown).map(([cat, vals]) => {
                 const items = Object.entries(vals).filter(([, v]) => v !== 0).map(([k, v]) => `${k}: ${v > 0 ? '+' : ''}${v}`).join(', ');
@@ -2723,7 +2764,7 @@ p31,Sample Player,MI,bat,9.0,false
             : '<em>no events yet</em>';
           return `<div class="squad-row${isNew ? ' xfer-in' : ''}" data-slid="${id}">
             <div>
-              <div class="name">${p.name}${badge}${p.overseas ? ' <span class="os-tag">OS</span>' : ''}</div>
+              <div class="name">${p.name}${badge}${multBadge}${p.overseas ? ' <span class="os-tag">OS</span>' : ''}</div>
               <div class="meta"><span class="role-tag role-${p.role}">${roleLabel[p.role]}</span> ${p.team} · ${p.credits.toFixed(1)} cr</div>
             </div>
             <button class="cap-btn ${isCap ? 'captain' : ''}" data-slcap2="${id}" title="Captain (2×)">C</button>
@@ -2798,6 +2839,16 @@ p31,Sample Player,MI,bat,9.0,false
      * No match target, no transfer counting — transfers are counted at lock time
      * (when the next match's start_time arrives).
      */
+    /**
+     * Synchronously return the active booster key for a given matchId,
+     * reading from the cached state.sl.boosterActivations array.
+     * Returns null when no booster is active or the cache isn't loaded yet.
+     */
+    function getCachedBoosterForMatch(matchId) {
+      if (!matchId || !Array.isArray(state.sl.boosterActivations)) return null;
+      return state.sl.boosterActivations.find(a => a.match_id === matchId)?.booster ?? null;
+    }
+
     // ─── BOOSTER BAR ─────────────────────────────────────────────────────────
 
     /**
@@ -3515,11 +3566,17 @@ p31,Sample Player,MI,bat,9.0,false
 
       let anyUpdated = false;
       for (const [squadId, rows] of Object.entries(squadXIs)) {
+        // Look up any active booster for this squad+match
+        let squadBooster = null;
+        try {
+          squadBooster = await state.db.getActiveBoosterForMatch(squadId, liveMatchId);
+        } catch (_) {}
+
         const scores = rows.map(r => {
           const p = PLAYERS.find(x => x.id === r.player_id); if (!p) return null;
           const stats     = state.stats[r.player_id] || {};
           const captaincy = r.is_captain ? 'captain' : r.is_vc ? 'vice_captain' : 'normal';
-          const result    = calculateScore({ name: p.name, role: p.role, captaincy, ...stats }, state.format);
+          const result    = calculateScore({ name: p.name, role: p.role, captaincy, is_overseas: !!p.is_overseas, ...stats }, state.format, null, squadBooster);
           return { playerId: r.player_id, basePoints: result.rawPoints, multiplier: result.multiplier, totalPoints: result.totalPoints };
         }).filter(Boolean);
         if (!scores.length) continue;
@@ -3633,15 +3690,16 @@ p31,Sample Player,MI,bat,9.0,false
       const statusText = match?.status
         ? `<span style="margin-left:6px;font-size:10px;text-transform:uppercase;letter-spacing:0.4px;padding:2px 7px;border-radius:10px;background:var(--panel-2);color:var(--muted);">${match.status}</span>` : '';
 
-      // Score each player using live stats
+      // Score each player using live stats, applying any active booster for this match.
+      const liveBooster = getCachedBoosterForMatch(matchId);
       const scoreInputs = playerIds.map(id => {
         const p = PLAYERS.find(x => x.id === id); if (!p) return null;
         const stats = state.stats[id] || {};
         const captaincy = id === captainId ? 'captain' : id === vcId ? 'vice_captain' : 'normal';
-        return { name: p.name, role: p.role, captaincy, ...stats };
+        return { name: p.name, role: p.role, captaincy, is_overseas: !!p.overseas, ...stats };
       }).filter(Boolean);
 
-      const scored  = scoreTeam(scoreInputs, state.format);
+      const scored  = scoreTeam(scoreInputs, state.format, liveBooster);
       const byName  = Object.fromEntries(scored.map(s => [s.name, s]));
       const total   = scored.reduce((a, s) => a + s.totalPoints, 0);
 
@@ -3670,6 +3728,9 @@ p31,Sample Player,MI,bat,9.0,false
           : isVc ? '<span class="vc-badge">VC</span>' : '';
         const score     = byName[p.name];
         const pts       = score ? score.totalPoints.toFixed(1) : '0.0';
+        const multBadge = score && score.multiplier > 1
+          ? `<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:rgba(34,211,238,0.2);color:var(--accent);margin-left:3px;">${score.multiplier}×</span>`
+          : '';
         const breakdown = score && Object.keys(score.breakdown).length
           ? Object.entries(score.breakdown).map(([cat, vals]) => {
               const items = Object.entries(vals)
@@ -3681,7 +3742,7 @@ p31,Sample Player,MI,bat,9.0,false
           : '<em>no events yet</em>';
         return `<div class="squad-row" data-liveid="${id}" style="cursor:pointer;">
           <div>
-            <div class="name">${p.name}${badge}${p.overseas ? ' <span class="os-tag">OS</span>' : ''}</div>
+            <div class="name">${p.name}${badge}${multBadge}${p.overseas ? ' <span class="os-tag">OS</span>' : ''}</div>
             <div class="meta"><span class="role-tag role-${p.role}">${roleLabel[p.role]}</span> ${p.team} · ${p.credits.toFixed(1)} cr</div>
           </div>
           <span class="pts">${pts}</span>
@@ -4881,6 +4942,20 @@ p31,Sample Player,MI,bat,9.0,false
             matched.push(`${pl.name} → ${mine.name}`);
             state.stats[mine.id] = { batting: pl.batting, bowling: pl.bowling, fielding: pl.fielding };
           });
+          // Player data arriving = match is definitely in progress.
+          // Flip status immediately so the admin schedule and SL lock logic
+          // see the correct state without waiting for the next onPoll cycle.
+          const updMatch = state.matches.find(m => m.external_id === id);
+          if (updMatch && updMatch.status === 'scheduled' && state.db) {
+            state.db.updateMatch(updMatch.id, { status: 'in_progress' })
+              .then(upd => {
+                const idx = state.matches.findIndex(m => m.id === updMatch.id);
+                if (idx >= 0) state.matches[idx] = upd;
+                renderMatchesAdmin();
+                renderMatchSelector();
+              })
+              .catch(() => {});
+          }
           // Diagnostic: daily XI players with no data from the API
           const apiNames = new Set(players.map(p => p.name));
           const xiWithoutData = state.selected
@@ -7292,19 +7367,10 @@ p31,Sample Player,MI,bat,9.0,false
     $('#lbBtn').addEventListener('click', openLeaderboard);
     $('#lbCloseBtn').addEventListener('click', closeLeaderboard);
     $('#lbModal').addEventListener('click', e => { if (e.target.id === 'lbModal') closeLeaderboard(); });
-    document.querySelectorAll('.lb-tab').forEach(t => t.addEventListener('click', () => {
-      document.querySelectorAll('.lb-tab').forEach(x => x.classList.remove('active'));
-      t.classList.add('active');
-      lbState.tab = t.dataset.lbtab;
-      renderLbPickers();
-      renderLeaderboard();
-    }));
+    // Note: .lb-tab click handlers are wired dynamically inside renderLbTabs()
+    // because tabs are rebuilt each time the leaderboard opens (private leagues vary per user).
     $('#lbMatchPicker').addEventListener('change', e => {
       lbState.matchId = e.target.value;
-      renderLeaderboard();
-    });
-    $('#lbContestPicker').addEventListener('change', e => {
-      lbState.contestId = e.target.value;
       renderLeaderboard();
     });
     // ── Login tab switcher ────────────────────────────────────────────────
