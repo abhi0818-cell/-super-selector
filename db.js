@@ -1590,7 +1590,7 @@ export function createDb(cfg = {}) {
       const contestIds = [...new Set(squads.map(s => s.contest_id))];
       const { data: contests, error: cErr } = await sb
         .from('contests')
-        .select('id, name, contest_type, is_active, is_private, invite_code, scoring_rules, max_members')
+        .select('id, name, contest_type, is_active, is_private, invite_code, scoring_rules, max_members, available_boosters')
         .in('id', contestIds)
         .eq('tournament_id', tournamentId)
         .eq('is_active', true);
