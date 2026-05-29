@@ -753,6 +753,36 @@
             <input id="slTeamName" type="text" placeholder="Team name (e.g. Super XI 2026)" />
             <button id="slJoinBtn" class="primary">Start Season</button>
           </div>
+          <!-- Private leagues section -->
+          <div style="margin-top:14px; border-top:1px solid var(--border); padding-top:14px; display:flex; flex-direction:column; gap:14px;">
+
+            <!-- Create a private league (Option B — tournament rules, user-initiated) -->
+            <div>
+              <div style="font-size:12px; font-weight:600; margin-bottom:8px;">Create a private league</div>
+              <div style="display:flex; flex-direction:column; gap:6px;">
+                <div class="save-bar">
+                  <input id="plCreateName" type="text" placeholder="League name (e.g. The Office League)" style="flex:2;" />
+                  <input id="plCreateCap" type="number" min="2" max="100" placeholder="Max members" value="5" style="width:120px;" />
+                  <input id="plCreateTeamName" type="text" placeholder="Your team name" style="flex:1;" />
+                  <button id="plCreateUserBtn" class="primary">Create</button>
+                </div>
+                <div style="font-size:11px; color:var(--muted);">Uses tournament scoring rules. You'll get an invite code to share with friends.</div>
+                <div id="plCreateStatus" style="font-size:11px; color:var(--muted);"></div>
+              </div>
+            </div>
+
+            <!-- Join an existing private league -->
+            <div>
+              <div style="font-size:12px; font-weight:600; margin-bottom:8px;">Join a private league</div>
+              <div class="save-bar">
+                <input id="plInviteCodeInput" type="text" placeholder="Invite code (e.g. SUPER7X)" maxlength="8" style="text-transform:uppercase; letter-spacing:2px; font-weight:600;" />
+                <input id="plJoinTeamName" type="text" placeholder="Your team name" />
+                <button id="plJoinBtn">Join</button>
+              </div>
+              <div id="plJoinStatus" style="font-size:11px; margin-top:6px; color:var(--muted);"></div>
+            </div>
+
+          </div>
         </div><!-- end slJoinScreen -->
 
         <!-- STATE 2: Joined -->
@@ -1060,7 +1090,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=100';
+    import { createDb, NotConfiguredError } from './db.js?v=104';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -1143,8 +1173,11 @@ p31,Sample Player,MI,bat,9.0,false
       if(fmt==='ODI'){ if(e<2.5)return r.economy_below_2_5; if(e<3.5)return r.economy_2_5_to_3_5; if(e>=9)return r.economy_above_9; if(e>=7)return r.economy_7_to_8; }
       return 0;
     }
-    function calcBatting(inn,fmt='T20'){
-      const r=SCORING_RULES[fmt]; const {runs=0,ballsFaced=0,fours=0,sixes=0,isDismissed=false,role}=inn||{}; const b={};
+    // rulesOverride is an optional flat rules object (same shape as SCORING_RULES[fmt]).
+    // When provided it takes precedence over the global SCORING_RULES — used for
+    // private leagues that have their own scoring configuration.
+    function calcBatting(inn,fmt='T20',rulesOverride){
+      const r=rulesOverride||SCORING_RULES[fmt]; const {runs=0,ballsFaced=0,fours=0,sixes=0,isDismissed=false,role}=inn||{}; const b={};
       b.runs=runs*r.run; b.boundary4=fours*(r.boundary4||0); b.boundary6=sixes*(r.boundary6||0);
       if(runs>=100) b.century=r.century||0; else if(runs>=50) b.half_century=r.half_century||0;
       // Duck penalty: does NOT apply to bowlers — only batters / AR / WK.
@@ -1152,8 +1185,8 @@ p31,Sample Player,MI,bat,9.0,false
       if(r.sr_above_170!==undefined&&ballsFaced>=10){ b.strikeRateBonus=srBonus(strikeRate(runs,ballsFaced),fmt,r); } else b.strikeRateBonus=0;
       return { points:Object.values(b).reduce((a,c)=>a+c,0), breakdown:b };
     }
-    function calcBowling(s,fmt='T20'){
-      const r=SCORING_RULES[fmt]; const {wickets=0,wicketTypes=[],maidens=0,runsConceded=0,ballsBowled=0,dotBalls=0,noBalls=0,wides=0}=s||{}; const b={};
+    function calcBowling(s,fmt='T20',rulesOverride){
+      const r=rulesOverride||SCORING_RULES[fmt]; const {wickets=0,wicketTypes=[],maidens=0,runsConceded=0,ballsBowled=0,dotBalls=0,noBalls=0,wides=0}=s||{}; const b={};
       b.wickets=wickets*r.wicket;
       const prem=wicketTypes.filter(t=>['lbw','bowled'].includes(String(t).toLowerCase())).length;
       b.lbwBowledBonus=prem*(r.lbw_bowled_bonus||0);
@@ -1165,17 +1198,18 @@ p31,Sample Player,MI,bat,9.0,false
       b.noBalls=noBalls*(r.no_ball||0); b.wides=wides*(r.wide||0);
       return { points:Object.values(b).reduce((a,c)=>a+c,0), breakdown:b };
     }
-    function calcFielding(f,fmt='T20'){
-      const r=SCORING_RULES[fmt]; const {catches=0,stumpings=0,runOutDirect=0,runOutIndirect=0}=f||{};
+    function calcFielding(f,fmt='T20',rulesOverride){
+      const r=rulesOverride||SCORING_RULES[fmt]; const {catches=0,stumpings=0,runOutDirect=0,runOutIndirect=0}=f||{};
       const b={ catches:catches*r.catch, stumpings:stumpings*r.stumping, runOutDirect:runOutDirect*r.run_out_direct, runOutIndirect:runOutIndirect*r.run_out_indirect };
       return { points:Object.values(b).reduce((a,c)=>a+c,0), breakdown:b };
     }
-    function calculateScore(player,fmt='T20'){
+    // rulesOverride: optional flat rules object for a specific league — overrides global SCORING_RULES[fmt].
+    function calculateScore(player,fmt='T20',rulesOverride){
       const {name,role,captaincy='normal',batting,bowling,fielding}=player;
       const breakdown={}; let raw=0;
-      if(batting){ const r=calcBatting({...batting,role},fmt); breakdown.batting=r.breakdown; raw+=r.points; }
-      if(bowling){ const r=calcBowling(bowling,fmt);          breakdown.bowling=r.breakdown; raw+=r.points; }
-      if(fielding){ const r=calcFielding(fielding,fmt);       breakdown.fielding=r.breakdown; raw+=r.points; }
+      if(batting){ const r=calcBatting({...batting,role},fmt,rulesOverride); breakdown.batting=r.breakdown; raw+=r.points; }
+      if(bowling){ const r=calcBowling(bowling,fmt,rulesOverride);           breakdown.bowling=r.breakdown; raw+=r.points; }
+      if(fielding){ const r=calcFielding(fielding,fmt,rulesOverride);        breakdown.fielding=r.breakdown; raw+=r.points; }
       const mult=MULTIPLIERS[captaincy]||1;
       return { name, totalPoints: Math.round(raw*mult*10)/10, multiplier:mult, rawPoints: Math.round(raw*10)/10, breakdown };
     }
@@ -1605,16 +1639,31 @@ p31,Sample Player,MI,bat,9.0,false
       } else {
         matchPicker.style.display   = 'none';
         contestPicker.style.display = '';
-        const contests = (state.tournaments || []).flatMap(t =>
-          (state.sl?.contests || []).filter(c => c.tournament_id === t.id)
-            .map(c => ({ id: c.id, name: `${t.name} — ${c.name || 'Season Long'}` }))
-        );
-        // Fallback: just use sl contest from state
-        const slContest = state.sl?.seasonContest;
-        contestPicker.innerHTML = slContest
-          ? `<option value="${slContest.id}">${slContest.name || 'Season Long'}</option>`
-          : '<option value="">No SL contest found</option>';
-        if (slContest) lbState.contestId = slContest.id;
+        // Build options: public SL contest first, then private leagues (sorted by name)
+        const allContests = (state.sl?.contests || [])
+          .filter(c => c.contest_type === 'season_long')
+          .sort((a, b) => {
+            if (!a.is_private && b.is_private) return -1;  // public first
+            if (a.is_private && !b.is_private) return 1;
+            return (a.name || '').localeCompare(b.name || '');
+          });
+        if (allContests.length) {
+          contestPicker.innerHTML = allContests.map(c =>
+            `<option value="${c.id}">${c.is_private ? '🔒 ' : ''}${escapeHtml(c.name || 'Season Long')}</option>`
+          ).join('');
+          // Default to whatever was last selected, or the first public SL contest
+          if (!lbState.contestId || !allContests.find(c => c.id === lbState.contestId)) {
+            const def = allContests.find(c => !c.is_private) ?? allContests[0];
+            lbState.contestId = def.id;
+          }
+          contestPicker.value = lbState.contestId;
+        } else {
+          const fallback = state.sl?.seasonContest;
+          contestPicker.innerHTML = fallback
+            ? `<option value="${fallback.id}">${escapeHtml(fallback.name || 'Season Long')}</option>`
+            : '<option value="">No SL contest found</option>';
+          if (fallback) lbState.contestId = fallback.id;
+        }
       }
     }
 
@@ -4559,7 +4608,10 @@ p31,Sample Player,MI,bat,9.0,false
             </div>
           </div>`;
 
-        wrap.innerHTML = contests.map(c => {
+        const publicContests  = contests.filter(c => !c.is_private);
+        const privateLeagues  = contests.filter(c => c.is_private);
+
+        wrap.innerHTML = publicContests.map(c => {
           const isSL = c.contest_type === 'season_long';
           const budget        = c.total_transfers_allowed     ?? '';
           const startMN       = c.start_match_number          ?? '';
@@ -4572,38 +4624,93 @@ p31,Sample Player,MI,bat,9.0,false
                 <span style="font-size:11px; color:var(--muted); background:var(--panel-2); padding:2px 7px; border-radius:10px;">${c.contest_type}</span>
               </div>
               ${isSL ? `
-                ${numRow(
-                  'Season transfer budget',
-                  'Total player changes allowed across the whole season. Leave blank for unlimited.',
-                  `xferBudget_${c.id}`,
-                  budget,
-                  'Unlimited'
-                )}
+                ${numRow('Season transfer budget','Total player changes allowed across the whole season. Leave blank for unlimited.',`xferBudget_${c.id}`,budget,'Unlimited')}
                 <div style="border-top:1px solid var(--border); margin:8px 0 12px;"></div>
-                ${numRow(
-                  'Season start match number',
-                  'Season-long scoring and transfers only apply from this match number onward. Leave blank to include all matches.',
-                  `startMN_${c.id}`,
-                  startMN,
-                  'All matches'
-                )}
-                ${numRow(
-                  'Playoff start match number',
-                  'Match number where the playoff phase begins (uses a separate transfer budget). Leave blank if no playoff phase.',
-                  `playoffStartMN_${c.id}`,
-                  playoffStartMN,
-                  'No playoffs'
-                )}
-                ${numRow(
-                  'Playoff transfer budget',
-                  'Separate transfer allowance for the playoff phase. Leave blank for unlimited playoff transfers.',
-                  `playoffBudget_${c.id}`,
-                  playoffBudget,
-                  'Unlimited'
-                )}
+                ${numRow('Season start match number','Season-long scoring and transfers only apply from this match number onward. Leave blank to include all matches.',`startMN_${c.id}`,startMN,'All matches')}
+                ${numRow('Playoff start match number','Match number where the playoff phase begins (uses a separate transfer budget). Leave blank if no playoff phase.',`playoffStartMN_${c.id}`,playoffStartMN,'No playoffs')}
+                ${numRow('Playoff transfer budget','Separate transfer allowance for the playoff phase. Leave blank for unlimited playoff transfers.',`playoffBudget_${c.id}`,playoffBudget,'Unlimited')}
               ` : `<div style="font-size:12px;color:var(--muted);">No configurable options for daily contests.</div>`}
             </div>`;
-        }).join('');
+        }).join('') +
+
+        // ── Private Leagues section ───────────────────────────────────────────
+        `<div style="border-top:2px solid var(--border); margin:16px 0 12px; padding-top:14px;">
+          <div style="font-size:13px; font-weight:600; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
+            🔒 Private Leagues
+            <span style="font-size:11px; font-weight:400; color:var(--muted);">invite-only · custom scoring · separate leaderboard</span>
+          </div>
+
+          ${await (async () => {
+            if (!privateLeagues.length) return `<div style="font-size:12px; color:var(--muted); padding:8px 0;">No private leagues yet.</div>`;
+            // Fetch live member counts for all private leagues in one query
+            const memberCounts = await state.db.getMemberCountsForContests(privateLeagues.map(c => c.id)).catch(() => ({}));
+            return privateLeagues.map(c => {
+              const hasCustomRules = c.scoring_rules && Object.keys(c.scoring_rules).length > 0;
+              const memberCount    = memberCounts[c.id] ?? 0;
+              const cap            = c.max_members;
+              const capDisplay     = cap ? `${memberCount} / ${cap}` : `${memberCount} members`;
+              const capFull        = cap && memberCount >= cap;
+              return `
+              <div style="border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:10px; background:rgba(34,211,238,0.04);">
+                <!-- Header row: name + badges + invite code -->
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <strong style="font-size:13px;">${escapeHtml(c.name)}</strong>
+                    ${hasCustomRules ? `<span style="font-size:10px; background:rgba(251,191,36,0.18); color:var(--accent-2); padding:2px 6px; border-radius:8px;">custom rules</span>` : ''}
+                    <span style="font-size:11px; color:${capFull ? 'var(--bad)' : 'var(--muted)'};">${capDisplay}${capFull ? ' · full' : ''}</span>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="font-size:12px; color:var(--muted);">Invite code:</span>
+                    <code style="font-size:14px; font-weight:700; color:var(--accent); background:var(--panel-2); padding:3px 10px; border-radius:6px; letter-spacing:2px;">${escapeHtml(c.invite_code || '—')}</code>
+                    <button class="copy-invite-btn" data-code="${escapeHtml(c.invite_code || '')}" style="font-size:11px; padding:3px 8px;">Copy</button>
+                  </div>
+                </div>
+                <!-- Scoring info -->
+                <div style="font-size:11px; color:var(--muted); margin-top:6px;">
+                  ${hasCustomRules ? `Custom scoring: ${Object.keys(c.scoring_rules).join(', ')} format(s) overridden` : 'Uses tournament scoring rules'}
+                </div>
+                <!-- Admin: editable member cap -->
+                <div style="display:flex; align-items:center; gap:8px; margin-top:10px; padding-top:10px; border-top:1px dashed var(--border);">
+                  <span style="font-size:12px; color:var(--muted); flex-shrink:0;">Member cap:</span>
+                  <input type="number" min="2" max="500"
+                    class="pl-cap-input"
+                    data-contest="${c.id}"
+                    value="${cap ?? ''}"
+                    placeholder="Unlimited"
+                    style="width:100px; font-size:13px; padding:4px 8px;" />
+                  <button class="primary pl-cap-save" data-contest="${c.id}" style="font-size:12px; padding:4px 10px;">Save</button>
+                  <span class="pl-cap-status" data-contest="${c.id}" style="font-size:11px; color:var(--muted);"></span>
+                </div>
+              </div>`;
+            }).join('');
+          })()}
+
+          <!-- New Private League form -->
+          <div style="border:1px dashed var(--border); border-radius:8px; padding:12px 14px; margin-top:8px;">
+            <div style="font-size:12px; font-weight:600; color:var(--accent); margin-bottom:10px;">+ New Private League</div>
+            <div style="display:flex; flex-direction:column; gap:8px;">
+              <input id="plName" type="text" placeholder="League name (e.g. The Office League)" style="font-size:13px;" />
+              <div style="display:flex; gap:6px; align-items:center;">
+                <input id="plMaxMembers" type="number" min="2" max="100" placeholder="Max members (optional)" style="font-size:13px; flex:1;" />
+              </div>
+              <label style="font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; cursor:pointer;">
+                <input type="checkbox" id="plCustomRules" />
+                Use custom scoring rules for this league
+              </label>
+              <div id="plRulesSection" style="display:none; border:1px solid var(--border); border-radius:6px; padding:10px; margin-top:2px;">
+                <div style="font-size:11px; color:var(--muted); margin-bottom:8px;">Overrides tournament rules for this league only. Leave unchanged to inherit the tournament default.</div>
+                <div class="rules-tabs" style="margin-bottom:10px;" id="plRulesTabs">
+                  <span class="tab active" data-plfmt="T20">T20</span>
+                  <span class="tab" data-plfmt="ODI">ODI</span>
+                  <span class="tab" data-plfmt="TEST">Test</span>
+                </div>
+                <div id="plRulesEditor"></div>
+              </div>
+              <button id="plCreateBtn" class="primary" style="align-self:flex-start; font-size:12px; padding:6px 14px;">Create league</button>
+              <span id="plStatus" style="font-size:11px; color:var(--muted);"></span>
+            </div>
+          </div>
+        </div>`;
 
         // ── Wire "Save" buttons ────────────────────────────────────────────────
 
@@ -4660,6 +4767,119 @@ p31,Sample Player,MI,bat,9.0,false
             } finally { btn.disabled = false; }
           });
         });
+        // ── Copy invite code buttons ──────────────────────────────────────────
+        wrap.querySelectorAll('.copy-invite-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            navigator.clipboard?.writeText(btn.dataset.code).catch(() => {});
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+          });
+        });
+
+        // ── Member cap save buttons ───────────────────────────────────────────
+        wrap.querySelectorAll('.pl-cap-save').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const contestId = btn.dataset.contest;
+            const inp       = wrap.querySelector(`.pl-cap-input[data-contest="${contestId}"]`);
+            const statusEl  = wrap.querySelector(`.pl-cap-status[data-contest="${contestId}"]`);
+            const raw       = inp?.value.trim() ?? '';
+            const val       = raw === '' ? null : parseInt(raw, 10);
+            if (raw !== '' && (!Number.isFinite(val) || val < 2)) {
+              statusEl.textContent = 'Enter a number ≥ 2, or leave blank to remove cap.';
+              statusEl.style.color = 'var(--bad)'; return;
+            }
+            btn.disabled = true; statusEl.textContent = 'Saving…'; statusEl.style.color = 'var(--muted)';
+            try {
+              await state.db.updateContestMaxMembers(contestId, val);
+              statusEl.textContent = val === null ? 'Cap removed.' : `Cap set to ${val}.`;
+              statusEl.style.color = 'var(--good,#4ade80)';
+              // Update in-memory contests list
+              const c = state.sl.contests?.find(x => x.id === contestId);
+              if (c) c.max_members = val;
+            } catch (e) {
+              statusEl.textContent = 'Save failed: ' + e.message;
+              statusEl.style.color = 'var(--bad)';
+            } finally { btn.disabled = false; }
+          });
+        });
+
+        // ── New private league form ───────────────────────────────────────────
+        // State for the new-league scoring rules (starts as a copy of current tournament rules)
+        let plFmt = 'T20';
+        const plRules = JSON.parse(JSON.stringify(SCORING_RULES));
+        let plUseCustom = false;
+
+        function renderPlRulesEditor() {
+          const editor = $('#plRulesEditor');
+          if (!editor) return;
+          editor.innerHTML = buildRulesGrid(plFmt, false);
+          editor.querySelectorAll('input.rule-input').forEach(inp => {
+            inp.addEventListener('input', e => {
+              const key = e.target.dataset.key;
+              const num = parseFloat(e.target.value);
+              if (Number.isFinite(num)) {
+                plRules[plFmt][key] = num;
+                const dv = DEFAULT_SCORING_RULES[plFmt]?.[key];
+                e.target.classList.toggle('changed', Number(num) !== Number(dv));
+              }
+            });
+          });
+        }
+
+        $('#plCustomRules')?.addEventListener('change', e => {
+          plUseCustom = e.target.checked;
+          const section = $('#plRulesSection');
+          if (section) section.style.display = plUseCustom ? 'block' : 'none';
+          if (plUseCustom) renderPlRulesEditor();
+        });
+
+        wrap.querySelectorAll('#plRulesTabs .tab').forEach(t => {
+          t.addEventListener('click', () => {
+            plFmt = t.dataset.plfmt;
+            wrap.querySelectorAll('#plRulesTabs .tab').forEach(x => x.classList.toggle('active', x.dataset.plfmt === plFmt));
+            renderPlRulesEditor();
+          });
+        });
+
+        $('#plCreateBtn')?.addEventListener('click', async () => {
+          const name = $('#plName')?.value.trim();
+          const maxM = parseInt($('#plMaxMembers')?.value || '', 10);
+          const statusEl = $('#plStatus');
+          if (!name) { statusEl.textContent = 'League name is required.'; statusEl.style.color = 'var(--bad)'; return; }
+          const btn = $('#plCreateBtn');
+          btn.disabled = true; statusEl.textContent = 'Creating…'; statusEl.style.color = 'var(--muted)';
+          try {
+            // Only save formats that have at least one value changed from tournament defaults
+            let scoringRules = null;
+            if (plUseCustom) {
+              const changed = {};
+              ['T20', 'ODI', 'TEST'].forEach(f => {
+                const def = SCORING_RULES[f]; // current tournament rules = baseline
+                const pl  = plRules[f];
+                if (!def || !pl) return;
+                const diff = {};
+                Object.keys(pl).forEach(k => { if (Number(pl[k]) !== Number(def[k])) diff[k] = pl[k]; });
+                if (Object.keys(diff).length) changed[f] = { ...def, ...diff };
+              });
+              if (Object.keys(changed).length) scoringRules = changed;
+            }
+            const league = await state.db.createPrivateLeague(state.activeTournamentId, {
+              name,
+              scoringRules,
+              maxMembers: Number.isFinite(maxM) && maxM >= 2 ? maxM : null,
+            });
+            statusEl.textContent = `✓ League created — invite code: ${league.invite_code}`;
+            statusEl.style.color = 'var(--good,#4ade80)';
+            $('#plName').value = '';
+            $('#plMaxMembers').value = '';
+            renderContestsAdmin(); // refresh list
+          } catch (e) {
+            statusEl.textContent = 'Failed: ' + e.message;
+            statusEl.style.color = 'var(--bad)';
+            btn.disabled = false;
+          }
+        });
+
       } catch (e) {
         wrap.innerHTML = `<div class="msg err">Failed to load contests: ${escapeHtml(e.message)}</div>`;
       }
@@ -5542,32 +5762,83 @@ p31,Sample Player,MI,bat,9.0,false
 
     /**
      * SL counterpart to computeAndSaveXIScoresForMatch.
-     * Pulls every squad's locked XI for the match, applies captain/VC multipliers
-     * to raw_points from player_match_stats, and upserts to user_match_xi_scores.
+     * Pulls every squad's locked XI for the match, applies captain/VC multipliers,
+     * and upserts to user_match_xi_scores.
+     *
+     * For squads in a private league with custom scoring rules the base points are
+     * recomputed from raw batting/bowling/fielding stats using those rules.
+     * All other squads use the pre-computed raw_points from player_match_stats.
      * Idempotent — safe to call multiple times.
      */
     async function computeAndSaveSLScoresForMatch(matchId) {
       if (!state.db || !matchId) return 0;
+
+      // Find the match to get its format
+      const match = state.matches?.find(m => m.id === matchId);
+      const fmt   = match?.format || 'T20';
+
       let squadXIs;
       try { squadXIs = await state.db.getAllSquadXIsForMatch(matchId); } catch (e) {
         console.warn('[SL scores] getAllSquadXIsForMatch failed:', e.message); return 0;
       }
       if (!Object.keys(squadXIs).length) return 0;
 
-      // Raw points per player for this match (already in player_match_stats)
-      let stats;
-      try { stats = await state.db.getPlayerStatsForMatch(matchId); } catch (e) {
-        console.warn('[SL scores] getPlayerStatsForMatch failed:', e.message); return 0;
+      // Full stats (batting/bowling/fielding + pre-computed raw_points) for custom-rules re-scoring
+      let fullStats;
+      try { fullStats = await state.db.getPlayerStatsForMatchFull(matchId); } catch (e) {
+        console.warn('[SL scores] getPlayerStatsForMatchFull failed:', e.message); return 0;
       }
-      const rawByPlayer = Object.fromEntries(
-        (stats || []).map(s => [s.player_id, Number(s.raw_points)])
-      );
+      const statsByPlayer = Object.fromEntries((fullStats || []).map(s => [s.player_id, s]));
+
+      // Build a squad→contest map so we can look up per-league rules.
+      // Fetched lazily per-squad and cached for the duration of this call.
+      const squadContestMap = {};   // squadId → contest row (or null)
+      async function getContestForSquad(squadId) {
+        if (squadId in squadContestMap) return squadContestMap[squadId];
+        try {
+          const contestId = await state.db.getContestIdForSquad(squadId);
+          const found = contestId
+            ? (state.sl.contests?.find(c => c.id === contestId) ?? null)
+            : null;
+          squadContestMap[squadId] = found;
+          return found;
+        } catch { squadContestMap[squadId] = null; return null; }
+      }
+
+      // Resolve effective scoring rules for a contest (contest → tournament → defaults)
+      async function rulesForContest(contest) {
+        if (contest?.scoring_rules?.[fmt]) {
+          return { ...DEFAULT_SCORING_RULES[fmt], ...contest.scoring_rules[fmt] };
+        }
+        // Tournament-level rules (already loaded into SCORING_RULES at boot)
+        return SCORING_RULES[fmt];
+      }
 
       let totalSaved = 0;
       for (const [squadId, rows] of Object.entries(squadXIs)) {
+        const contest      = await getContestForSquad(squadId);
+        const hasCustom    = !!(contest?.scoring_rules?.[fmt]);
+        const effectiveRules = hasCustom ? await rulesForContest(contest) : null;
+
         const scores = rows.map(r => {
-          const raw  = rawByPlayer[r.player_id] ?? 0;
+          const s    = statsByPlayer[r.player_id];
           const mult = r.is_captain ? 2 : r.is_vc ? 1.5 : 1;
+          let raw;
+          if (hasCustom && s !== undefined && effectiveRules) {
+            // Re-score from raw stats using the league's custom rules
+            const p = PLAYERS.find(x => x.id === r.player_id);
+            const result = calculateScore({
+              name     : p?.name ?? '',
+              role     : p?.role ?? 'bat',
+              captaincy: 'normal',
+              batting  : s.batting  ?? null,
+              bowling  : s.bowling  ?? null,
+              fielding : s.fielding ?? null,
+            }, fmt, effectiveRules);
+            raw = result.rawPoints;
+          } else {
+            raw = Number(s?.raw_points ?? 0);
+          }
           return {
             playerId   : r.player_id,
             basePoints : raw,
@@ -6647,6 +6918,104 @@ p31,Sample Player,MI,bat,9.0,false
         if (t.dataset.sltab === 'season' && !state.sl.seasonData) loadAndRenderSeason();
       }));
     $('#slJoinBtn').addEventListener('click', joinSeasonHandler);
+    $('#plJoinBtn').addEventListener('click', async () => {
+      const code     = $('#plInviteCodeInput')?.value.trim().toUpperCase();
+      const teamName = $('#plJoinTeamName')?.value.trim();
+      const statusEl = $('#plJoinStatus');
+      const btn      = $('#plJoinBtn');
+      if (!code)     { statusEl.textContent = 'Enter an invite code.'; statusEl.style.color = 'var(--bad)'; return; }
+      if (!teamName) { statusEl.textContent = 'Enter a team name.';    statusEl.style.color = 'var(--bad)'; return; }
+      if (!state.db) { statusEl.textContent = 'Connect a database first.'; statusEl.style.color = 'var(--bad)'; return; }
+      btn.disabled = true; statusEl.textContent = 'Joining…'; statusEl.style.color = 'var(--muted)';
+      try {
+        const { contest, squad } = await state.db.joinLeagueByCode(code, teamName);
+        // Reload contests list so the new league appears
+        const contests = await state.db.getContests(state.activeTournamentId);
+        state.sl.contests = contests;
+        // If user has no main SL squad yet, keep join screen open; otherwise switch to the new league
+        statusEl.textContent = `✓ Joined "${contest.name}"! Your team: ${squad.name}`;
+        statusEl.style.color = 'var(--good,#4ade80)';
+        $('#plInviteCodeInput').value = '';
+        $('#plJoinTeamName').value    = '';
+        // If this is the first squad for this user, treat it as the active squad
+        if (!state.sl.squad) {
+          state.sl.seasonContest = contest;
+          state.sl.squad         = squad;
+          state.sl.initialized   = false; // force full re-init
+          await initSeasonLong();
+        }
+        toast(`Joined private league: ${contest.name}`, 4000);
+      } catch (e) {
+        statusEl.textContent = e.message;
+        statusEl.style.color = 'var(--bad)';
+        btn.disabled = false;
+      }
+    });
+    // Force uppercase as user types the invite code
+    $('#plInviteCodeInput')?.addEventListener('input', e => {
+      const pos = e.target.selectionStart;
+      e.target.value = e.target.value.toUpperCase();
+      e.target.setSelectionRange(pos, pos);
+    });
+
+    // Option B — user creates a private league (tournament rules, no admin needed)
+    $('#plCreateUserBtn')?.addEventListener('click', async () => {
+      const leagueName = $('#plCreateName')?.value.trim();
+      const teamName   = $('#plCreateTeamName')?.value.trim();
+      const maxMembers = parseInt($('#plCreateCap')?.value || '', 10);
+      const statusEl   = $('#plCreateStatus');
+      const btn        = $('#plCreateUserBtn');
+
+      if (!leagueName) { statusEl.textContent = 'Enter a league name.'; statusEl.style.color = 'var(--bad)'; return; }
+      if (!teamName)   { statusEl.textContent = 'Enter your team name.'; statusEl.style.color = 'var(--bad)'; return; }
+      const effectiveCap = Number.isFinite(maxMembers) && maxMembers >= 2 ? maxMembers : 5;
+      if (!Number.isFinite(maxMembers) || maxMembers < 2) {
+        statusEl.textContent = 'Set a member limit (minimum 2).';
+        statusEl.style.color = 'var(--bad)'; return;
+      }
+      if (!state.db) { statusEl.textContent = 'Connect a database first.'; statusEl.style.color = 'var(--bad)'; return; }
+
+      btn.disabled = true; statusEl.textContent = 'Creating…'; statusEl.style.color = 'var(--muted)';
+      try {
+        // Create the league (no custom scoring rules — inherits tournament rules)
+        const league = await state.db.createPrivateLeague(state.activeTournamentId, {
+          name       : leagueName,
+          maxMembers : effectiveCap,
+          scoringRules: null,
+        });
+        // Auto-join the creator
+        const { squad } = await state.db.joinLeagueByCode(league.invite_code, teamName);
+
+        // Reload contests so the new league appears everywhere
+        const contests = await state.db.getContests(state.activeTournamentId);
+        state.sl.contests = contests;
+
+        statusEl.innerHTML = `✓ League <strong>${escapeHtml(leagueName)}</strong> created!
+          Invite code: <code style="color:var(--accent);font-weight:700;letter-spacing:2px;">${league.invite_code}</code>
+          <button style="font-size:11px;padding:2px 7px;margin-left:4px;" id="plCopyCreatedCode">Copy</button>`;
+        statusEl.style.color = 'var(--good,#4ade80)';
+        $('#plCopyCreatedCode')?.addEventListener('click', () => {
+          navigator.clipboard?.writeText(league.invite_code).catch(() => {});
+          $('#plCopyCreatedCode').textContent = 'Copied!';
+        });
+        $('#plCreateName').value    = '';
+        $('#plCreateTeamName').value = '';
+        $('#plCreateCap').value     = '';
+
+        // If this is the user's first squad, activate it
+        if (!state.sl.squad) {
+          state.sl.seasonContest = league;
+          state.sl.squad         = squad;
+          state.sl.initialized   = false;
+          await initSeasonLong();
+        }
+        toast(`Private league "${leagueName}" created — code: ${league.invite_code}`, 6000);
+      } catch (e) {
+        statusEl.textContent = 'Failed: ' + e.message;
+        statusEl.style.color = 'var(--bad)';
+        btn.disabled = false;
+      }
+    });
     $('#slSaveXiBtn').addEventListener('click', saveSlXiHandler);
     $('#slRefreshSeasonBtn').addEventListener('click', () => {
       state.sl.seasonData = null; loadAndRenderSeason();

@@ -866,7 +866,7 @@ export function createDb(cfg = {}) {
       return written;
     },
 
-    /** Player stats for one match — raw_points per player. */
+    /** Player stats for one match — raw_points per player (pre-computed using tournament rules). */
     async getPlayerStatsForMatch(matchId) {
       const sb = await getClient();
       const { data, error } = await sb
@@ -875,6 +875,35 @@ export function createDb(cfg = {}) {
         .eq('match_id', matchId);
       if (error) throw error;
       return data || [];
+    },
+
+    /**
+     * Full player stats for one match — includes batting/bowling/fielding objects
+     * so callers can re-score with custom rules.
+     */
+    async getPlayerStatsForMatchFull(matchId) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('player_match_stats')
+        .select('player_id, raw_points, batting, bowling, fielding')
+        .eq('match_id', matchId);
+      if (error) throw error;
+      return data || [];
+    },
+
+    /**
+     * Return the contest_id for a squad.
+     * Used by the scoring pipeline to resolve per-contest rules.
+     *
+     * @param {string} squadId
+     * @returns {Promise<string|null>}
+     */
+    async getContestIdForSquad(squadId) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('user_squads').select('contest_id').eq('id', squadId).maybeSingle();
+      if (error) throw error;
+      return data?.contest_id ?? null;
     },
 
     /**
@@ -1255,11 +1284,11 @@ export function createDb(cfg = {}) {
      */
     async getContests(tournamentId) {
       const sb = await getClient();
-      // Try with all phase-config columns (v3 + v5 migrations).
+      // Try with all phase-config columns (v3 + v5 + v11 migrations).
       // Falls back gracefully if columns don't exist yet.
       const { data, error } = await sb
         .from('contests')
-        .select('id, name, contest_type, description, is_active, free_transfers_per_match, extra_transfer_point_cost, total_transfers_allowed, start_match_number, playoff_start_match_number, playoff_transfers_allowed')
+        .select('id, name, contest_type, description, is_active, free_transfers_per_match, extra_transfer_point_cost, total_transfers_allowed, start_match_number, playoff_start_match_number, playoff_transfers_allowed, is_private, invite_code, scoring_rules, max_members')
         .eq('tournament_id', tournamentId)
         .eq('is_active', true)
         .order('contest_type');   // 'daily' < 'season_long' alphabetically
@@ -1267,7 +1296,7 @@ export function createDb(cfg = {}) {
       if (error) {
         // Column-not-found errors from PostgREST contain "does not exist"
         if (String(error.message || '').includes('does not exist')) {
-          console.warn('[db] getContests: some columns missing — run migration_v3 and/or migration_v5. Falling back to base columns.');
+          console.warn('[db] getContests: some columns missing — run migration_v3, _v5 and/or _v11. Falling back to base columns.');
           const { data: d2, error: e2 } = await sb
             .from('contests')
             .select('id, name, contest_type, description, is_active')
@@ -1284,6 +1313,10 @@ export function createDb(cfg = {}) {
             start_match_number          : null,
             playoff_start_match_number  : null,
             playoff_transfers_allowed   : null,
+            is_private                  : false,
+            invite_code                 : null,
+            scoring_rules               : null,
+            max_members                 : null,
             _migrationNeeded            : true,   // flag for the UI to surface a warning
           }));
         }
@@ -1294,7 +1327,167 @@ export function createDb(cfg = {}) {
         start_match_number         : c.start_match_number         ?? null,
         playoff_start_match_number : c.playoff_start_match_number ?? null,
         playoff_transfers_allowed  : c.playoff_transfers_allowed  ?? null,
+        is_private                 : c.is_private                 ?? false,
+        invite_code                : c.invite_code                ?? null,
+        scoring_rules              : c.scoring_rules              ?? null,
+        max_members                : c.max_members                ?? null,
       }));
+    },
+
+    /**
+     * Resolve the effective scoring rules for a contest.
+     * Priority: contest.scoring_rules → tournament.scoring_rules → null (caller falls back to defaults).
+     *
+     * @param {object} contest       contest row (must include scoring_rules)
+     * @param {string} tournamentId  parent tournament UUID
+     * @returns {Promise<object>}    merged { T20, ODI, TEST } overrides (may be empty)
+     */
+    async resolveContestScoringRules(contest, tournamentId) {
+      if (contest?.scoring_rules && Object.keys(contest.scoring_rules).length) {
+        return contest.scoring_rules;
+      }
+      // Fall back to tournament-level rules
+      return this.getScoringRules(tournamentId);
+    },
+
+    /**
+     * Create a new private league (season_long contest with is_private=true).
+     * Generates a short, unique invite code automatically.
+     *
+     * @param {string} tournamentId
+     * @param {object} opts  { name, scoringRules?, maxMembers?, startMatchNumber?, playoffStartMatchNumber?, totalTransfersAllowed?, freeTransfersPerMatch?, extraTransferPointCost? }
+     * @returns {Promise<object>}  the new contest row
+     */
+    async createPrivateLeague(tournamentId, opts = {}) {
+      if (!tournamentId) throw new Error('createPrivateLeague: tournamentId required');
+      if (!opts.name?.trim()) throw new Error('createPrivateLeague: name required');
+      const sb = await getClient();
+
+      // Generate a short invite code — retry up to 5× on collision
+      const genCode = () => Math.random().toString(36).slice(2, 8).toUpperCase();
+      let code, attempts = 0;
+      while (attempts++ < 5) {
+        const candidate = genCode();
+        const { data: existing } = await sb
+          .from('contests').select('id').eq('invite_code', candidate).maybeSingle();
+        if (!existing) { code = candidate; break; }
+      }
+      if (!code) throw new Error('createPrivateLeague: could not generate unique invite code — try again');
+
+      const row = {
+        tournament_id               : tournamentId,
+        name                        : opts.name.trim(),
+        contest_type                : 'season_long',
+        is_active                   : true,
+        is_private                  : true,
+        invite_code                 : code,
+        scoring_rules               : opts.scoringRules              ?? null,
+        max_members                 : opts.maxMembers                ?? null,
+        total_transfers_allowed     : opts.totalTransfersAllowed     ?? null,
+        free_transfers_per_match    : opts.freeTransfersPerMatch     ?? null,
+        extra_transfer_point_cost   : opts.extraTransferPointCost    ?? 4,
+        start_match_number          : opts.startMatchNumber          ?? null,
+        playoff_start_match_number  : opts.playoffStartMatchNumber   ?? null,
+      };
+      const { data, error } = await sb.from('contests').insert(row).select().single();
+      if (error) throw error;
+      return data;
+    },
+
+    /**
+     * Look up a private league by invite code and join it (creates a squad).
+     * Returns the contest + new squad, or throws if code is invalid / already a member / full.
+     *
+     * @param {string} inviteCode   6-char code shared by the league creator
+     * @param {string} squadName    the joining user's team name
+     * @returns {Promise<{contest: object, squad: object}>}
+     */
+    async joinLeagueByCode(inviteCode, squadName) {
+      if (!inviteCode?.trim()) throw new Error('joinLeagueByCode: invite code required');
+      const sb = await getClient();
+      const { data: { user } } = await sb.auth.getUser();
+      const uid = user?.id;
+      if (!uid) throw new Error('joinLeagueByCode: must be signed in');
+
+      // Find the contest
+      const { data: contest, error: cErr } = await sb
+        .from('contests')
+        .select('*')
+        .eq('invite_code', inviteCode.trim().toUpperCase())
+        .eq('is_private', true)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (cErr) throw cErr;
+      if (!contest) throw new Error('Invalid invite code — no active league found.');
+
+      // Check already a member
+      const { data: existing } = await sb
+        .from('user_squads')
+        .select('id')
+        .eq('contest_id', contest.id)
+        .eq('user_id', uid)
+        .maybeSingle();
+      if (existing) throw new Error('You are already a member of this league.');
+
+      // Check member cap
+      if (contest.max_members) {
+        const { count } = await sb
+          .from('user_squads')
+          .select('id', { count: 'exact', head: true })
+          .eq('contest_id', contest.id);
+        if (count >= contest.max_members) throw new Error('This league is full.');
+      }
+
+      // Create squad
+      const { data: squad, error: sErr } = await sb
+        .from('user_squads')
+        .insert({ contest_id: contest.id, name: squadName?.trim() || 'My Team', user_id: uid })
+        .select().single();
+      if (sErr) throw sErr;
+
+      return { contest, squad };
+    },
+
+    /**
+     * Save custom scoring rules for a private league contest.
+     * Same merge pattern as tournament-level rules.
+     *
+     * @param {string} contestId
+     * @param {'T20'|'ODI'|'TEST'} format
+     * @param {object} rules
+     */
+    async saveContestScoringRules(contestId, format, rules) {
+      if (!['T20', 'ODI', 'TEST'].includes(format)) throw new Error('saveContestScoringRules: bad format');
+      if (!contestId) throw new Error('saveContestScoringRules: contestId required');
+      const sb = await getClient();
+      const { data: c, error: cErr } = await sb
+        .from('contests').select('scoring_rules').eq('id', contestId).single();
+      if (cErr) throw cErr;
+      const merged = { ...(c?.scoring_rules || {}), [format]: rules };
+      const { error } = await sb
+        .from('contests').update({ scoring_rules: merged }).eq('id', contestId);
+      if (error) throw error;
+    },
+
+    /**
+     * Remove a format's scoring override from a private league contest.
+     *
+     * @param {string} contestId
+     * @param {'T20'|'ODI'|'TEST'} format
+     */
+    async resetContestScoringRules(contestId, format) {
+      if (!contestId) throw new Error('resetContestScoringRules: contestId required');
+      const sb = await getClient();
+      const { data: c, error: cErr } = await sb
+        .from('contests').select('scoring_rules').eq('id', contestId).single();
+      if (cErr) throw cErr;
+      const merged = { ...(c?.scoring_rules || {}) };
+      delete merged[format];
+      const { error } = await sb
+        .from('contests')
+        .update({ scoring_rules: Object.keys(merged).length ? merged : null })
+        .eq('id', contestId);
+      if (error) throw error;
     },
 
     /**
@@ -1698,6 +1891,43 @@ export function createDb(cfg = {}) {
      * @param {string}      contestId
      * @param {number|null} totalAllowed  null = unlimited
      */
+    /**
+     * Return member counts for a list of contest IDs.
+     * { [contestId]: number }
+     *
+     * @param {string[]} contestIds
+     * @returns {Promise<Record<string, number>>}
+     */
+    async getMemberCountsForContests(contestIds) {
+      if (!contestIds?.length) return {};
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('user_squads')
+        .select('contest_id')
+        .in('contest_id', contestIds);
+      if (error) throw error;
+      const counts = {};
+      (data || []).forEach(r => {
+        counts[r.contest_id] = (counts[r.contest_id] || 0) + 1;
+      });
+      return counts;
+    },
+
+    /**
+     * Update the member cap for a private league.
+     * Pass null to remove the cap entirely.
+     * @param {string} contestId
+     * @param {number|null} maxMembers
+     */
+    async updateContestMaxMembers(contestId, maxMembers) {
+      const sb = await getClient();
+      const { error } = await sb
+        .from('contests')
+        .update({ max_members: maxMembers ?? null })
+        .eq('id', contestId);
+      if (error) throw error;
+    },
+
     async updateContestTransferBudget(contestId, totalAllowed) {
       const sb = await getClient();
       const { error } = await sb
