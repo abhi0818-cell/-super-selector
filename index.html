@@ -1646,8 +1646,15 @@ p31,Sample Player,MI,bat,9.0,false
     // lbState.tab = <contestId>  →  that SL / private-league leaderboard
     const lbState = { tab: 'daily', profiles: {}, matchId: null };
 
-    function openLeaderboard() {
+    async function openLeaderboard() {
       $('#lbModal').classList.add('open');
+      // Ensure SL contests are loaded even if the Season Long screen hasn't been
+      // visited yet this session — without this, only the Daily XI tab appears.
+      if (state.db && state.activeTournamentId && !(state.sl.contests?.length)) {
+        try {
+          state.sl.contests = await state.db.getContests(state.activeTournamentId);
+        } catch(e) { /* non-fatal — tabs just won't show SL */ }
+      }
       renderLbTabs();
       renderLbPickers();
       renderLeaderboard();
@@ -1703,12 +1710,18 @@ p31,Sample Player,MI,bat,9.0,false
       const matchPicker = $('#lbMatchPicker');
       if (lbState.tab === 'daily') {
         matchPicker.style.display = '';
-        const completed = (state.matches || []).filter(m => m.status === 'completed')
+        // Include completed AND in_progress matches — in_progress matches may have
+        // partial/final scores already saved (e.g. M73 scored mid-game).
+        const scoredMatches = (state.matches || [])
+          .filter(m => m.status === 'completed' || m.status === 'in_progress')
           .sort((a, b) => (b.match_number || 0) - (a.match_number || 0));
-        matchPicker.innerHTML = completed.length
-          ? completed.map(m => `<option value="${m.id}">M${m.match_number} — ${(m.home_team||'')} vs ${(m.away_team||'')}</option>`).join('')
-          : '<option value="">No completed matches yet</option>';
-        if (!lbState.matchId && completed.length) lbState.matchId = completed[0].id;
+        matchPicker.innerHTML = scoredMatches.length
+          ? scoredMatches.map(m => {
+              const live = m.status === 'in_progress' ? ' 🔴' : '';
+              return `<option value="${m.id}">M${m.match_number} — ${(m.home_team||'')} vs ${(m.away_team||'')}${live}</option>`;
+            }).join('')
+          : '<option value="">No matches with scores yet</option>';
+        if (!lbState.matchId && scoredMatches.length) lbState.matchId = scoredMatches[0].id;
         if (lbState.matchId) matchPicker.value = lbState.matchId;
       } else {
         matchPicker.style.display = 'none';
