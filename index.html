@@ -776,6 +776,8 @@
               <div class="stat" id="slXiStatRoles"><div class="label">WK·BAT·AR·BOWL</div><div class="value">0·0·0·0</div></div>
               <div class="stat" id="slXiStatOS"><div class="label">Overseas</div><div class="value">0/4</div></div>
             </div>
+            <!-- Shared-league notice (shown when active squad mirrors a primary squad's XI) -->
+            <div id="slSharedXiBanner" style="display:none;"></div>
             <div id="slXferInfoBar" style="font-size:12px; padding:4px 0 6px; color:var(--muted);"></div>
             <!-- Booster pills (shown when contest has available_boosters) -->
             <div id="slBoosterBar" style="display:none; padding:6px 0 8px;"></div>
@@ -1506,6 +1508,21 @@ p31,Sample Player,MI,bat,9.0,false
     /** True once any match in the active tournament is no longer upcoming. */
     function isTournamentStarted() {
       return (state.matches || []).some(m => m.status === 'in_progress' || m.status === 'completed');
+    }
+
+    /**
+     * Returns true when a private-league contest is "shared" — i.e. it has no custom
+     * scoring rules AND no custom boosters, meaning it is identical to the main SL
+     * contest.  In that case the user's main-SL XI applies automatically; they do not
+     * need to pick a separate team for this league.
+     *
+     * A contest is independent (returns false) if it defines either custom scoring
+     * rules or a custom booster set, since the picks/multipliers would differ.
+     */
+    function isSharedXI(contest) {
+      const hasCustomRules    = contest?.scoring_rules     && Object.keys(contest.scoring_rules).length    > 0;
+      const hasCustomBoosters = contest?.available_boosters && Object.keys(contest.available_boosters).length > 0;
+      return !hasCustomRules && !hasCustomBoosters;
     }
 
     // Classify a CricAPI match status into a lifecycle stage.
@@ -2639,6 +2656,30 @@ p31,Sample Player,MI,bat,9.0,false
           + ` <span style="color:var(--muted);font-size:11px;">${lockNote}</span>`;
       }
 
+      // ── Shared-league banner ──────────────────────────────────────────────
+      // When the active squad's XI is shared from a primary squad, inform the user
+      // that their picks here follow their main SL team automatically.
+      const sharedBanner = $('#slSharedXiBanner');
+      if (sharedBanner) {
+        const isPrimaryShared = !!(state.sl.squad?.primary_squad_id);
+        if (isPrimaryShared) {
+          sharedBanner.style.display = '';
+          sharedBanner.innerHTML = `
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:6px;
+                        background:rgba(34,211,238,0.08);border:1px solid rgba(34,211,238,0.3);
+                        font-size:12px;color:var(--accent);margin-bottom:6px;">
+              <span style="font-size:15px;">🔗</span>
+              <span>
+                <strong>Shared XI</strong> — this private league uses your main SL team automatically.
+                Changes you make on your main squad will propagate here at lock time.
+              </span>
+            </div>`;
+        } else {
+          sharedBanner.style.display = 'none';
+          sharedBanner.innerHTML = '';
+        }
+      }
+
       // ── Selected XI list ──────────────────────────────────────────────────
       const xiList = $('#slXiList');
       const totalStatEl = $('#slXiStatTotal .value');
@@ -2974,6 +3015,12 @@ p31,Sample Player,MI,bat,9.0,false
         console.log(`[SL lock] M${match?.match_number ?? '?'} locked — ${xfers} transfer(s).`);
         toast(`XI locked for M${match?.match_number ?? '?'} — ${xfers} transfer${xfers !== 1 ? 's' : ''} used.`, 4000);
 
+        // Propagate this XI to any shared private-league squads that mirror this squad.
+        // Fire-and-forget — non-fatal if it fails.
+        state.db.propagateXIToSharedSquads(squadId, matchId)
+          .then(n => { if (n > 0) console.log(`[SL lock] Propagated XI to ${n} shared squad(s).`); })
+          .catch(e => console.warn('[SL lock] propagateXIToSharedSquads failed:', e.message));
+
         renderSlXiTab();
       } catch (e) {
         console.warn('[SL lock] Failed to lock XI for match', matchId, e);
@@ -3202,19 +3249,30 @@ p31,Sample Player,MI,bat,9.0,false
         catch (e) { console.warn('[Leagues tab] getUserSquads failed:', e.message); }
       }
 
+      // The user's main SL squad: non-private contest, same tournament.
+      const mainSlEntry   = userSquads.find(u => !u.contest.is_private && u.contest.contest_type === 'season_long');
+      const mainSlSquadId = mainSlEntry?.squad?.id ?? null;
+
       // ── 1. Your Leagues list ─────────────────────────────────────────────
       let leagueListHtml = '';
       if (userSquads.length) {
         const items = userSquads.map(({ squad, contest }) => {
-          const isActive = state.sl.squad?.id === squad.id;
-          const badgeType = contest.is_private ? '🔒' : '🌐';
-          const switchBtn = isActive
+          const isActive   = state.sl.squad?.id === squad.id;
+          const badgeType  = contest.is_private ? '🔒' : '🌐';
+          const isShared   = !!(squad.primary_squad_id);
+          const sharedPill = isShared
+            ? '<span title="XI is shared from your main SL squad" style="font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(34,211,238,0.15);color:var(--accent);border:1px solid rgba(34,211,238,0.35);white-space:nowrap;">🔗 Shared XI</span>'
+            : '';
+          const switchBtn  = isActive
             ? '<span style="font-size:11px;color:var(--accent);padding:2px 8px;border:1px solid var(--accent);border-radius:4px;">Active</span>'
             : `<button class="sl-league-switch-btn" data-squadid="${escapeHtml(squad.id)}" data-contestid="${escapeHtml(contest.id)}" style="font-size:11px;padding:2px 8px;">Switch</button>`;
 
           return `<div style="display:flex;align-items:center;gap:10px;padding:8px;border-radius:6px;background:${isActive ? 'rgba(34,211,238,0.07)' : 'var(--panel-2)'};border:1px solid ${isActive ? 'var(--accent)' : 'var(--border)'};flex-wrap:wrap;">
             <div style="flex:1;min-width:0;">
-              <div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${badgeType} ${escapeHtml(contest.name)}</div>
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                <span style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${badgeType} ${escapeHtml(contest.name)}</span>
+                ${sharedPill}
+              </div>
               <div style="font-size:11px;color:var(--muted);margin-top:2px;">${escapeHtml(squad.name)}${contest.invite_code ? ' · Code: <code style="letter-spacing:1px;font-weight:700;">' + escapeHtml(contest.invite_code) + '</code>' : ''}</div>
             </div>
             ${switchBtn}
@@ -3272,7 +3330,10 @@ p31,Sample Player,MI,bat,9.0,false
           state.sl.initialized       = false;
           await initSeasonLong();
           renderSlLeaguesTab(); // re-render to update Active badge
-          toast(`Switched to league: ${ct.name}`, 3000);
+          const switchMsg = sq.primary_squad_id
+            ? `Switched to "${ct.name}" — using your main SL XI 🔗`
+            : `Switched to league: ${ct.name}`;
+          toast(switchMsg, 3000);
         });
       });
 
@@ -3303,11 +3364,19 @@ p31,Sample Player,MI,bat,9.0,false
           const league = await state.db.createPrivateLeague(state.activeTournamentId, {
             name: leagueName, maxMembers: maxMembersV, scoringRules: null,
           });
-          const { squad: newSquad } = await state.db.joinLeagueByCode(league.invite_code, teamName);
+
+          // A freshly created league has no custom scoring or boosters → shared XI.
+          // Pass the creator's main SL squad id so the lock pipeline propagates XI here.
+          const joinPrimaryId = isSharedXI(league) ? (mainSlSquadId ?? null) : null;
+          const { squad: newSquad, isShared: createdAsShared } =
+            await state.db.joinLeagueByCode(league.invite_code, teamName, joinPrimaryId);
           const contests = await state.db.getContests(state.activeTournamentId);
           state.sl.contests = contests;
 
-          statusEl.innerHTML = `✓ League <strong>${escapeHtml(leagueName)}</strong> created! Code: <code style="color:var(--accent);font-weight:700;letter-spacing:2px;">${league.invite_code}</code> <button style="font-size:11px;padding:2px 7px;margin-left:4px;" id="slPlCopyCode">Copy</button>`;
+          const sharedNote = createdAsShared
+            ? ' <span style="color:var(--accent);font-size:11px;">🔗 Your main SL XI is shared here.</span>'
+            : '';
+          statusEl.innerHTML = `✓ League <strong>${escapeHtml(leagueName)}</strong> created! Code: <code style="color:var(--accent);font-weight:700;letter-spacing:2px;">${league.invite_code}</code> <button style="font-size:11px;padding:2px 7px;margin-left:4px;" id="slPlCopyCode">Copy</button>${sharedNote}`;
           statusEl.style.color = 'var(--good,#4ade80)';
           $('#slPlCopyCode')?.addEventListener('click', () => {
             navigator.clipboard?.writeText(league.invite_code).catch(() => {});
@@ -3342,13 +3411,32 @@ p31,Sample Player,MI,bat,9.0,false
         if (!code)     { statusEl.textContent = 'Enter an invite code.'; statusEl.style.color = 'var(--bad)'; return; }
         if (!teamName) { statusEl.textContent = 'Enter a team name.';    statusEl.style.color = 'var(--bad)'; return; }
         if (!state.db) { statusEl.textContent = 'Connect a database first.'; statusEl.style.color = 'var(--bad)'; return; }
-        btn.disabled = true; statusEl.textContent = 'Joining…'; statusEl.style.color = 'var(--muted)';
+        btn.disabled = true; statusEl.textContent = 'Checking league…'; statusEl.style.color = 'var(--muted)';
         try {
-          const { contest, squad: newSquad } = await state.db.joinLeagueByCode(code, teamName);
+          // Preview the contest first to determine shared vs independent XI.
+          let previewContest;
+          try {
+            previewContest = await state.db.getContestByInviteCode(code);
+          } catch (previewErr) {
+            throw previewErr; // invalid code — surface to user
+          }
+
+          const shared       = isSharedXI(previewContest);
+          // For shared leagues, mirror from the main SL squad; for independent, no link.
+          const joinPrimaryId = shared ? (mainSlSquadId ?? null) : null;
+
+          statusEl.textContent = 'Joining…'; statusEl.style.color = 'var(--muted)';
+          const { contest, squad: newSquad, isShared: joinedAsShared } =
+            await state.db.joinLeagueByCode(code, teamName, joinPrimaryId);
           const contests = await state.db.getContests(state.activeTournamentId);
           state.sl.contests = contests;
-          statusEl.textContent = `✓ Joined "${contest.name}"!`;
-          statusEl.style.color = 'var(--good,#4ade80)';
+
+          const sharedNote = joinedAsShared
+            ? ' 🔗 Your main SL XI will be used here automatically.'
+            : ' You\'ll need to pick your XI for this league independently.';
+          statusEl.innerHTML = `<span style="color:var(--good,#4ade80);">✓ Joined "${escapeHtml(contest.name)}"!</span>`
+            + ` <span style="font-size:11px;color:var(--muted);">${sharedNote}</span>`;
+
           $('#slPlInviteCode').value   = '';
           $('#slPlJoinTeamName').value = '';
           if (!state.sl.squad) {
@@ -3357,7 +3445,10 @@ p31,Sample Player,MI,bat,9.0,false
             state.sl.initialized   = false;
             await initSeasonLong();
           }
-          toast(`Joined private league: ${contest.name}`, 4000);
+          const toastMsg = joinedAsShared
+            ? `Joined "${contest.name}" — using your main SL XI.`
+            : `Joined "${contest.name}" — pick your XI for this league.`;
+          toast(toastMsg, 4000);
           renderSlLeaguesTab(); // refresh Your Leagues list
         } catch (e) {
           statusEl.textContent = e.message; statusEl.style.color = 'var(--bad)';

@@ -1397,14 +1397,40 @@ export function createDb(cfg = {}) {
     },
 
     /**
+     * Preview a private league by invite code without joining.
+     * Returns the contest row, or throws if the code is invalid.
+     *
+     * @param {string} inviteCode  6-char invite code
+     * @returns {Promise<object>}  the contest row
+     */
+    async getContestByInviteCode(inviteCode) {
+      if (!inviteCode?.trim()) throw new Error('getContestByInviteCode: invite code required');
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('contests')
+        .select('*')
+        .eq('invite_code', inviteCode.trim().toUpperCase())
+        .eq('is_private', true)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) throw new Error('Invalid invite code — no active league found.');
+      return data;
+    },
+
+    /**
      * Look up a private league by invite code and join it (creates a squad).
      * Returns the contest + new squad, or throws if code is invalid / already a member / full.
      *
-     * @param {string} inviteCode   6-char code shared by the league creator
-     * @param {string} squadName    the joining user's team name
-     * @returns {Promise<{contest: object, squad: object}>}
+     * @param {string}      inviteCode      6-char code shared by the league creator
+     * @param {string}      squadName       the joining user's team name
+     * @param {string|null} primarySquadId  if set, marks this as a shared squad that mirrors
+     *                                      the primary squad's XI automatically at lock time.
+     *                                      Pass the user's main SL squad id for shared leagues,
+     *                                      or null for independent leagues.
+     * @returns {Promise<{contest: object, squad: object, isShared: boolean}>}
      */
-    async joinLeagueByCode(inviteCode, squadName) {
+    async joinLeagueByCode(inviteCode, squadName, primarySquadId = null) {
       if (!inviteCode?.trim()) throw new Error('joinLeagueByCode: invite code required');
       const sb = await getClient();
       const { data: { user } } = await sb.auth.getUser();
@@ -1440,14 +1466,21 @@ export function createDb(cfg = {}) {
         if (count >= contest.max_members) throw new Error('This league is full.');
       }
 
-      // Create squad
+      // Create squad — shared leagues store primary_squad_id so the lock propagation
+      // pipeline can copy the XI automatically.
+      const insertRow = {
+        contest_id      : contest.id,
+        name            : squadName?.trim() || 'My Team',
+        user_id         : uid,
+        primary_squad_id: primarySquadId ?? null,
+      };
       const { data: squad, error: sErr } = await sb
         .from('user_squads')
-        .insert({ contest_id: contest.id, name: squadName?.trim() || 'My Team', user_id: uid })
+        .insert(insertRow)
         .select().single();
       if (sErr) throw sErr;
 
-      return { contest, squad };
+      return { contest, squad, isShared: !!primarySquadId };
     },
 
     /**
@@ -1530,10 +1563,10 @@ export function createDb(cfg = {}) {
       const uid = user?.id;
       if (!uid) return [];
 
-      // 1. All squads owned by this user
+      // 1. All squads owned by this user (include primary_squad_id for shared-league detection)
       const { data: squads, error: sErr } = await sb
         .from('user_squads')
-        .select('*')
+        .select('*, primary_squad_id')
         .eq('user_id', uid);
       if (sErr) throw sErr;
       if (!squads?.length) return [];
@@ -2200,6 +2233,83 @@ export function createDb(cfg = {}) {
         transfers  : xferRows || [],
         seasonTotal: +seasonTotal.toFixed(1),
       };
+    },
+
+    // ─── Shared squads ───────────────────────────────────────────────────────
+
+    /**
+     * Return all squads that have primary_squad_id = primarySquadId.
+     * These are shared private-league squads that mirror the primary squad's XI.
+     * Called at lock time so the XI can be propagated automatically.
+     *
+     * @param {string} primarySquadId
+     * @returns {Promise<Array<{id, name, contest_id, primary_squad_id}>>}
+     */
+    async getSharedSquads(primarySquadId) {
+      if (!primarySquadId) return [];
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('user_squads')
+        .select('id, name, contest_id, primary_squad_id')
+        .eq('primary_squad_id', primarySquadId);
+      if (error) throw error;
+      return data || [];
+    },
+
+    /**
+     * Copy the locked XI from a primary squad to all squads that share it,
+     * for a specific match.  Called by slLockForMatch after locking the primary.
+     *
+     * For each shared squad, the primary squad's user_match_xi rows are
+     * duplicated under the shared squad_id so that the scoring pipeline,
+     * leaderboard queries, and season view all work without special handling.
+     *
+     * @param {string}   primarySquadId
+     * @param {string}   matchId
+     * @returns {Promise<number>}  number of shared squads updated
+     */
+    async propagateXIToSharedSquads(primarySquadId, matchId) {
+      if (!primarySquadId || !matchId) return 0;
+      const sb = await getClient();
+
+      // 1. Get the primary squad's XI for this match
+      const { data: xiRows, error: xErr } = await sb
+        .from('user_match_xi')
+        .select('player_id, is_captain, is_vc, role')
+        .eq('squad_id', primarySquadId)
+        .eq('match_id', matchId);
+      if (xErr) throw xErr;
+      if (!xiRows?.length) return 0;
+
+      // 2. Get all shared squads
+      const sharedSquads = await this.getSharedSquads(primarySquadId);
+      if (!sharedSquads.length) return 0;
+
+      let updated = 0;
+      for (const shared of sharedSquads) {
+        // Delete any existing XI rows for this shared squad + match (idempotent)
+        await sb.from('user_match_xi')
+          .delete()
+          .eq('squad_id', shared.id)
+          .eq('match_id', matchId);
+
+        // Insert the primary squad's rows under the shared squad_id
+        const rows = xiRows.map(r => ({
+          squad_id  : shared.id,
+          match_id  : matchId,
+          player_id : r.player_id,
+          is_captain: r.is_captain,
+          is_vc     : r.is_vc,
+          role      : r.role,
+        }));
+        const { error: iErr } = await sb.from('user_match_xi').insert(rows);
+        if (iErr) {
+          console.warn(`[propagateXI] Failed for shared squad ${shared.id}:`, iErr.message);
+        } else {
+          updated++;
+        }
+      }
+      return updated;
     },
 
     // ─── Boosters ─────────────────────────────────────────────────────────────
