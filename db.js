@@ -1000,6 +1000,17 @@ export function createDb(cfg = {}) {
         .in('squad_id', squadIds);
       if (scErr) throw scErr;
 
+      // Fetch transfer penalties for all squads in this contest
+      const { data: xferRows } = await sb
+        .from('user_transfers')
+        .select('squad_id, points_deducted')
+        .in('squad_id', squadIds);
+
+      const penaltyBySquad = {};
+      (xferRows || []).forEach(t => {
+        penaltyBySquad[t.squad_id] = (penaltyBySquad[t.squad_id] || 0) + Number(t.points_deducted ?? 0);
+      });
+
       // Sum all player points per squad; count distinct matches where squad scored > 0
       const pointsBySquad = {};
       const matchesBySquad = {};
@@ -1017,7 +1028,8 @@ export function createDb(cfg = {}) {
           userId      : s.user_id,
           squadId     : s.id,
           squadName   : s.name,
-          totalPoints : pointsBySquad[s.id]         || 0,
+          // Net points = raw fantasy points minus transfer penalties
+          totalPoints : (pointsBySquad[s.id] || 0) - (penaltyBySquad[s.id] || 0),
           matchCount  : matchesBySquad[s.id]?.size  || 0,
         }))
         .sort((a, b) => b.totalPoints - a.totalPoints);
@@ -1890,14 +1902,24 @@ export function createDb(cfg = {}) {
             .eq('squad_id', squadId)
             .eq('match_id', matchId);
 
-          const xferRows = playersOut.slice(0, transfersMade).map((outId, i) => ({
-            squad_id       : squadId,
-            match_id       : matchId,
-            player_out_id  : outId,
-            player_in_id   : playersIn[i],
-            is_free        : true,
-            points_deducted: 0,
-          }));
+          // Determine which transfers are free vs. paid.
+          // free_transfers_per_match = how many changes are free per match window.
+          // null = unlimited free (no deduction ever).
+          // extra_transfer_point_cost = penalty per paid transfer (default 4).
+          const freePerMatch = contestConfig.free_transfers_per_match ?? null;
+          const extraCost    = Number(contestConfig.extra_transfer_point_cost ?? 4);
+
+          const xferRows = playersOut.slice(0, transfersMade).map((outId, i) => {
+            const isFree = freePerMatch === null || i < freePerMatch;
+            return {
+              squad_id       : squadId,
+              match_id       : matchId,
+              player_out_id  : outId,
+              player_in_id   : playersIn[i],
+              is_free        : isFree,
+              points_deducted: isFree ? 0 : extraCost,
+            };
+          });
 
           const { error: xe } = await sb.from('user_transfers').insert(xferRows);
           if (xe) console.warn('Transfer log error (non-fatal):', xe.message);

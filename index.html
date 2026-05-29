@@ -3062,6 +3062,8 @@ p31,Sample Player,MI,bat,9.0,false
         // Lock the draft → user_match_xi + user_transfers
         const result = await state.db.lockMatchXI(squadId, matchId, {
           total_transfers_allowed    : contest.total_transfers_allowed    ?? null,
+          free_transfers_per_match   : contest.free_transfers_per_match   ?? null,
+          extra_transfer_point_cost  : contest.extra_transfer_point_cost  ?? 4,
           start_match_number         : contest.start_match_number         ?? null,
           playoff_start_match_number : contest.playoff_start_match_number ?? null,
           playoff_transfers_allowed  : contest.playoff_transfers_allowed  ?? null,
