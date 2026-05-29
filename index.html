@@ -2368,7 +2368,12 @@ p31,Sample Player,MI,bat,9.0,false
         // Load contests for this tournament
         const contests = await state.db.getContests(state.activeTournamentId);
         state.sl.contests = contests;
-        state.sl.seasonContest = contests.find(c => c.contest_type === 'season_long') ?? null;
+
+        // Respect a pre-set contest (e.g. user switched to a private league).
+        // Only auto-detect the main SL contest when no contest has been selected yet.
+        if (!state.sl.seasonContest) {
+          state.sl.seasonContest = contests.find(c => c.contest_type === 'season_long' && !c.is_private) ?? null;
+        }
         if (!state.sl.seasonContest) {
           toast('No season-long contest found for this tournament. Run migration_v2 first.', 4000);
           return;
@@ -2379,8 +2384,12 @@ p31,Sample Player,MI,bat,9.0,false
           toast('⚠️ Transfer config unavailable — run migration_v3_season_transfer_cap.sql in Supabase to enable transfer limits.', 7000);
           console.warn('[SL] migration_v3 not applied — free_transfers_per_match / extra_transfer_point_cost / total_transfers_allowed all defaulting to unlimited.');
         }
-        // Load existing squad entry (null = not joined yet)
-        state.sl.squad = await state.db.getOrCreateSquad(state.sl.seasonContest.id);
+
+        // Respect a pre-set squad (e.g. user switched leagues).
+        // Only auto-load/create the squad when one hasn't already been selected.
+        if (!state.sl.squad) {
+          state.sl.squad = await state.db.getOrCreateSquad(state.sl.seasonContest.id);
+        }
         if (state.sl.squad) {
           // SL XI is decoupled from the pool dropdown — load draft + baseline once.
           await slLoadDraft();

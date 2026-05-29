@@ -1468,16 +1468,31 @@ export function createDb(cfg = {}) {
 
       // Create squad — shared leagues store primary_squad_id so the lock propagation
       // pipeline can copy the XI automatically.
+      // If migration_v13 hasn't been run yet the column won't exist; we fall back to
+      // inserting without it so the join still succeeds (just as an independent squad).
       const insertRow = {
         contest_id      : contest.id,
         name            : squadName?.trim() || 'My Team',
         user_id         : uid,
         primary_squad_id: primarySquadId ?? null,
       };
-      const { data: squad, error: sErr } = await sb
+      let squad, sErr;
+      ({ data: squad, error: sErr } = await sb
         .from('user_squads')
         .insert(insertRow)
-        .select().single();
+        .select().single());
+
+      // Graceful degradation: if the column doesn't exist yet (migration pending),
+      // retry without primary_squad_id so the join still works.
+      if (sErr && /primary_squad_id/.test(sErr.message)) {
+        console.warn('[joinLeagueByCode] primary_squad_id column missing — run migration_v13. Falling back to independent squad.');
+        const { primary_squad_id: _omit, ...rowWithoutShared } = insertRow;
+        ({ data: squad, error: sErr } = await sb
+          .from('user_squads')
+          .insert(rowWithoutShared)
+          .select().single());
+        primarySquadId = null; // treat as independent since column is absent
+      }
       if (sErr) throw sErr;
 
       return { contest, squad, isShared: !!primarySquadId };
