@@ -1602,7 +1602,7 @@ export function createDb(cfg = {}) {
       const contestIds = [...new Set(squads.map(s => s.contest_id))];
       const { data: contests, error: cErr } = await sb
         .from('contests')
-        .select('id, name, contest_type, is_active, is_private, invite_code, scoring_rules, max_members, available_boosters')
+        .select('id, name, contest_type, is_active, is_private, invite_code, scoring_rules, max_members, available_boosters, total_transfers_allowed, free_transfers_per_match, extra_transfer_point_cost, start_match_number, playoff_start_match_number, playoff_transfers_allowed')
         .in('id', contestIds)
         .eq('tournament_id', tournamentId)
         .eq('is_active', true);
