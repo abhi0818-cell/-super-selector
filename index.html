@@ -6490,10 +6490,18 @@ p31,Sample Player,MI,bat,9.0,false
         return SCORING_RULES[fmt];
       }
 
-      // Cache active boosters per squad for this match
-      const squadBoosterMap = {};   // squadId → booster key or null
+      // Batch-fetch all booster activations for this match in one query.
+      // Per-squad queries hit RLS when scoring other users' squads — the batch
+      // approach requires only a single read with the permissive read policy.
+      let squadBoosterMap = {};   // squadId → booster key or null
+      try {
+        squadBoosterMap = await state.db.getAllBoostersForMatch(matchId);
+      } catch (e) {
+        console.warn('[SL scores] getAllBoostersForMatch failed, falling back to per-squad lookup:', e.message);
+      }
       async function getBoosterForSquad(squadId) {
-        if (squadId in squadBoosterMap) return squadBoosterMap[squadId];
+        // Use batch result if present; fall back to individual query as safety net
+        if (squadId in squadBoosterMap) return squadBoosterMap[squadId] ?? null;
         try {
           const b = await state.db.getActiveBoosterForMatch(squadId, matchId);
           squadBoosterMap[squadId] = b;

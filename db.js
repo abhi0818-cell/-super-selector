@@ -2489,6 +2489,26 @@ export function createDb(cfg = {}) {
     },
 
     /**
+     * Fetch all booster activations for a match across ALL squads in one query.
+     * Returns a map of { [squadId]: boosterKey }.
+     * Used by the scoring pipeline so it isn't blocked by per-user RLS when
+     * computing scores for squads belonging to other users.
+     * Requires the "booster_activations_read_all" policy on user_booster_activations.
+     */
+    async getAllBoostersForMatch(matchId) {
+      if (!matchId) return {};
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('user_booster_activations')
+        .select('squad_id, booster')
+        .eq('match_id', matchId);
+      if (error) throw error;
+      const map = {};
+      (data || []).forEach(r => { map[r.squad_id] = r.booster; });
+      return map;
+    },
+
+    /**
      * Retrieve the free_hit snapshot for a squad + match.
      * Returns null if no free_hit was activated or no snapshot was stored.
      *
