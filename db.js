@@ -2546,5 +2546,235 @@ export function createDb(cfg = {}) {
         .eq('id', contestId);
       if (error) throw error;
     },
+
+    // ─── Close-Out Tournament ─────────────────────────────────────────────────
+
+    /**
+     * Returns approximate row counts for every transactional table that is
+     * scoped to `tournamentId`.  Used by the admin close-out panel to show
+     * how much data will be deleted.
+     *
+     * Shape: { [tableKey]: { label, description, count, canDelete } }
+     *
+     * We use `select('id', { count: 'exact', head: true })` which asks the
+     * server for a COUNT without returning any rows.
+     */
+    async getTournamentTableCounts(tournamentId) {
+      if (!tournamentId) throw new Error('getTournamentTableCounts: tournamentId required');
+      const sb = await getClient();
+
+      // Helper — count rows with a filter, return 0 on any error
+      const count = async (table, column, value) => {
+        const { count: n, error } = await sb
+          .from(table)
+          .select('*', { count: 'exact', head: true })
+          .eq(column, value);
+        if (error) return 0;
+        return n ?? 0;
+      };
+
+      // For tables linked through contests / squads we need the contest IDs first
+      const { data: contests } = await sb
+        .from('contests')
+        .select('id')
+        .eq('tournament_id', tournamentId);
+      const contestIds = (contests ?? []).map(c => c.id);
+
+      // squad IDs for the deepest joins
+      let squadIds = [];
+      if (contestIds.length) {
+        const { data: squads } = await sb
+          .from('user_squads')
+          .select('id')
+          .in('contest_id', contestIds);
+        squadIds = (squads ?? []).map(s => s.id);
+      }
+
+      // Count each table
+      const [
+        matchXiCount,
+        matchXiScoresCount,
+        userSquadsCount,
+        matchesCount,
+        tournamentPlayersCount,
+        contestsCount,
+      ] = await Promise.all([
+        squadIds.length
+          ? sb.from('user_match_xi').select('*', { count: 'exact', head: true }).in('squad_id', squadIds).then(r => r.count ?? 0)
+          : Promise.resolve(0),
+        squadIds.length
+          ? sb.from('user_match_xi_scores').select('*', { count: 'exact', head: true }).in('squad_id', squadIds).then(r => r.count ?? 0)
+          : Promise.resolve(0),
+        contestIds.length
+          ? sb.from('user_squads').select('*', { count: 'exact', head: true }).in('contest_id', contestIds).then(r => r.count ?? 0)
+          : Promise.resolve(0),
+        count('matches',             'tournament_id', tournamentId),
+        count('tournament_players',  'tournament_id', tournamentId),
+        count('contests',            'tournament_id', tournamentId),
+      ]);
+
+      return {
+        user_match_xi: {
+          label:       'Match XI picks',
+          description: 'Every player selected in a user\'s XI for each match',
+          count:       matchXiCount,
+          canDelete:   true,
+          defaultOn:   true,
+        },
+        user_match_xi_scores: {
+          label:       'XI scores',
+          description: 'Per-player fantasy points awarded each match',
+          count:       matchXiScoresCount,
+          canDelete:   true,
+          defaultOn:   true,
+        },
+        user_squads: {
+          label:       'User squads',
+          description: 'Each user\'s squad registration for a contest',
+          count:       userSquadsCount,
+          canDelete:   true,
+          defaultOn:   true,
+        },
+        matches: {
+          label:       'Match schedule',
+          description: 'All match records for this tournament',
+          count:       matchesCount,
+          canDelete:   true,
+          defaultOn:   false,
+        },
+        tournament_players: {
+          label:       'Tournament player pool',
+          description: 'Credit values and team assignments for this tournament',
+          count:       tournamentPlayersCount,
+          canDelete:   true,
+          defaultOn:   false,
+        },
+        contests: {
+          label:       'Contests & leagues',
+          description: 'Contest configurations, private leagues, and invite codes',
+          count:       contestsCount,
+          canDelete:   true,
+          defaultOn:   false,
+        },
+      };
+    },
+
+    /**
+     * Closes out a tournament:
+     *  1. Sets tournaments.end_date = today  (marks it as finished in the app)
+     *  2. Sets all contests.is_active = false for this tournament
+     *  3. Deletes rows from each table in `tablesToClear` (array of table keys
+     *     from getTournamentTableCounts — e.g. ['user_match_xi', 'user_squads'])
+     *
+     * Deletions happen in dependency order so FK constraints are never violated:
+     *   user_match_xi_scores → user_match_xi → user_squads → contests
+     *   matches → tournament_players
+     *
+     * Returns { tablesCleared: string[], errors: string[] }
+     */
+    async closeOutTournament(tournamentId, tablesToClear = []) {
+      if (!tournamentId) throw new Error('closeOutTournament: tournamentId required');
+      const sb = await getClient();
+
+      const cleared = [];
+      const errors  = [];
+
+      // Step 1 — mark tournament ended today
+      const today = new Date().toISOString().split('T')[0];
+      const { error: tErr } = await sb
+        .from('tournaments')
+        .update({ end_date: today })
+        .eq('id', tournamentId);
+      if (tErr) errors.push(`tournaments.end_date: ${tErr.message}`);
+
+      // Step 2 — deactivate all contests
+      const { error: cErr } = await sb
+        .from('contests')
+        .update({ is_active: false })
+        .eq('tournament_id', tournamentId);
+      if (cErr) errors.push(`contests.is_active: ${cErr.message}`);
+
+      // Get contest IDs (needed for squad-level deletes)
+      const { data: contests } = await sb
+        .from('contests')
+        .select('id')
+        .eq('tournament_id', tournamentId);
+      const contestIds = (contests ?? []).map(c => c.id);
+
+      // Get squad IDs (needed for XI-level deletes)
+      let squadIds = [];
+      if (contestIds.length) {
+        const { data: squads } = await sb
+          .from('user_squads')
+          .select('id')
+          .in('contest_id', contestIds);
+        squadIds = (squads ?? []).map(s => s.id);
+      }
+
+      const want = new Set(tablesToClear);
+
+      // Delete in correct FK order
+      // ── user_match_xi_scores (deepest) ──
+      if (want.has('user_match_xi_scores') && squadIds.length) {
+        const { error } = await sb
+          .from('user_match_xi_scores')
+          .delete()
+          .in('squad_id', squadIds);
+        if (error) errors.push(`user_match_xi_scores: ${error.message}`);
+        else cleared.push('user_match_xi_scores');
+      }
+
+      // ── user_match_xi ──
+      if (want.has('user_match_xi') && squadIds.length) {
+        const { error } = await sb
+          .from('user_match_xi')
+          .delete()
+          .in('squad_id', squadIds);
+        if (error) errors.push(`user_match_xi: ${error.message}`);
+        else cleared.push('user_match_xi');
+      }
+
+      // ── user_squads ──
+      if (want.has('user_squads') && contestIds.length) {
+        const { error } = await sb
+          .from('user_squads')
+          .delete()
+          .in('contest_id', contestIds);
+        if (error) errors.push(`user_squads: ${error.message}`);
+        else cleared.push('user_squads');
+      }
+
+      // ── matches ──
+      if (want.has('matches')) {
+        const { error } = await sb
+          .from('matches')
+          .delete()
+          .eq('tournament_id', tournamentId);
+        if (error) errors.push(`matches: ${error.message}`);
+        else cleared.push('matches');
+      }
+
+      // ── tournament_players ──
+      if (want.has('tournament_players')) {
+        const { error } = await sb
+          .from('tournament_players')
+          .delete()
+          .eq('tournament_id', tournamentId);
+        if (error) errors.push(`tournament_players: ${error.message}`);
+        else cleared.push('tournament_players');
+      }
+
+      // ── contests (last — others reference it) ──
+      if (want.has('contests')) {
+        const { error } = await sb
+          .from('contests')
+          .delete()
+          .eq('tournament_id', tournamentId);
+        if (error) errors.push(`contests: ${error.message}`);
+        else cleared.push('contests');
+      }
+
+      return { tablesCleared: cleared, errors };
+    },
   };
 }

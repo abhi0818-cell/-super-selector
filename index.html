@@ -5166,6 +5166,182 @@ p31,Sample Player,MI,bat,9.0,false
       </div>`;
     }
 
+    // ── Close-Out Tournament panel ────────────────────────────────────────────
+    // Injected at the top of the Contests tab. Lets the admin:
+    //   • Preview row counts for every tournament-scoped table
+    //   • Toggle which tables to wipe
+    //   • Execute the close-out (end_date = today + optional deletes)
+
+    function renderCloseOutPanel(tournamentId) {
+      const panelId = 'closeOutPanel';
+      const existing = $(`#${panelId}`);
+      if (existing) existing.remove();
+
+      const panel = document.createElement('div');
+      panel.id = panelId;
+      panel.style.cssText = [
+        'border:1px solid var(--bad)',
+        'border-radius:8px',
+        'padding:14px 16px',
+        'margin-bottom:16px',
+        'background:rgba(248,113,113,0.04)',
+      ].join(';');
+
+      panel.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:16px;">🏁</span>
+            <strong style="font-size:14px;color:var(--bad);">Close Out Tournament</strong>
+          </div>
+          <button id="coPreviewBtn" style="font-size:12px;padding:5px 12px;">
+            Preview data
+          </button>
+        </div>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 12px;">
+          Marks this tournament as finished (sets <code>end_date = today</code> and
+          deactivates all contests). Optionally wipe transactional tables below —
+          reference data (players, teams, profiles) is never touched.
+        </p>
+        <div id="coTableList" style="display:none;margin-bottom:12px;"></div>
+        <div id="coActions" style="display:none;display:none;align-items:center;gap:10px;flex-wrap:wrap;">
+          <button id="coExecuteBtn" class="danger" style="font-size:13px;padding:7px 18px;" disabled>
+            Close Out Tournament
+          </button>
+          <span id="coStatus" style="font-size:12px;color:var(--muted);"></span>
+        </div>
+      `;
+
+      // Insert before the existing #adminContestsList content
+      const wrap = $('#adminContestsList');
+      wrap.parentNode.insertBefore(panel, wrap);
+
+      // ── Preview button ───────────────────────────────────────────────────────
+      $('#coPreviewBtn').addEventListener('click', async () => {
+        const btn = $('#coPreviewBtn');
+        const listEl = $('#coTableList');
+        const actionsEl = $('#coActions');
+        btn.disabled = true;
+        btn.textContent = 'Loading…';
+        listEl.style.display = 'none';
+        actionsEl.style.display = 'none';
+
+        try {
+          const counts = await state.db.getTournamentTableCounts(tournamentId);
+
+          listEl.innerHTML = `
+            <div style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">
+              Select tables to clear
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:12px;">
+              <thead>
+                <tr>
+                  <th style="text-align:left;padding:4px 6px;color:var(--muted);border-bottom:1px solid var(--border);font-weight:600;">Clear?</th>
+                  <th style="text-align:left;padding:4px 6px;color:var(--muted);border-bottom:1px solid var(--border);font-weight:600;">Table</th>
+                  <th style="text-align:left;padding:4px 6px;color:var(--muted);border-bottom:1px solid var(--border);font-weight:600;">Description</th>
+                  <th style="text-align:right;padding:4px 6px;color:var(--muted);border-bottom:1px solid var(--border);font-weight:600;">Rows</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${Object.entries(counts).map(([key, t]) => `
+                  <tr>
+                    <td style="padding:6px 6px;">
+                      <input type="checkbox"
+                        class="co-table-chk"
+                        data-table="${key}"
+                        ${t.defaultOn ? 'checked' : ''}
+                        style="cursor:pointer;"
+                      />
+                    </td>
+                    <td style="padding:6px 6px;">
+                      <code style="font-size:11px;background:var(--panel-2);padding:2px 6px;border-radius:4px;">${key}</code>
+                      <div style="font-size:11px;font-weight:600;margin-top:2px;">${t.label}</div>
+                    </td>
+                    <td style="padding:6px 6px;color:var(--muted);font-size:11px;">${t.description}</td>
+                    <td style="padding:6px 6px;text-align:right;">
+                      <span style="font-size:13px;font-weight:700;color:${t.count > 0 ? 'var(--accent-2)' : 'var(--muted)'};">${t.count.toLocaleString()}</span>
+                    </td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+            <div style="font-size:11px;color:var(--muted);margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);">
+              ✅ Always kept (not shown): <code>players</code>, <code>teams</code>, <code>profiles</code>, <code>tournaments</code>
+            </div>
+          `;
+
+          listEl.style.display = 'block';
+          actionsEl.style.display = 'flex';
+
+          // Enable execute once we have count data
+          const execBtn = $('#coExecuteBtn');
+          execBtn.disabled = false;
+
+          // Update button label when checkboxes change
+          function updateExecLabel() {
+            const checked = [...listEl.querySelectorAll('.co-table-chk:checked')].map(c => c.dataset.table);
+            const totalRows = checked.reduce((sum, key) => sum + (counts[key]?.count ?? 0), 0);
+            execBtn.textContent = checked.length === 0
+              ? 'Close Out (flag only — no deletions)'
+              : `Close Out + Delete ${totalRows.toLocaleString()} rows from ${checked.length} table${checked.length !== 1 ? 's' : ''}`;
+          }
+          updateExecLabel();
+          listEl.querySelectorAll('.co-table-chk').forEach(chk => {
+            chk.addEventListener('change', updateExecLabel);
+          });
+
+        } catch (e) {
+          listEl.innerHTML = `<div style="color:var(--bad);font-size:12px;">Failed to load counts: ${escapeHtml(e.message)}</div>`;
+          listEl.style.display = 'block';
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '↻ Refresh';
+        }
+      });
+
+      // ── Execute button ───────────────────────────────────────────────────────
+      panel.addEventListener('click', async (e) => {
+        if (e.target.id !== 'coExecuteBtn') return;
+        const btn = e.target;
+        const statusEl = $('#coStatus');
+        const listEl = $('#coTableList');
+
+        const tablesToClear = [...listEl.querySelectorAll('.co-table-chk:checked')]
+          .map(c => c.dataset.table);
+
+        const tableLabel = tablesToClear.length === 0
+          ? 'No tables will be deleted — only end_date and is_active flags will be updated.'
+          : `This will permanently delete rows from: ${tablesToClear.join(', ')}.`;
+
+        if (!confirm(
+          `⚠️  Close out this tournament?\n\n${tableLabel}\n\nThis cannot be undone.`
+        )) return;
+
+        btn.disabled = true;
+        statusEl.textContent = 'Running…';
+        statusEl.style.color = 'var(--muted)';
+
+        try {
+          const result = await state.db.closeOutTournament(tournamentId, tablesToClear);
+
+          if (result.errors.length) {
+            statusEl.textContent = `Partial: cleared ${result.tablesCleared.length} table(s). Errors: ${result.errors.join(' | ')}`;
+            statusEl.style.color = 'var(--bad)';
+          } else {
+            const msg = result.tablesCleared.length === 0
+              ? '✓ Tournament closed out — flags updated, no rows deleted.'
+              : `✓ Done — deleted rows from: ${result.tablesCleared.join(', ')}. Tournament marked finished.`;
+            statusEl.textContent = msg;
+            statusEl.style.color = 'var(--good,#4ade80)';
+            // Refresh the counts after close-out
+            $('#coPreviewBtn')?.click();
+          }
+        } catch (err) {
+          statusEl.textContent = 'Failed: ' + err.message;
+          statusEl.style.color = 'var(--bad)';
+          btn.disabled = false;
+        }
+      });
+    }
+
     async function renderContestsAdmin() {
       const wrap = $('#adminContestsList');
       if (!state.db) {
@@ -5175,6 +5351,11 @@ p31,Sample Player,MI,bat,9.0,false
       wrap.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:6px 0;">Loading…</div>';
       try {
         const contests = await state.db.getContests(state.activeTournamentId);
+
+        // Render close-out panel at the top whenever a tournament is active
+        if (state.activeTournamentId) {
+          renderCloseOutPanel(state.activeTournamentId);
+        }
         if (!contests.length) {
           wrap.innerHTML = '<div class="msg warn" style="margin:10px 0;">No contests found for the active tournament. Run migration_v2 first.</div>';
           return;
