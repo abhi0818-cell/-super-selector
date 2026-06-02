@@ -595,6 +595,20 @@ export function createDb(cfg = {}) {
       return data;
     },
 
+    /**
+     * Set the is_active flag on a tournament (controls mobile lobby visibility).
+     * @param {string} id          Tournament UUID
+     * @param {boolean} isActive   New active state
+     */
+    async setTournamentActive(id, isActive) {
+      const sb = await getClient();
+      const { error } = await sb
+        .from('tournaments')
+        .update({ is_active: isActive })
+        .eq('id', id);
+      if (error) throw error;
+    },
+
     async addTournament(input) {
       if (!input.name) throw new Error('addTournament: name is required');
       const sb = await getClient();

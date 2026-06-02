@@ -860,6 +860,13 @@
             <small style="color:var(--muted);">All matches, syncs, and scorecards are scoped to the active tournament. Switch here when a new season starts.</small>
           </div>
         </div>
+        <!-- Mobile app availability toggles -->
+        <div id="tournamentActiveSection" style="display:none; border:1px solid var(--border); border-radius:8px; padding:12px;">
+          <div style="font-size:13px; font-weight:600; margin-bottom:4px;">📱 Mobile App Availability</div>
+          <div style="font-size:11px; color:var(--muted); margin-bottom:10px;">Active tournaments appear in the mobile lobby. Users can pick from any active tournament. Multiple can be active simultaneously.</div>
+          <div id="tournamentActiveList" style="display:flex; flex-direction:column; gap:8px;"></div>
+        </div>
+
         <div style="border:1px solid var(--border); border-radius:8px; padding:12px;">
           <div style="font-size:13px; font-weight:600; margin-bottom:10px; color:var(--accent);">+ New Tournament</div>
           <div style="display:flex; flex-direction:column; gap:8px;">
@@ -2279,6 +2286,52 @@ p31,Sample Player,MI,bat,9.0,false
             `<option value="${t.id}" ${t.id === cur ? 'selected' : ''}>${escapeHtml(t.name)} (${t.format || 'T20'})</option>`
           ).join('')
         : '<option value="">No tournaments found</option>';
+      renderTournamentActiveToggles();
+    }
+
+    function renderTournamentActiveToggles() {
+      const section = $('#tournamentActiveSection');
+      const list    = $('#tournamentActiveList');
+      if (!section || !list) return;
+      if (!state.tournaments.length) { section.style.display = 'none'; return; }
+      section.style.display = 'block';
+      list.innerHTML = state.tournaments.map(t => {
+        const active = !!t.is_active;
+        return `
+          <div style="display:flex; align-items:center; gap:10px; padding:8px 10px;
+                      border:1px solid ${active ? 'var(--accent)' : 'var(--border)'};
+                      border-radius:6px; background:${active ? 'rgba(201,168,76,0.08)' : 'transparent'};">
+            <div style="flex:1;">
+              <div style="font-size:13px; font-weight:600;">${escapeHtml(t.name)}</div>
+              <div style="font-size:11px; color:var(--muted);">${t.format || 'T20'}${t.start_date ? ' · ' + new Date(t.start_date).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : ''}</div>
+            </div>
+            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;">
+              <span style="font-size:11px; color:${active ? 'var(--accent)' : 'var(--muted)'}; font-weight:600;">
+                ${active ? 'Active' : 'Inactive'}
+              </span>
+              <input type="checkbox" data-tid="${t.id}" class="tournament-active-toggle"
+                     ${active ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;" />
+            </label>
+          </div>`;
+      }).join('');
+      // Wire toggles
+      list.querySelectorAll('.tournament-active-toggle').forEach(cb => {
+        cb.addEventListener('change', async e => {
+          const tid      = e.target.dataset.tid;
+          const isActive = e.target.checked;
+          try {
+            await state.db.setTournamentActive(tid, isActive);
+            // Update local state
+            const t = state.tournaments.find(x => x.id === tid);
+            if (t) t.is_active = isActive;
+            renderTournamentActiveToggles();
+            toast(`Tournament marked ${isActive ? 'active' : 'inactive'} — mobile lobby updated.`);
+          } catch (err) {
+            toast('Failed to update: ' + err.message);
+            e.target.checked = !isActive; // revert
+          }
+        });
+      });
     }
 
     async function switchTournament(id) {
@@ -5172,7 +5225,7 @@ p31,Sample Player,MI,bat,9.0,false
     //   • Toggle which tables to wipe
     //   • Execute the close-out (end_date = today + optional deletes)
 
-    function renderCloseOutPanel(tournamentId) {
+    function renderCloseOutPanel(preselectedId) {
       const panelId = 'closeOutPanel';
       const existing = $(`#${panelId}`);
       if (existing) existing.remove();
@@ -5187,35 +5240,43 @@ p31,Sample Player,MI,bat,9.0,false
         'background:rgba(248,113,113,0.04)',
       ].join(';');
 
-      if (!tournamentId) {
-        panel.innerHTML = `
-          <div style="display:flex;align-items:center;gap:8px;">
-            <span style="font-size:16px;">🏁</span>
-            <strong style="font-size:14px;color:var(--bad);">Close Out Tournament</strong>
-            <span style="font-size:12px;color:var(--muted);margin-left:4px;">— select a tournament in the Tournament tab first</span>
-          </div>`;
-        const wrap = $('#adminContestsList');
-        wrap.parentNode.insertBefore(panel, wrap);
-        return;
-      }
+      // Build tournament options for dropdown
+      const hasTournaments = state.tournaments && state.tournaments.length > 0;
+      const tournamentOptions = hasTournaments
+        ? state.tournaments.map(t => {
+            const sel = t.id === preselectedId ? ' selected' : '';
+            const label = escapeHtml(t.name) + ' (' + (t.format || 'T20') + ')';
+            return `<option value="${t.id}"${sel}>${label}</option>`;
+          }).join('')
+        : '<option value="">— no tournaments found —</option>';
 
       panel.innerHTML = `
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
           <div style="display:flex;align-items:center;gap:8px;">
             <span style="font-size:16px;">🏁</span>
             <strong style="font-size:14px;color:var(--bad);">Close Out Tournament</strong>
           </div>
-          <button id="coPreviewBtn" style="font-size:12px;padding:5px 12px;">
+          <button id="coPreviewBtn" style="font-size:12px;padding:5px 12px;" ${hasTournaments ? '' : 'disabled'}>
             Preview data
           </button>
         </div>
+        <div style="margin-bottom:12px;">
+          <label style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:6px;">
+            Tournament to close out
+          </label>
+          <select id="coTournamentSelect" style="width:100%;font-size:13px;" ${hasTournaments ? '' : 'disabled'}>
+            ${hasTournaments ? '' : ''}
+            <option value="" ${preselectedId ? 'style="display:none"' : ''}>— select a tournament —</option>
+            ${tournamentOptions}
+          </select>
+        </div>
         <p style="font-size:12px;color:var(--muted);margin:0 0 12px;">
-          Marks this tournament as finished (sets <code>end_date = today</code> and
-          deactivates all contests). Optionally wipe transactional tables below —
-          reference data (players, teams, profiles) is never touched.
+          Marks the selected tournament as finished (sets <code>end_date = today</code>,
+          <code>is_active = false</code>, and deactivates all contests). Optionally wipe
+          transactional tables below — reference data (players, teams, profiles) is never touched.
         </p>
         <div id="coTableList" style="display:none;margin-bottom:12px;"></div>
-        <div id="coActions" style="display:none;display:none;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div id="coActions" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;">
           <button id="coExecuteBtn" class="danger" style="font-size:13px;padding:7px 18px;" disabled>
             Close Out Tournament
           </button>
@@ -5227,8 +5288,22 @@ p31,Sample Player,MI,bat,9.0,false
       const wrap = $('#adminContestsList');
       wrap.parentNode.insertBefore(panel, wrap);
 
+      // Reset preview when the dropdown changes
+      panel.querySelector('#coTournamentSelect').addEventListener('change', () => {
+        const listEl  = $('#coTableList');
+        const actions = $('#coActions');
+        const execBtn = $('#coExecuteBtn');
+        if (listEl)  { listEl.style.display  = 'none'; listEl.innerHTML  = ''; }
+        if (actions) { actions.style.display = 'none'; }
+        if (execBtn) { execBtn.disabled = true; }
+        $('#coStatus') && ($('#coStatus').textContent = '');
+      });
+
       // ── Preview button ───────────────────────────────────────────────────────
       $('#coPreviewBtn').addEventListener('click', async () => {
+        const selectedId = $('#coTournamentSelect')?.value;
+        if (!selectedId) { toast('Select a tournament first.'); return; }
+
         const btn = $('#coPreviewBtn');
         const listEl = $('#coTableList');
         const actionsEl = $('#coActions');
@@ -5238,7 +5313,7 @@ p31,Sample Player,MI,bat,9.0,false
         actionsEl.style.display = 'none';
 
         try {
-          const counts = await state.db.getTournamentTableCounts(tournamentId);
+          const counts = await state.db.getTournamentTableCounts(selectedId);
 
           listEl.innerHTML = `
             <div style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">
@@ -5312,6 +5387,10 @@ p31,Sample Player,MI,bat,9.0,false
       // ── Execute button ───────────────────────────────────────────────────────
       panel.addEventListener('click', async (e) => {
         if (e.target.id !== 'coExecuteBtn') return;
+        const selectedId = $('#coTournamentSelect')?.value;
+        if (!selectedId) { toast('Select a tournament first.'); return; }
+
+        const selectedName = $('#coTournamentSelect').options[$('#coTournamentSelect').selectedIndex]?.text ?? selectedId;
         const btn = e.target;
         const statusEl = $('#coStatus');
         const listEl = $('#coTableList');
@@ -5324,7 +5403,7 @@ p31,Sample Player,MI,bat,9.0,false
           : `This will permanently delete rows from: ${tablesToClear.join(', ')}.`;
 
         if (!confirm(
-          `⚠️  Close out this tournament?\n\n${tableLabel}\n\nThis cannot be undone.`
+          `⚠️  Close out "${selectedName}"?\n\n${tableLabel}\n\nThis cannot be undone.`
         )) return;
 
         btn.disabled = true;
@@ -5332,7 +5411,7 @@ p31,Sample Player,MI,bat,9.0,false
         statusEl.style.color = 'var(--muted)';
 
         try {
-          const result = await state.db.closeOutTournament(tournamentId, tablesToClear);
+          const result = await state.db.closeOutTournament(selectedId, tablesToClear);
 
           if (result.errors.length) {
             statusEl.textContent = `Partial: cleared ${result.tablesCleared.length} table(s). Errors: ${result.errors.join(' | ')}`;
