@@ -5187,6 +5187,18 @@ p31,Sample Player,MI,bat,9.0,false
         'background:rgba(248,113,113,0.04)',
       ].join(';');
 
+      if (!tournamentId) {
+        panel.innerHTML = `
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:16px;">🏁</span>
+            <strong style="font-size:14px;color:var(--bad);">Close Out Tournament</strong>
+            <span style="font-size:12px;color:var(--muted);margin-left:4px;">— select a tournament in the Tournament tab first</span>
+          </div>`;
+        const wrap = $('#adminContestsList');
+        wrap.parentNode.insertBefore(panel, wrap);
+        return;
+      }
+
       panel.innerHTML = `
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;">
           <div style="display:flex;align-items:center;gap:8px;">
@@ -5352,12 +5364,11 @@ p31,Sample Player,MI,bat,9.0,false
       try {
         const contests = await state.db.getContests(state.activeTournamentId);
 
-        // Render close-out panel at the top whenever a tournament is active
-        if (state.activeTournamentId) {
-          renderCloseOutPanel(state.activeTournamentId);
-        }
+        // Always render close-out panel when a DB is connected
+        renderCloseOutPanel(state.activeTournamentId ?? null);
+
         if (!contests.length) {
-          wrap.innerHTML = '<div class="msg warn" style="margin:10px 0;">No contests found for the active tournament. Run migration_v2 first.</div>';
+          wrap.innerHTML = '<div class="msg warn" style="margin:10px 0;">No contests found for this tournament yet — create them in the Tournament tab first.</div>';
           return;
         }
 
