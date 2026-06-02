@@ -2298,30 +2298,42 @@ p31,Sample Player,MI,bat,9.0,false
       list.innerHTML = state.tournaments.map(t => {
         const active = !!t.is_active;
         return `
-          <div style="display:flex; align-items:center; gap:10px; padding:8px 10px;
+          <div style="padding:10px 12px;
                       border:1px solid ${active ? 'var(--accent)' : 'var(--border)'};
                       border-radius:6px; background:${active ? 'rgba(201,168,76,0.08)' : 'transparent'};">
-            <div style="flex:1;">
-              <div style="font-size:13px; font-weight:600;">${escapeHtml(t.name)}</div>
-              <div style="font-size:11px; color:var(--muted);">${t.format || 'T20'}${t.start_date ? ' · ' + new Date(t.start_date).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : ''}</div>
+            <!-- Name + active toggle row -->
+            <div style="display:flex; align-items:center; gap:10px;">
+              <div style="flex:1;">
+                <div style="font-size:13px; font-weight:600;">${escapeHtml(t.name)}</div>
+                <div style="font-size:11px; color:var(--muted);">${t.format || 'T20'}${t.start_date ? ' · ' + new Date(t.start_date).toLocaleDateString('en-IN',{day:'numeric',month:'short',year:'numeric'}) : ''}</div>
+              </div>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;">
+                <span style="font-size:11px; color:${active ? 'var(--accent)' : 'var(--muted)'}; font-weight:600;">
+                  ${active ? 'Active' : 'Inactive'}
+                </span>
+                <input type="checkbox" data-tid="${t.id}" class="tournament-active-toggle"
+                       ${active ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;" />
+              </label>
             </div>
-            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;">
-              <span style="font-size:11px; color:${active ? 'var(--accent)' : 'var(--muted)'}; font-weight:600;">
-                ${active ? 'Active' : 'Inactive'}
-              </span>
-              <input type="checkbox" data-tid="${t.id}" class="tournament-active-toggle"
-                     ${active ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;" />
-            </label>
+            <!-- Series ID row -->
+            <div style="display:flex; align-items:center; gap:6px; margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
+              <span style="font-size:11px; color:var(--muted); white-space:nowrap;">CricAPI Series ID</span>
+              <input type="text" class="series-id-input" data-tid="${t.id}"
+                     value="${escapeHtml(t.cricapi_series_id || '')}"
+                     placeholder="e.g. 1510719"
+                     style="flex:1; font-size:12px; padding:4px 8px;" />
+              <button class="series-id-save" data-tid="${t.id}"
+                      style="font-size:11px; padding:4px 10px; white-space:nowrap;">Save</button>
+            </div>
           </div>`;
       }).join('');
-      // Wire toggles
+      // Wire active toggles
       list.querySelectorAll('.tournament-active-toggle').forEach(cb => {
         cb.addEventListener('change', async e => {
           const tid      = e.target.dataset.tid;
           const isActive = e.target.checked;
           try {
             await state.db.setTournamentActive(tid, isActive);
-            // Update local state
             const t = state.tournaments.find(x => x.id === tid);
             if (t) t.is_active = isActive;
             renderTournamentActiveToggles();
@@ -2329,6 +2341,27 @@ p31,Sample Player,MI,bat,9.0,false
           } catch (err) {
             toast('Failed to update: ' + err.message);
             e.target.checked = !isActive; // revert
+          }
+        });
+      });
+      // Wire series ID save buttons
+      list.querySelectorAll('.series-id-save').forEach(btn => {
+        btn.addEventListener('click', async e => {
+          const tid      = e.target.dataset.tid;
+          const input    = list.querySelector(`.series-id-input[data-tid="${tid}"]`);
+          const seriesId = input?.value.trim() ?? '';
+          try {
+            await state.db.updateTournamentSeriesId(tid, seriesId);
+            const t = state.tournaments.find(x => x.id === tid);
+            if (t) t.cricapi_series_id = seriesId || null;
+            // If this is the currently active tournament, update the Schedule sync field too
+            if (tid === state.activeTournamentId) {
+              const syncInput = $('#syncSeriesId');
+              if (syncInput) syncInput.value = seriesId;
+            }
+            toast('Series ID saved — Schedule tab will auto-fill from now on.');
+          } catch (err) {
+            toast('Failed to save: ' + err.message);
           }
         });
       });
@@ -2341,6 +2374,9 @@ p31,Sample Player,MI,bat,9.0,false
       state.activeMatchId = null;
       const tournament = state.tournaments.find(t => t.id === id);
       applyTournamentFormat(tournament);
+      // Auto-fill Schedule sync field with this tournament's saved series ID
+      const syncInput = $('#syncSeriesId');
+      if (syncInput) syncInput.value = tournament?.cricapi_series_id || '';
       try { state.matches = await state.db.listMatches(id); }
       catch (e) { console.warn('listMatches failed after tournament switch', e); }
       // Reload scoring rules for the new tournament
@@ -6592,6 +6628,14 @@ p31,Sample Player,MI,bat,9.0,false
         if (seriesId) {
           statusEl.textContent = 'Fetching series schedule from CricAPI…';
           localStorage.setItem(SERIES_ID_LS, seriesId);
+          // Persist to DB so this tournament always auto-fills in future
+          try {
+            const activeTournament = state.tournaments.find(t => t.id === state.activeTournamentId);
+            if (activeTournament && activeTournament.cricapi_series_id !== seriesId) {
+              await state.db.updateTournamentSeriesId(state.activeTournamentId, seriesId);
+              activeTournament.cricapi_series_id = seriesId;
+            }
+          } catch (e) { console.warn('Could not persist series ID to DB:', e); }
           target = await fetchSeriesInfo(apiKey, seriesId);
           console.log('[sync] series_info returned', target.length, 'matches');
         } else {
@@ -7943,8 +7987,10 @@ p31,Sample Player,MI,bat,9.0,false
     render();
     renderCountdown();
     renderRulesEditor();
-    // Hydrate saved CricAPI series ID into the matches admin input
-    const savedSeriesId = localStorage.getItem(SERIES_ID_LS);
+    // Hydrate CricAPI series ID into the Schedule sync field.
+    // Prefer the DB value on the active tournament; fall back to localStorage.
+    const activeTournament = state.tournaments.find(t => t.id === state.activeTournamentId);
+    const savedSeriesId = activeTournament?.cricapi_series_id || localStorage.getItem(SERIES_ID_LS);
     if (savedSeriesId) $('#syncSeriesId').value = savedSeriesId;
     // Hydrate saved CricAPI key + picker choice
     const savedApiKey = localStorage.getItem(API_KEY_LS);

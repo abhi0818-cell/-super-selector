@@ -609,6 +609,20 @@ export function createDb(cfg = {}) {
       if (error) throw error;
     },
 
+    /**
+     * Save the CricAPI series ID for a tournament so it auto-fills on future syncs.
+     * @param {string} id        Tournament UUID
+     * @param {string} seriesId  CricAPI series ID (e.g. '1510719')
+     */
+    async updateTournamentSeriesId(id, seriesId) {
+      const sb = await getClient();
+      const { error } = await sb
+        .from('tournaments')
+        .update({ cricapi_series_id: seriesId || null })
+        .eq('id', id);
+      if (error) throw error;
+    },
+
     async addTournament(input) {
       if (!input.name) throw new Error('addTournament: name is required');
       const sb = await getClient();
