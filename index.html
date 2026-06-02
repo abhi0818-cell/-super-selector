@@ -972,6 +972,15 @@
           <div id="fantasyScorecardView" class="fsc-empty" style="padding:0 12px 8px;">No data yet.</div>
         </details>
 
+        <!-- Schedule tournament context bar -->
+        <div id="scheduleTournamentBar" style="display:flex; align-items:center; gap:10px; padding:8px 10px; margin:0 0 8px; border-radius:6px; background:rgba(201,168,76,0.07); border:1px solid var(--border); flex-wrap:wrap;">
+          <span style="font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; white-space:nowrap;">Syncing for</span>
+          <select id="scheduleTorunamentSwitch" style="font-size:13px; font-weight:600; flex:1; min-width:160px; border:none; background:transparent; color:var(--text); cursor:pointer;">
+            <option value="">— no tournament selected —</option>
+          </select>
+          <span id="scheduleSeriesIdBadge" style="font-size:11px; color:var(--muted); white-space:nowrap;"></span>
+        </div>
+
         <!-- Sync & finalize -->
         <div style="display:flex; gap:8px; align-items:center; padding:0 6px 10px; flex-wrap:wrap;">
           <button id="syncMatchesBtn" class="primary">Sync from CricAPI</button>
@@ -2287,6 +2296,29 @@ p31,Sample Player,MI,bat,9.0,false
           ).join('')
         : '<option value="">No tournaments found</option>';
       renderTournamentActiveToggles();
+      renderScheduleTournamentContext();
+    }
+
+    function renderScheduleTournamentContext() {
+      const sw     = $('#scheduleTorunamentSwitch');
+      const badge  = $('#scheduleSeriesIdBadge');
+      if (!sw) return;
+
+      // Populate dropdown with all tournaments
+      sw.innerHTML = state.tournaments.length
+        ? state.tournaments.map(t =>
+            `<option value="${t.id}" ${t.id === state.activeTournamentId ? 'selected' : ''}>${escapeHtml(t.name)} (${t.format || 'T20'})</option>`
+          ).join('')
+        : '<option value="">— no tournaments loaded —</option>';
+
+      // Update series ID badge
+      const active = state.tournaments.find(t => t.id === state.activeTournamentId);
+      if (badge) {
+        badge.textContent = active?.cricapi_series_id
+          ? `Series ID: ${active.cricapi_series_id}`
+          : 'No series ID saved';
+        badge.style.color = active?.cricapi_series_id ? 'var(--accent)' : 'var(--muted)';
+      }
     }
 
     function renderTournamentActiveToggles() {
@@ -2377,6 +2409,8 @@ p31,Sample Player,MI,bat,9.0,false
       // Auto-fill Schedule sync field with this tournament's saved series ID
       const syncInput = $('#syncSeriesId');
       if (syncInput) syncInput.value = tournament?.cricapi_series_id || '';
+      // Update the Schedule tab context bar
+      renderScheduleTournamentContext();
       try { state.matches = await state.db.listMatches(id); }
       catch (e) { console.warn('listMatches failed after tournament switch', e); }
       // Reload scoring rules for the new tournament
@@ -7914,6 +7948,15 @@ p31,Sample Player,MI,bat,9.0,false
     });
     $('#tournamentPicker').addEventListener('change', e => {
       if (state.db) switchTournament(e.target.value);
+    });
+    // Schedule tab tournament switcher — mirrors the Tournament tab picker
+    $('#scheduleTorunamentSwitch').addEventListener('change', e => {
+      if (state.db) {
+        switchTournament(e.target.value);
+        // Keep the Tournament tab picker in sync
+        const picker = $('#tournamentPicker');
+        if (picker) picker.value = e.target.value;
+      }
     });
     $('#addTournamentBtn').addEventListener('click', addTournamentHandler);
 
