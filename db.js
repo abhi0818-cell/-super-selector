@@ -610,6 +610,20 @@ export function createDb(cfg = {}) {
     },
 
     /**
+     * Delete a tournament row. Will fail if child rows (matches, contests,
+     * tournament_players, etc.) still reference it — caller should inform the user.
+     * @param {string} id  Tournament UUID
+     */
+    async deleteTournament(id) {
+      const sb = await getClient();
+      const { error } = await sb
+        .from('tournaments')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    },
+
+    /**
      * Save the CricAPI series ID for a tournament so it auto-fills on future syncs.
      * @param {string} id        Tournament UUID
      * @param {string} seriesId  CricAPI series ID (e.g. '1510719')

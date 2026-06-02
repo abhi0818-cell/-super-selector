@@ -2356,6 +2356,9 @@ p31,Sample Player,MI,bat,9.0,false
                      style="flex:1; font-size:12px; padding:4px 8px;" />
               <button class="series-id-save" data-tid="${t.id}"
                       style="font-size:11px; padding:4px 10px; white-space:nowrap;">Save</button>
+              <button class="tournament-delete-btn" data-tid="${t.id}" data-tname="${escapeHtml(t.name)}"
+                      title="Delete tournament"
+                      style="font-size:11px; padding:4px 8px; background:transparent; border:1px solid var(--bad); color:var(--bad); border-radius:4px; cursor:pointer; white-space:nowrap;">🗑 Delete</button>
             </div>
           </div>`;
       }).join('');
@@ -2394,6 +2397,31 @@ p31,Sample Player,MI,bat,9.0,false
             toast('Series ID saved — Schedule tab will auto-fill from now on.');
           } catch (err) {
             toast('Failed to save: ' + err.message);
+          }
+        });
+      });
+      // Wire delete buttons
+      list.querySelectorAll('.tournament-delete-btn').forEach(btn => {
+        btn.addEventListener('click', async e => {
+          const tid   = e.target.dataset.tid;
+          const tname = e.target.dataset.tname;
+          if (!confirm(`Delete "${tname}"?\n\nThis will permanently remove the tournament row. If it has any matches, players, or contests attached, the delete will fail and nothing will be changed.`)) return;
+          try {
+            await state.db.deleteTournament(tid);
+            // Remove from local state
+            state.tournaments = state.tournaments.filter(x => x.id !== tid);
+            // If it was the active tournament, clear selection
+            if (state.activeTournamentId === tid) {
+              state.activeTournamentId = state.tournaments[0]?.id ?? null;
+            }
+            renderTournamentSelector();
+            renderScheduleTournamentContext();
+            toast(`"${tname}" deleted.`);
+          } catch (err) {
+            const hint = err.message?.includes('foreign key') || err.message?.includes('violates')
+              ? ' It still has matches, players, or contests attached — remove those first, or use Close Out instead.'
+              : '';
+            toast(`Delete failed: ${err.message}.${hint}`, 6000);
           }
         });
       });
