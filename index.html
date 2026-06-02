@@ -825,9 +825,9 @@
       </header>
       <div class="admin-tabs">
         <span class="a-tab"        data-tab="tournament">Tournament</span>
+        <span class="a-tab"        data-tab="schedule">Schedule</span>
         <span class="a-tab"        data-tab="teams">Teams</span>
         <span class="a-tab active" data-tab="players">Players</span>
-        <span class="a-tab"        data-tab="schedule">Schedule</span>
         <span class="a-tab"        data-tab="scoring">Scoring</span>
         <span class="a-tab"        data-tab="contests">Contests</span>
       </div>
@@ -6709,6 +6709,33 @@ p31,Sample Player,MI,bat,9.0,false
           console.log(`[sync] /currentMatches fetched ${all.length}, IPL ${target.length}; series seen:`, allSeries);
         }
 
+        // ── Extract unique teams from teamInfo ─────────────────────────────
+        // CricAPI's /series_info gives teamInfo[{shortname, name}] per match.
+        // Collect all unique codes+names and upsert into the teams table so
+        // the Teams tab is filled automatically.
+        const teamMap = new Map(); // code → full name
+        for (const item of target) {
+          if (Array.isArray(item.teamInfo)) {
+            for (const ti of item.teamInfo) {
+              const code = aliasCricTeamCode(ti.shortname || null);
+              if (code && ti.name) teamMap.set(code, ti.name);
+            }
+          }
+        }
+        let teamsUpserted = 0;
+        if (teamMap.size) {
+          statusEl.textContent = `Upserting ${teamMap.size} teams…`;
+          try {
+            const teamRows = [...teamMap.entries()].map(([id, name]) => ({ id, name }));
+            teamsUpserted = await state.db.bulkUpsertTeams(teamRows);
+            // Refresh local teams cache
+            const freshTeams = await state.db.getTeams();
+            TEAMS_DATA = freshTeams.map(t => ({ id: t.id, name: t.name, color: t.color }));
+          } catch (e) {
+            console.warn('Team upsert failed (non-fatal):', e);
+          }
+        }
+
         // Map then optionally drop completed
         const rows = target.map(item => cricItemToMatch(item, state.activeTournamentId));
         const filtered = onlyRemaining ? rows.filter(r => r.status !== 'completed') : rows;
@@ -6719,8 +6746,7 @@ p31,Sample Player,MI,bat,9.0,false
           return;
         }
 
-        // Detect team codes that aren't in our teams table — FK constraint
-        // would block these rows otherwise.
+        // All teams were just upserted — no more missing-team nulling needed.
         const knownTeams = new Set(teamCodes());
         const missingTeams = new Set();
         const sanitized = filtered.map(r => {
@@ -6735,13 +6761,13 @@ p31,Sample Player,MI,bat,9.0,false
 
         // Refresh UI
         state.matches = await state.db.listMatches(state.activeTournamentId);
-        renderMatchesAdmin(); renderMatchSelector();
+        renderMatchesAdmin(); renderMatchSelector(); renderTeamsAdmin();
 
+        const teamMsg = teamsUpserted ? ` · ${teamsUpserted} team${teamsUpserted !== 1 ? 's' : ''} saved` : '';
         const warn = missingTeams.size
-          ? `. Unknown team codes (saved with NULL home/away): ${[...missingTeams].join(', ')} — add them in the Teams tab to enable the pool filter.`
-          : '';
-        statusEl.textContent = `Synced ${written}, skipped ${skipped}${warn}`;
-        toast(`Synced ${written} matches${missingTeams.size ? ` — ${missingTeams.size} unknown team code(s)` : ''}.`, 5000);
+          ? `. Still unknown codes (saved with NULL): ${[...missingTeams].join(', ')}` : '';
+        statusEl.textContent = `Synced ${written}, skipped ${skipped}${teamMsg}${warn}`;
+        toast(`Synced ${written} matches${teamMsg}${missingTeams.size ? ` — ${missingTeams.size} unknown code(s)` : ''}.`, 5000);
       } catch (e) {
         statusEl.textContent = 'Sync failed: ' + e.message;
         toast('Sync failed: ' + e.message, 5000);

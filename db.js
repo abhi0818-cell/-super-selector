@@ -144,6 +144,23 @@ export function createDb(cfg = {}) {
       return data;
     },
 
+    /**
+     * Upsert a batch of teams from API data.
+     * Inserts new teams; updates `name` for existing ones (leaves `color` untouched).
+     * @param {Array<{id:string, name:string}>} teams
+     * @returns {number} number of rows processed
+     */
+    async bulkUpsertTeams(teams) {
+      if (!teams.length) return 0;
+      const sb = await getClient();
+      const rows = teams.map(t => ({ id: t.id.toUpperCase(), name: t.name }));
+      const { error } = await sb
+        .from('teams')
+        .upsert(rows, { onConflict: 'id', ignoreDuplicates: false });
+      if (error) throw error;
+      return rows.length;
+    },
+
     /** Delete a team. Fails if any player references it. */
     async deleteTeam(id) {
       const sb = await getClient();
