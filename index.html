@@ -5536,6 +5536,64 @@ p31,Sample Player,MI,bat,9.0,false
       });
     }
 
+    function renderNewContestForm(isEmpty) {
+      return `
+        <div id="newContestForm" style="border:1px solid var(--border); border-radius:8px;
+             padding:14px 16px; margin-top:${isEmpty ? '0' : '16px'};
+             background:rgba(201,168,76,0.04);">
+          <div style="font-size:13px; font-weight:600; color:var(--accent); margin-bottom:12px;">
+            ${isEmpty ? '🏆 No contests yet — create your first one' : '＋ Add Contest'}
+          </div>
+          ${isEmpty ? `<p style="font-size:12px; color:var(--muted); margin:0 0 12px;">
+            A tournament needs at least one public contest before users can play.
+            Create a <strong>Daily</strong> contest (single-match XI each game) and/or a
+            <strong>Season Long</strong> contest (one squad, weekly transfers).
+          </p>` : ''}
+          <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;">
+            <div style="display:flex; flex-direction:column; gap:4px; flex:1; min-width:180px;">
+              <label style="font-size:11px; color:var(--muted); font-weight:600;">Contest name</label>
+              <input id="ncName" type="text" placeholder="e.g. IPL 2026 Daily, IPL 2026 Season Long"
+                     style="font-size:13px;" />
+            </div>
+            <div style="display:flex; flex-direction:column; gap:4px;">
+              <label style="font-size:11px; color:var(--muted); font-weight:600;">Type</label>
+              <select id="ncType" style="font-size:13px; padding:6px 10px;">
+                <option value="daily">Daily (per-match XI)</option>
+                <option value="season_long">Season Long (squad + transfers)</option>
+              </select>
+            </div>
+            <button id="ncCreateBtn" class="primary" style="font-size:13px; padding:7px 18px; white-space:nowrap;">
+              Create contest
+            </button>
+          </div>
+          <div id="ncStatus" style="font-size:11px; color:var(--muted); margin-top:8px;"></div>
+        </div>`;
+    }
+
+    function wireNewContestForm() {
+      const btn      = $('#ncCreateBtn');
+      const statusEl = $('#ncStatus');
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        const name        = $('#ncName').value.trim();
+        const contestType = $('#ncType').value;
+        if (!name) { statusEl.textContent = 'Enter a contest name.'; statusEl.style.color = 'var(--bad)'; return; }
+        if (!state.activeTournamentId) { statusEl.textContent = 'No active tournament selected.'; statusEl.style.color = 'var(--bad)'; return; }
+        btn.disabled = true;
+        statusEl.textContent = 'Creating…';
+        statusEl.style.color = 'var(--muted)';
+        try {
+          await state.db.createContest(state.activeTournamentId, { name, contestType });
+          toast(`Contest "${name}" created.`);
+          renderContestsAdmin(); // full re-render so the new card appears
+        } catch (e) {
+          statusEl.textContent = 'Failed: ' + e.message;
+          statusEl.style.color = 'var(--bad)';
+          btn.disabled = false;
+        }
+      });
+    }
+
     async function renderContestsAdmin() {
       const wrap = $('#adminContestsList');
       if (!state.db) {
@@ -5550,7 +5608,8 @@ p31,Sample Player,MI,bat,9.0,false
         renderCloseOutPanel(state.activeTournamentId ?? null);
 
         if (!contests.length) {
-          wrap.innerHTML = '<div class="msg warn" style="margin:10px 0;">No contests found for this tournament yet — create them in the Tournament tab first.</div>';
+          wrap.innerHTML = renderNewContestForm(true);
+          wireNewContestForm();
           return;
         }
 
@@ -5697,7 +5756,11 @@ p31,Sample Player,MI,bat,9.0,false
               <span id="plStatus" style="font-size:11px; color:var(--muted);"></span>
             </div>
           </div>
-        </div>`;
+        </div>
+
+        ${renderNewContestForm(false)}`;
+
+        wireNewContestForm();
 
         // ── Wire "Save" buttons ────────────────────────────────────────────────
 

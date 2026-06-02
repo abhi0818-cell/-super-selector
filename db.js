@@ -1423,6 +1423,31 @@ export function createDb(cfg = {}) {
     },
 
     /**
+     * Create a new public contest (daily or season_long).
+     * @param {string} tournamentId
+     * @param {object} opts  { name, contestType }
+     *   contestType: 'daily' | 'season_long'
+     * @returns {Promise<object>}  the new contest row
+     */
+    async createContest(tournamentId, opts = {}) {
+      if (!tournamentId)       throw new Error('createContest: tournamentId required');
+      if (!opts.name?.trim())  throw new Error('createContest: name required');
+      if (!opts.contestType)   throw new Error('createContest: contestType required');
+      const sb = await getClient();
+      const row = {
+        tournament_id             : tournamentId,
+        name                      : opts.name.trim(),
+        contest_type              : opts.contestType,
+        is_active                 : true,
+        is_private                : false,
+        extra_transfer_point_cost : 4,
+      };
+      const { data, error } = await sb.from('contests').insert(row).select().single();
+      if (error) throw error;
+      return data;
+    },
+
+    /**
      * Create a new private league (season_long contest with is_private=true).
      * Generates a short, unique invite code automatically.
      *
