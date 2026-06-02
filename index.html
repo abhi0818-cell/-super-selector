@@ -2255,6 +2255,7 @@ p31,Sample Player,MI,bat,9.0,false
      * Uses tournament-specific team + credits from tournament_players when available;
      * falls back to the global players table (e.g. before v2 migration or first run).
      */
+    let playersSource = 'none'; // 'tournament' | 'global' | 'none'
     async function loadPlayersForActiveTournament() {
       if (!state.db) return;
       try {
@@ -2262,11 +2263,15 @@ p31,Sample Player,MI,bat,9.0,false
         if (state.activeTournamentId) {
           pls = await state.db.getPlayersForTournament(state.activeTournamentId);
         }
-        // Fall back to global players if tournament has no entries yet
-        if (!pls.length) {
+        if (pls.length) {
+          PLAYERS = pls;
+          playersSource = 'tournament';
+        } else {
+          // Fall back to global players if tournament has no entries yet
           pls = await state.db.getPlayers();
+          if (pls.length) PLAYERS = pls;
+          playersSource = pls.length ? 'global' : 'none';
         }
-        if (pls.length) PLAYERS = pls;
       } catch (e) { console.warn('Player load failed, keeping current pool.', e); }
     }
 
@@ -5945,6 +5950,32 @@ p31,Sample Player,MI,bat,9.0,false
       const list = PLAYERS.filter(p =>
         !term || p.name.toLowerCase().includes(term) || p.team.toLowerCase().includes(term)
       );
+
+      // Context label — show which tournament's players are loaded
+      const activeTournament = state.tournaments.find(t => t.id === state.activeTournamentId);
+      const tableView = $('#adminTableView');
+      let labelEl = tableView?.querySelector('#playersContextLabel');
+      if (tableView && !labelEl) {
+        labelEl = document.createElement('div');
+        labelEl.id = 'playersContextLabel';
+        tableView.insertBefore(labelEl, tableView.firstChild);
+      }
+      if (labelEl && activeTournament) {
+        const isTournament = playersSource === 'tournament';
+        const isGlobal     = playersSource === 'global';
+        const badge = isTournament
+          ? `<span style="color:var(--accent); font-weight:600;">${escapeHtml(activeTournament.name)}</span>`
+          : `<span style="color:var(--muted);">all tournaments (no players imported for ${escapeHtml(activeTournament.name)} yet)</span>`;
+        labelEl.innerHTML = `
+          <div style="font-size:11px; color:var(--muted); padding:6px 12px 4px;
+                      font-weight:600; text-transform:uppercase; letter-spacing:0.5px;
+                      border-bottom:1px solid var(--border); margin-bottom:4px;">
+            Showing: ${badge}
+            — ${PLAYERS.length} player${PLAYERS.length !== 1 ? 's' : ''}
+            ${isGlobal ? '<span style="color:var(--accent); font-weight:400; text-transform:none; letter-spacing:0;">(import players via CSV to make this tournament-specific)</span>' : ''}
+          </div>`;
+      }
+
       $('#adminCount').textContent = `${list.length} of ${PLAYERS.length}`;
 
       const teamOpts = teamCodes().map(t => `<option value="${t}">${t}</option>`).join('');
@@ -7349,9 +7380,30 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     function renderTeamsAdmin() {
-      const teams = [...TEAMS_DATA].sort((a,b) => a.id.localeCompare(b.id));
+      // Derive which teams belong to the active tournament from its match list.
+      // Falls back to all teams if no matches are loaded yet.
+      const tournamentTeamIds = new Set();
+      state.matches.forEach(m => {
+        if (m.home_team_id) tournamentTeamIds.add(m.home_team_id);
+        if (m.away_team_id) tournamentTeamIds.add(m.away_team_id);
+      });
+      const allTeams = [...TEAMS_DATA].sort((a, b) => a.id.localeCompare(b.id));
+      const teams    = tournamentTeamIds.size > 0
+        ? allTeams.filter(t => tournamentTeamIds.has(t.id))
+        : allTeams;
+
       const playerCounts = {};
       PLAYERS.forEach(p => { playerCounts[p.team] = (playerCounts[p.team]||0)+1; });
+
+      // Context label
+      const activeTournament = state.tournaments.find(t => t.id === state.activeTournamentId);
+      const contextLabel = activeTournament
+        ? `<div style="font-size:11px; color:var(--muted); padding:6px 12px 0;
+                       font-weight:600; text-transform:uppercase; letter-spacing:0.5px;">
+             ${escapeHtml(activeTournament.name)} — ${teams.length} team${teams.length !== 1 ? 's' : ''}
+             ${tournamentTeamIds.size === 0 ? '<span style="color:var(--accent); font-weight:400;">(no matches synced yet — showing all)</span>' : ''}
+           </div>`
+        : '';
 
       const addRow = `
         <tr class="add-row" id="addTeamRow">
@@ -7370,6 +7422,16 @@ p31,Sample Player,MI,bat,9.0,false
         </tr>
       `).join('');
 
+      // Inject context label above the table
+      const teamsView = $('#adminTeamsView');
+      let labelEl = teamsView.querySelector('#teamsContextLabel');
+      if (!labelEl) {
+        labelEl = document.createElement('div');
+        labelEl.id = 'teamsContextLabel';
+        teamsView.insertBefore(labelEl, teamsView.firstChild);
+      }
+      labelEl.innerHTML = contextLabel;
+
       $('#adminTeamsBody').innerHTML = addRow + rows;
       $('#addTeamBtn').addEventListener('click', addTeamHandler);
       $('#adminTeamsBody').querySelectorAll('tr[data-id]').forEach(tr => {
@@ -7380,7 +7442,7 @@ p31,Sample Player,MI,bat,9.0,false
         });
         tr.querySelector('[data-act="del"]').addEventListener('click', () => deleteTeamHandler(id));
       });
-      $('#adminCount').textContent = `${teams.length} teams`;
+      $('#adminCount').textContent = `${teams.length} team${teams.length !== 1 ? 's' : ''} · ${activeTournament?.name ?? 'all'}`;
     }
 
     async function addTeamHandler() {
