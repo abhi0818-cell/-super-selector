@@ -5833,12 +5833,10 @@ p31,Sample Player,MI,bat,9.0,false
 
         renderContestsTournamentBar(contests.length);
 
-        // Always render close-out panel when a DB is connected
-        renderCloseOutPanel(state.activeTournamentId ?? null);
-
         if (!contests.length) {
           wrap.innerHTML = renderNewContestForm(true);
           wireNewContestForm();
+          renderCloseOutPanel(state.activeTournamentId ?? null);
           return;
         }
 
@@ -5990,6 +5988,9 @@ p31,Sample Player,MI,bat,9.0,false
         ${renderNewContestForm(false)}`;
 
         wireNewContestForm();
+
+        // Close-out panel at the bottom
+        renderCloseOutPanel(state.activeTournamentId ?? null);
 
         // ── Wire "Save" buttons ────────────────────────────────────────────────
 
