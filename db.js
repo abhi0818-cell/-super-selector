@@ -689,6 +689,7 @@ export function createDb(cfg = {}) {
         away_team_id : input.awayTeamId,
         played_on    : input.playedOn   ?? null,
         start_time   : input.startTime  ?? null,
+        lock_time    : input.lockTime   ?? null,
         status       : input.status     ?? 'scheduled',
         notes        : input.notes      ?? null,
         external_id  : input.externalId ?? null,
@@ -708,6 +709,7 @@ export function createDb(cfg = {}) {
       if (patch.awayTeamId   !== undefined) row.away_team_id  = patch.awayTeamId;
       if (patch.playedOn     !== undefined) row.played_on     = patch.playedOn;
       if (patch.startTime    !== undefined) row.start_time    = patch.startTime;
+      if (patch.lockTime     !== undefined) row.lock_time     = patch.lockTime;
       if (patch.status       !== undefined) row.status        = patch.status;
       if (patch.notes        !== undefined) row.notes         = patch.notes;
       if (patch.externalId   !== undefined) row.external_id   = patch.externalId;
@@ -818,6 +820,7 @@ export function createDb(cfg = {}) {
           away_team_id : r.awayTeamId   ?? null,
           played_on    : r.playedOn     ?? null,
           start_time   : r.startTime    ?? null,
+          lock_time    : r.lockTime     ?? null,
           status       : r.status       ?? null,
           notes        : r.notes        ?? null,
         });
@@ -1782,9 +1785,14 @@ export function createDb(cfg = {}) {
         .map(mid => {
           const match = allMatches.find(m => m.id === mid);
           const num     = match?.match_number ?? -1;
-          const started = match?.start_time
-            ? new Date(match.start_time).getTime() <= now
-            : false;
+          // lock_time overrides start_time when set.
+          // A 'delayed' match with no lock_time has no lock gate — never fires.
+          const lockAt  = match?.lock_time ?? match?.start_time;
+          const started = match?.status === 'delayed' && !match?.lock_time
+            ? false
+            : lockAt
+              ? new Date(lockAt).getTime() <= now
+              : false;
           return { mid, num, started };
         })
         .filter(x => x.num >= 0 && x.started)

@@ -6371,6 +6371,7 @@ p31,Sample Player,MI,bat,9.0,false
           <td><input data-f="start_time" type="datetime-local" value="${nowDefault}" /></td>
           <td><select data-f="status">
             <option value="scheduled">Scheduled</option>
+            <option value="live">🔴 Live</option>
             <option value="in_progress">In progress</option>
             <option value="completed">Completed</option>
           </select></td>
@@ -6404,12 +6405,13 @@ p31,Sample Player,MI,bat,9.0,false
           </select></td>
           <td><input data-f="start_time" type="datetime-local" value="${isoToLocalInput(m.start_time)}" /></td>
           <td><select data-f="status">
-            <option value="scheduled"   ${m.status==='scheduled'?'selected':''}>Scheduled</option>
+            <option value="scheduled"   ${m.status==='scheduled'  ?'selected':''}>Scheduled</option>
+            <option value="live"        ${m.status==='live'        ?'selected':''}>🔴 Live</option>
             <option value="in_progress" ${m.status==='in_progress'?'selected':''}>In progress</option>
-            <option value="completed"   ${m.status==='completed'?'selected':''}>Completed</option>
+            <option value="completed"   ${m.status==='completed'  ?'selected':''}>Completed</option>
           </select></td>
           <td class="col-actions">
-            ${m.status === 'completed' && m.external_id
+            ${(m.status === 'completed' || m.status === 'live') && m.external_id
               ? `<button class="row-finalize" data-act="finalize" title="Fetch scorecard &amp; save fantasy points">Finalize</button>
                  <button class="row-recalc" data-act="recalc" title="Re-parse cached scorecard &amp; overwrite player stats">Recalc</button>`
               : ''}
