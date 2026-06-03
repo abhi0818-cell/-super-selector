@@ -631,6 +631,15 @@
     </div>
     <div class="controls">
       <span id="formatPill" class="db-pill" title="Scoring format — set by the active tournament">T20</span>
+      <!-- Tournament switcher — shown when ≥1 tournament is loaded -->
+      <div id="headerTournamentWrap" style="display:none; align-items:center; gap:6px;">
+        <span style="font-size:11px; color:var(--muted);">🏆</span>
+        <select id="headerTournamentPicker"
+          style="font-size:12px; padding:4px 8px; background:var(--panel-2);
+                 border:1px solid var(--border); border-radius:8px; color:var(--text);
+                 cursor:pointer; max-width:200px;">
+        </select>
+      </div>
       <button id="simBtn" class="primary">Start mock match</button>
       <button id="resetBtn" class="danger">Reset XI</button>
       <button id="lbBtn" style="display:none" title="Leaderboard">🏆 Leaderboard</button>
@@ -1120,6 +1129,7 @@ p31,Sample Player,MI,bat,9.0,false
     // ─── BOOSTER METADATA ────────────────────────────────────────────────────
     const BOOSTER_META = {
       triple_captain : { label: 'Triple Captain',   icon: '👑', desc: 'Captain scores 3× instead of 2× for one match.' },
+      dual_captain   : { label: 'Dual Captain',     icon: '👥', desc: 'Both Captain and Vice-Captain score 2× their base points for one match.' },
       wildcard       : { label: 'Wildcard',          icon: '🃏', desc: 'Make unlimited free transfers for one match window — no deduction.' },
       free_hit       : { label: 'Free Hit',          icon: '🎯', desc: 'Like Wildcard but your permanent XI reverts automatically after the match.' },
       os_double      : { label: 'OS Double',         icon: '✈️', desc: 'All overseas players in your XI score 2× their base points.' },
@@ -1217,6 +1227,7 @@ p31,Sample Player,MI,bat,9.0,false
     // rulesOverride: optional flat rules object for a specific league — overrides global SCORING_RULES[fmt].
     // booster:       optional active booster key for this player's squad + match.
     //   'triple_captain' → captain multiplier becomes 3× (vice-captain stays 1.5×)
+    //   'dual_captain'   → vice-captain multiplier promoted to 2× (same as captain)
     //   'os_double'      → overseas players (is_overseas=true) get an extra 2× on raw points
     //   'indian_double'  → domestic players (is_overseas=false) get an extra 2× on raw points
     //   'team_double'    → all players get an extra 2× on raw points
@@ -1227,8 +1238,13 @@ p31,Sample Player,MI,bat,9.0,false
       if(batting){ const r=calcBatting({...batting,role},fmt,rulesOverride); breakdown.batting=r.breakdown; raw+=r.points; }
       if(bowling){ const r=calcBowling(bowling,fmt,rulesOverride);           breakdown.bowling=r.breakdown; raw+=r.points; }
       if(fielding){ const r=calcFielding(fielding,fmt,rulesOverride);        breakdown.fielding=r.breakdown; raw+=r.points; }
-      // Captaincy multiplier — triple_captain promotes captain from 2× to 3×
-      const captancyKey = (booster === 'triple_captain' && captaincy === 'captain') ? 'triple_captain' : captaincy;
+      // Captaincy multiplier
+      //   triple_captain → captain 3×, VC stays 1.5×
+      //   dual_captain   → VC promoted to 2× (same as captain)
+      const captancyKey =
+        (booster === 'triple_captain' && captaincy === 'captain')   ? 'triple_captain' :
+        (booster === 'dual_captain'   && captaincy === 'vice_captain') ? 'captain'     :
+        captaincy;
       const captMult = MULTIPLIERS[captancyKey] || 1;
       // Player-class booster multiplier (applied to raw points before captaincy mult)
       let boosterMult = 1;
@@ -2303,11 +2319,44 @@ p31,Sample Player,MI,bat,9.0,false
       const sel = $('#tournamentPicker');
       if (!sel) return;
       const cur = state.activeTournamentId;
-      sel.innerHTML = state.tournaments.length
+      const opts = state.tournaments.length
         ? state.tournaments.map(t =>
             `<option value="${t.id}" ${t.id === cur ? 'selected' : ''}>${escapeHtml(t.name)} (${t.format || 'T20'})</option>`
           ).join('')
         : '<option value="">No tournaments found</option>';
+      sel.innerHTML = opts;
+
+      // ── Header tournament switcher ──────────────────────────────────────────
+      const headerWrap   = $('#headerTournamentWrap');
+      const headerPicker = $('#headerTournamentPicker');
+      if (headerPicker) {
+        // Only show when there's more than one tournament (no point showing for a single one)
+        const activeTournaments = state.tournaments.filter(t => t.is_active);
+        const showSwitcher = state.tournaments.length > 1 || activeTournaments.length >= 1;
+        if (headerWrap) headerWrap.style.display = showSwitcher ? 'flex' : 'none';
+
+        // Populate with active tournaments first, then inactive
+        const sorted = [
+          ...state.tournaments.filter(t => t.is_active),
+          ...state.tournaments.filter(t => !t.is_active),
+        ];
+        headerPicker.innerHTML = sorted.map(t =>
+          `<option value="${t.id}" ${t.id === cur ? 'selected' : ''}>
+            ${t.is_active ? '' : '○ '}${escapeHtml(t.name)}
+          </option>`
+        ).join('');
+
+        // Wire change handler (replace node to avoid duplicate listeners)
+        const fresh = headerPicker.cloneNode(true);
+        headerPicker.parentNode.replaceChild(fresh, headerPicker);
+        fresh.addEventListener('change', e => {
+          switchTournament(e.target.value);
+          // Keep settings picker in sync
+          const sp = $('#tournamentPicker');
+          if (sp) sp.value = e.target.value;
+        });
+      }
+
       renderTournamentActiveToggles();
       renderScheduleTournamentContext();
     }
@@ -7206,10 +7255,12 @@ p31,Sample Player,MI,bat,9.0,false
           const s = statsByPlayer[r.player_id];
           const p = PLAYERS.find(x => x.id === r.player_id);
 
-          // Captaincy key — triple_captain only promotes the captain slot
+          // Captaincy key — booster can promote captain or VC slot
           const captaincy = r.is_captain
             ? (booster === 'triple_captain' ? 'triple_captain' : 'captain')
-            : r.is_vc ? 'vice_captain' : 'normal';
+            : r.is_vc
+              ? (booster === 'dual_captain' ? 'captain' : 'vice_captain')
+              : 'normal';
 
           let raw;
           if (hasCustom && s !== undefined && effectiveRules) {
@@ -8315,7 +8366,12 @@ p31,Sample Player,MI,bat,9.0,false
       connectDb(url, key);
     });
     $('#tournamentPicker').addEventListener('change', e => {
-      if (state.db) switchTournament(e.target.value);
+      if (state.db) {
+        switchTournament(e.target.value);
+        // Keep header picker in sync
+        const hp = $('#headerTournamentPicker');
+        if (hp) hp.value = e.target.value;
+      }
     });
     // Schedule tab tournament switcher — mirrors the Tournament tab picker
     $('#scheduleTorunamentSwitch').addEventListener('change', e => {
