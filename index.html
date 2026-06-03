@@ -1695,6 +1695,7 @@ p31,Sample Player,MI,bat,9.0,false
           state.sl.contests = await state.db.getContests(state.activeTournamentId);
         } catch(e) { /* non-fatal — tabs just won't show SL */ }
       }
+      syncModeTabs(state.sl.contests);
       renderLbTabs();
       renderLbPickers();
       renderLeaderboard();
@@ -1711,8 +1712,13 @@ p31,Sample Player,MI,bat,9.0,false
       const tabsRow = $('#lbTabsRow');
       if (!tabsRow) return;
 
+      const allContests = state.sl?.contests || [];
+
+      // Daily XI tab only if a daily contest actually exists for this tournament
+      const hasDailyContest = allContests.some(c => c.contest_type === 'daily');
+
       // All SL contests (public first, then private alphabetically)
-      const slContests = (state.sl?.contests || [])
+      const slContests = allContests
         .filter(c => c.contest_type === 'season_long')
         .sort((a, b) => {
           if (!a.is_private && b.is_private) return -1;
@@ -1720,14 +1726,21 @@ p31,Sample Player,MI,bat,9.0,false
           return (a.name || '').localeCompare(b.name || '');
         });
 
-      // Ensure lbState.tab is valid — fall back to 'daily' or first SL contest
+      // Ensure lbState.tab is valid:
+      //   - 'daily' only valid if a daily contest exists
+      //   - SL contest ID must still be in the list
+      //   - Fall back to first SL contest, or 'daily' if that's all we have
       const validIds = slContests.map(c => c.id);
-      if (lbState.tab !== 'daily' && !validIds.includes(lbState.tab)) {
+      if (lbState.tab === 'daily' && !hasDailyContest) {
         lbState.tab = slContests[0]?.id ?? 'daily';
+      } else if (lbState.tab !== 'daily' && !validIds.includes(lbState.tab)) {
+        lbState.tab = hasDailyContest ? 'daily' : (slContests[0]?.id ?? 'daily');
       }
 
       const pills = [
-        `<span class="lb-tab${lbState.tab === 'daily' ? ' active' : ''}" data-lbtab="daily">Daily XI</span>`,
+        ...(hasDailyContest
+          ? [`<span class="lb-tab${lbState.tab === 'daily' ? ' active' : ''}" data-lbtab="daily">Daily XI</span>`]
+          : []),
         ...slContests.map(c => {
           const label = c.is_private ? `🔒 ${escapeHtml(c.name)}` : escapeHtml(c.name || 'Season Long');
           return `<span class="lb-tab${lbState.tab === c.id ? ' active' : ''}" data-lbtab="${c.id}">${label}</span>`;
@@ -2597,6 +2610,22 @@ p31,Sample Player,MI,bat,9.0,false
     // SEASON LONG — mode switcher + all screen logic
     // ═══════════════════════════════════════════════════════════════════════
 
+    /**
+     * Show/hide the Daily XI mode tab based on whether the active tournament
+     * has a daily contest. If the tab is hidden and the user is currently in
+     * daily mode, auto-switch to season_long.
+     * Call after contests are loaded (initSeasonLong / openLeaderboard).
+     */
+    function syncModeTabs(contests) {
+      const hasDailyContest = (contests || []).some(c => c.contest_type === 'daily');
+      const dailyTab = document.querySelector('.m-tab[data-mode="daily"]');
+      if (dailyTab) dailyTab.style.display = hasDailyContest ? '' : 'none';
+      // If we're on the daily tab but no daily contest exists, switch to SL
+      if (!hasDailyContest && state.mode === 'daily') {
+        switchMode('season_long');
+      }
+    }
+
     function switchMode(mode) {
       state.mode = mode;
       document.querySelectorAll('.m-tab').forEach(t =>
@@ -2625,6 +2654,9 @@ p31,Sample Player,MI,bat,9.0,false
         // Load contests for this tournament
         const contests = await state.db.getContests(state.activeTournamentId);
         state.sl.contests = contests;
+
+        // Show/hide Daily XI mode tab based on whether a daily contest exists
+        syncModeTabs(contests);
 
         // Determine which contest to activate:
         //   - If a contest was pre-set (e.g. user switched to a private league via the
