@@ -551,6 +551,139 @@
       display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
     #signOutBtn { font-size: 11px; padding: 4px 10px; }
+
+    /* ═══════════════════════════════════════════════════════════════
+       MOBILE — user-facing only (admin is desktop-only)
+       768px  = tablet/large phone landscape
+       480px  = phone portrait
+    ═══════════════════════════════════════════════════════════════ */
+
+    @media (max-width: 768px) {
+
+      /* ── Header ─────────────────────────────────────────────────── */
+      header { padding: 10px 14px; gap: 8px; flex-wrap: wrap; }
+      .brand { font-size: 15px; gap: 7px; }
+      /* Hide dev/internal pills and admin button entirely */
+      #dbPill, #apiPill, #simBtn, #adminBtn { display: none !important; }
+      .controls { gap: 6px; flex-wrap: wrap; }
+      /* Make the tournament picker readable */
+      #headerTournamentWrap select { max-width: 160px; font-size: 13px; }
+
+      /* ── Main layout ────────────────────────────────────────────── */
+      /* Already single-column at 1024px — on mobile show XI panel first */
+      main { padding: 10px 10px 28px; gap: 10px; }
+      main > section:first-child  { order: 2; } /* Player Pool → below  */
+      main > section:nth-child(2) { order: 1; } /* XI panel   → on top  */
+
+      /* ── Player pool ────────────────────────────────────────────── */
+      .player-grid {
+        grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+        max-height: 420px;
+        gap: 6px;
+        padding: 10px 12px;
+      }
+      .filters { padding: 8px 12px; gap: 6px; }
+      .filters input { font-size: 14px; } /* prevents iOS auto-zoom on focus */
+      .chip { padding: 7px 13px; font-size: 13px; min-height: 36px; }
+
+      /* ── Squad stats bar (5 cols → 3) ──────────────────────────── */
+      .squad-stats {
+        grid-template-columns: repeat(3, 1fr);
+        padding: 10px 12px;
+        gap: 5px;
+      }
+      /* 4th and 5th stats wrap into a second row naturally */
+      .stat .label { font-size: 8px; }
+      .stat .value { font-size: 14px; }
+
+      /* ── Squad rows (5 cols → name + C/VC + remove) ─────────────── */
+      .squad-row {
+        grid-template-columns: 1fr auto auto;
+        gap: 6px;
+        padding: 8px 4px;
+      }
+      #slXiList .squad-row { grid-template-columns: 1fr auto auto; }
+      /* Hide the overseas badge and credit cost columns */
+      .squad-row .os-tag,
+      .squad-row .cred,
+      .squad-row .pts { display: none; }
+      /* Bigger cap / remove buttons for touch */
+      .cap-btn    { width: 36px; height: 36px; font-size: 13px; }
+      .remove-btn { width: 32px; height: 32px; font-size: 18px; }
+      .squad-row .name { font-size: 14px; }
+      .squad-row .meta { font-size: 11px; }
+      .squad-list { max-height: 340px; padding: 6px 12px; }
+
+      /* ── Mode tabs (Daily XI / Season Long) ─────────────────────── */
+      .mode-tabs { gap: 0; width: 100%; }
+      .m-tab { padding: 11px 16px; font-size: 14px; min-height: 44px; flex: 1; text-align: center; }
+
+      /* ── Daily / SL inner tabs ───────────────────────────────────── */
+      .daily-tabs, .sl-tabs {
+        display: flex; overflow-x: auto; -webkit-overflow-scrolling: touch;
+        white-space: nowrap; scrollbar-width: none;
+      }
+      .daily-tabs::-webkit-scrollbar, .sl-tabs::-webkit-scrollbar { display: none; }
+      .daily-tab, .sl-tab { padding: 10px 14px; font-size: 13px; min-height: 44px; flex-shrink: 0; }
+
+      /* ── Save / action bars ─────────────────────────────────────── */
+      .save-bar { padding: 10px 12px; gap: 8px; flex-wrap: wrap; }
+      .save-bar button { min-height: 40px; font-size: 13px; padding: 8px 14px; }
+
+      /* ── Leaderboard modal ──────────────────────────────────────── */
+      #lbModal .modal-card { width: 96% !important; max-height: 92vh !important; }
+      .lb-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; scrollbar-width: none; }
+      .lb-tabs::-webkit-scrollbar { display: none; }
+      .lb-tab { flex-shrink: 0; }
+      .lb-table { font-size: 12px; }
+      .lb-table th, .lb-table td { padding: 8px 10px; }
+
+      /* ── Login modal ─────────────────────────────────────────────── */
+      #loginModal > div { padding: 32px 20px; width: 94% !important; }
+      #loginModal input { font-size: 16px; } /* prevent iOS zoom */
+
+      /* ── SL booster bar ─────────────────────────────────────────── */
+      #slBoosterBar { padding: 8px 12px; }
+      .sl-booster-pill { font-size: 11px !important; padding: 6px 10px !important; }
+
+      /* ── Countdown chip ─────────────────────────────────────────── */
+      .countdown-chip { font-size: 11px; padding: 4px 8px; }
+
+      /* ── General panel padding ──────────────────────────────────── */
+      .panel h2 { padding: 11px 14px; font-size: 12px; }
+      .panel .body { padding: 10px 12px; }
+    }
+
+    @media (max-width: 480px) {
+
+      /* ── Header: stack brand above controls ─────────────────────── */
+      header { flex-direction: column; align-items: flex-start; padding: 10px 12px; }
+      .controls { width: 100%; }
+      #headerTournamentWrap { width: 100%; }
+      #headerTournamentWrap select { width: 100%; max-width: none; }
+
+      /* ── Main ───────────────────────────────────────────────────── */
+      main { padding: 8px 8px 24px; }
+
+      /* ── Player grid: 2 equal columns ───────────────────────────── */
+      .player-grid {
+        grid-template-columns: 1fr 1fr;
+        max-height: 380px;
+        padding: 8px 10px;
+      }
+
+      /* ── Squad stats: 3 cols, tighter ───────────────────────────── */
+      .squad-stats { padding: 8px 10px; }
+      .stat { padding: 6px 4px; }
+      .stat .value { font-size: 13px; }
+
+      /* ── Panels ─────────────────────────────────────────────────── */
+      .panel h2 { padding: 10px 12px; }
+      .squad-list { padding: 4px 10px; }
+
+      /* ── Reset btn: keep it visible but small ───────────────────── */
+      #resetBtn { display: inline-flex !important; font-size: 12px; padding: 5px 10px; }
+    }
   </style>
 </head>
 <body>
