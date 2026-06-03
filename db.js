@@ -1435,12 +1435,18 @@ export function createDb(cfg = {}) {
       if (!opts.contestType)   throw new Error('createContest: contestType required');
       const sb = await getClient();
       const row = {
-        tournament_id             : tournamentId,
-        name                      : opts.name.trim(),
-        contest_type              : opts.contestType,
-        is_active                 : true,
-        is_private                : false,
-        extra_transfer_point_cost : 4,
+        tournament_id               : tournamentId,
+        name                        : opts.name.trim(),
+        contest_type                : opts.contestType,
+        is_active                   : true,
+        is_private                  : false,
+        extra_transfer_point_cost   : opts.extraTransferPointCost   ?? 4,
+        total_transfers_allowed     : opts.totalTransfersAllowed     ?? null,
+        free_transfers_per_match    : opts.freeTransfersPerMatch     ?? null,
+        start_match_number          : opts.startMatchNumber          ?? null,
+        playoff_start_match_number  : opts.playoffStartMatchNumber   ?? null,
+        playoff_transfers_allowed   : opts.playoffTransfersAllowed   ?? null,
+        available_boosters          : opts.availableBoosters         ?? null,
       };
       const { data, error } = await sb.from('contests').insert(row).select().single();
       if (error) throw error;

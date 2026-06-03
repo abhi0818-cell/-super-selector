@@ -1050,8 +1050,15 @@ p31,Sample Player,MI,bat,9.0,false
 
       <!-- Contests tab -->
       <div class="modal-body" id="adminContestsView" style="display:none;">
-        <div style="padding:10px 6px 0; font-size:12px; color:var(--muted); margin-bottom:10px;">
-          Configure season-long contest settings for the active tournament.
+        <!-- Tournament context bar — populated by renderContestsAdmin() -->
+        <div id="contestsTournamentBar" style="display:flex; align-items:center; gap:10px;
+             padding:8px 10px; margin-bottom:10px; border-radius:6px;
+             background:rgba(201,168,76,0.07); border:1px solid var(--border); flex-wrap:wrap;">
+          <span style="font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; white-space:nowrap;">Contests for</span>
+          <select id="contestsTournamentSwitch" style="font-size:13px; font-weight:600; flex:1; min-width:160px; border:none; background:transparent; color:var(--text); cursor:pointer;">
+            <option value="">— no tournament selected —</option>
+          </select>
+          <span id="contestsCountBadge" style="font-size:11px; color:var(--muted); white-space:nowrap;"></span>
         </div>
         <div id="adminContestsList"></div>
       </div>
@@ -5537,19 +5544,40 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     function renderNewContestForm(isEmpty) {
+      const activeTournament = state.tournaments.find(t => t.id === state.activeTournamentId);
+      const tName = activeTournament ? escapeHtml(activeTournament.name) : 'the active tournament';
+      const boosterRows = Object.entries(BOOSTER_META).map(([key, meta]) => `
+        <div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);">
+          <input type="checkbox" id="ncBoost_${key}" data-booster="${key}" class="nc-boost-chk" style="flex-shrink:0;" />
+          <label for="ncBoost_${key}" style="font-size:12px;flex:1;cursor:pointer;">
+            ${meta.icon} <strong>${meta.label}</strong>
+            <span style="color:var(--muted);font-size:11px;margin-left:4px;">${meta.desc}</span>
+          </label>
+          <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+            <span style="font-size:11px;color:var(--muted);">Uses:</span>
+            <input type="number" min="1" max="10" value="1" id="ncBoost_${key}_count"
+              style="width:50px;font-size:12px;padding:3px 6px;" disabled />
+          </div>
+        </div>`).join('');
+
       return `
         <div id="newContestForm" style="border:1px solid var(--border); border-radius:8px;
              padding:14px 16px; margin-top:${isEmpty ? '0' : '16px'};
              background:rgba(201,168,76,0.04);">
-          <div style="font-size:13px; font-weight:600; color:var(--accent); margin-bottom:12px;">
-            ${isEmpty ? '🏆 No contests yet — create your first one' : '＋ Add Contest'}
+          <div style="font-size:13px; font-weight:600; color:var(--accent); margin-bottom:4px;">
+            ${isEmpty ? '🏆 No contests yet' : '＋ Add Contest'}
+          </div>
+          <div style="font-size:11px; color:var(--muted); margin-bottom:12px;">
+            Creating for: <strong style="color:var(--text);">${tName}</strong>
           </div>
           ${isEmpty ? `<p style="font-size:12px; color:var(--muted); margin:0 0 12px;">
             A tournament needs at least one public contest before users can play.
             Create a <strong>Daily</strong> contest (single-match XI each game) and/or a
             <strong>Season Long</strong> contest (one squad, weekly transfers).
           </p>` : ''}
-          <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap;">
+
+          <!-- Name + Type row -->
+          <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; margin-bottom:12px;">
             <div style="display:flex; flex-direction:column; gap:4px; flex:1; min-width:180px;">
               <label style="font-size:11px; color:var(--muted); font-weight:600;">Contest name</label>
               <input id="ncName" type="text" placeholder="e.g. IPL 2026 Daily, IPL 2026 Season Long"
@@ -5562,10 +5590,75 @@ p31,Sample Player,MI,bat,9.0,false
                 <option value="season_long">Season Long (squad + transfers)</option>
               </select>
             </div>
-            <button id="ncCreateBtn" class="primary" style="font-size:13px; padding:7px 18px; white-space:nowrap;">
-              Create contest
-            </button>
           </div>
+
+          <!-- Season Long config — hidden until type = season_long -->
+          <div id="ncSlConfig" style="display:none; border:1px solid var(--border); border-radius:6px; padding:12px 14px; margin-bottom:12px; background:rgba(34,211,238,0.03);">
+            <div style="font-size:12px; font-weight:600; color:var(--muted); margin-bottom:10px;">⚙️ Season Long settings</div>
+
+            <!-- Transfer settings -->
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;">
+              <div style="display:flex; flex-direction:column; gap:4px;">
+                <label style="font-size:11px; color:var(--muted); font-weight:600;">Total transfer budget
+                  <span style="font-weight:400;">(blank = unlimited)</span></label>
+                <input id="ncTotalXfers" type="number" min="0" step="1" placeholder="Unlimited"
+                       style="font-size:13px; padding:6px 9px;" />
+              </div>
+              <div style="display:flex; flex-direction:column; gap:4px;">
+                <label style="font-size:11px; color:var(--muted); font-weight:600;">Free transfers per match</label>
+                <select id="ncFreeXfersPerMatch" style="font-size:13px; padding:6px 9px;">
+                  <option value="na">N/A — no per-match allocation</option>
+                  <option value="0">0 — every transfer costs pts</option>
+                  <option value="1">1 free per match</option>
+                  <option value="2">2 free per match</option>
+                  <option value="3">3 free per match</option>
+                  <option value="unlimited">Unlimited free (no penalty)</option>
+                </select>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:4px;">
+                <label id="ncXferCostLabel" style="font-size:11px; color:var(--muted); font-weight:600;">Extra transfer cost (pts)
+                  <span style="font-weight:400;">(per transfer over free allowance)</span></label>
+                <input id="ncXferCost" type="number" min="0" step="1" value="4"
+                       style="font-size:13px; padding:6px 9px;" />
+              </div>
+              <div style="display:flex; flex-direction:column; gap:4px;">
+                <label style="font-size:11px; color:var(--muted); font-weight:600;">Season start match #
+                  <span style="font-weight:400;">(blank = all matches)</span></label>
+                <input id="ncStartMN" type="number" min="1" step="1" placeholder="All matches"
+                       style="font-size:13px; padding:6px 9px;" />
+              </div>
+            </div>
+
+            <!-- Playoff section -->
+            <div style="border-top:1px solid var(--border); padding-top:10px; margin-bottom:10px;">
+              <div style="font-size:11px; font-weight:600; color:var(--muted); margin-bottom:8px;">🏟️ Playoff phase
+                <span style="font-weight:400;">(leave blank if no playoff phase)</span></div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                  <label style="font-size:11px; color:var(--muted); font-weight:600;">Playoff start match #</label>
+                  <input id="ncPlayoffStartMN" type="number" min="1" step="1" placeholder="No playoffs"
+                         style="font-size:13px; padding:6px 9px;" />
+                </div>
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                  <label style="font-size:11px; color:var(--muted); font-weight:600;">Playoff transfer budget
+                    <span style="font-weight:400;">(blank = unlimited)</span></label>
+                  <input id="ncPlayoffXfers" type="number" min="0" step="1" placeholder="Unlimited"
+                         style="font-size:13px; padding:6px 9px;" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Boosters -->
+            <div style="border-top:1px solid var(--border); padding-top:10px;">
+              <div style="font-size:12px; font-weight:600; margin-bottom:8px; color:var(--muted);">⚡ Boosters
+                <span style="font-weight:400;">(check to enable, set how many uses each member gets)</span></div>
+              <div id="ncBoostersGrid">${boosterRows}</div>
+            </div>
+          </div>
+
+          <button id="ncCreateBtn" class="primary" style="font-size:13px; padding:7px 18px; white-space:nowrap;">
+            Create contest
+          </button>
           <div id="ncStatus" style="font-size:11px; color:var(--muted); margin-top:8px;"></div>
         </div>`;
     }
@@ -5573,17 +5666,73 @@ p31,Sample Player,MI,bat,9.0,false
     function wireNewContestForm() {
       const btn      = $('#ncCreateBtn');
       const statusEl = $('#ncStatus');
+      const typeEl   = $('#ncType');
+      const slConfig = $('#ncSlConfig');
       if (!btn) return;
+
+      // Show/hide SL config section based on type
+      const toggleSlConfig = () => {
+        if (slConfig) slConfig.style.display = typeEl.value === 'season_long' ? 'block' : 'none';
+      };
+      typeEl.addEventListener('change', toggleSlConfig);
+
+      // Grey out extra transfer cost when free transfers = N/A
+      const freeXferEl  = $('#ncFreeXfersPerMatch');
+      const xferCostEl  = $('#ncXferCost');
+      const xferCostLbl = $('#ncXferCostLabel');
+      const toggleXferCost = () => {
+        const isNA = freeXferEl && freeXferEl.value === 'na';
+        if (xferCostEl)  { xferCostEl.disabled = isNA; xferCostEl.style.opacity = isNA ? '0.4' : '1'; }
+        if (xferCostLbl) xferCostLbl.style.opacity = isNA ? '0.4' : '1';
+      };
+      if (freeXferEl) freeXferEl.addEventListener('change', toggleXferCost);
+
+      // Wire booster checkboxes — enable/disable count inputs
+      document.querySelectorAll('.nc-boost-chk').forEach(chk => {
+        chk.addEventListener('change', () => {
+          const countEl = $(`#ncBoost_${chk.dataset.booster}_count`);
+          if (countEl) countEl.disabled = !chk.checked;
+        });
+      });
+
       btn.addEventListener('click', async () => {
         const name        = $('#ncName').value.trim();
-        const contestType = $('#ncType').value;
+        const contestType = typeEl.value;
         if (!name) { statusEl.textContent = 'Enter a contest name.'; statusEl.style.color = 'var(--bad)'; return; }
         if (!state.activeTournamentId) { statusEl.textContent = 'No active tournament selected.'; statusEl.style.color = 'var(--bad)'; return; }
+
+        const parseIntOrNull = raw => (raw == null || String(raw).trim() === '' ? null : parseInt(raw, 10));
+
+        const opts = { name, contestType };
+
+        if (contestType === 'season_long') {
+          opts.totalTransfersAllowed    = parseIntOrNull($('#ncTotalXfers')?.value);
+          // Free transfers: 'na' → null (no per-match tracking), 'unlimited' → null,
+          // numeric string → that integer
+          const freeVal = freeXferEl?.value ?? 'na';
+          opts.freeTransfersPerMatch    = (freeVal === 'na' || freeVal === 'unlimited') ? null : parseInt(freeVal, 10);
+          // Extra cost: irrelevant when N/A — store as 0 so no accidental deductions
+          opts.extraTransferPointCost   = (freeVal === 'na') ? 0 : (parseIntOrNull($('#ncXferCost')?.value) ?? 4);
+          opts.startMatchNumber         = parseIntOrNull($('#ncStartMN')?.value);
+          opts.playoffStartMatchNumber  = parseIntOrNull($('#ncPlayoffStartMN')?.value);
+          opts.playoffTransfersAllowed  = parseIntOrNull($('#ncPlayoffXfers')?.value);
+
+          // Collect enabled boosters
+          const boosters = {};
+          document.querySelectorAll('.nc-boost-chk').forEach(chk => {
+            if (chk.checked) {
+              const countEl = $(`#ncBoost_${chk.dataset.booster}_count`);
+              boosters[chk.dataset.booster] = parseInt(countEl?.value || '1', 10);
+            }
+          });
+          opts.availableBoosters = Object.keys(boosters).length > 0 ? boosters : null;
+        }
+
         btn.disabled = true;
         statusEl.textContent = 'Creating…';
         statusEl.style.color = 'var(--muted)';
         try {
-          await state.db.createContest(state.activeTournamentId, { name, contestType });
+          await state.db.createContest(state.activeTournamentId, opts);
           toast(`Contest "${name}" created.`);
           renderContestsAdmin(); // full re-render so the new card appears
         } catch (e) {
@@ -5594,15 +5743,45 @@ p31,Sample Player,MI,bat,9.0,false
       });
     }
 
+    function renderContestsTournamentBar(contestCount) {
+      const sw    = $('#contestsTournamentSwitch');
+      const badge = $('#contestsCountBadge');
+      if (!sw) return;
+      sw.innerHTML = state.tournaments.length
+        ? state.tournaments.map(t =>
+            `<option value="${t.id}" ${t.id === state.activeTournamentId ? 'selected' : ''}>${escapeHtml(t.name)} (${t.format || 'T20'})</option>`
+          ).join('')
+        : '<option value="">— no tournaments loaded —</option>';
+      if (badge) {
+        badge.textContent = contestCount === null ? '' :
+          contestCount === 0 ? 'No contests yet' :
+          `${contestCount} contest${contestCount !== 1 ? 's' : ''}`;
+      }
+      // Wire switcher (only once — avoid duplicate listeners by replacing the node)
+      const fresh = sw.cloneNode(true);
+      sw.parentNode.replaceChild(fresh, sw);
+      fresh.addEventListener('change', e => {
+        if (state.db) {
+          switchTournament(e.target.value);
+          const picker = $('#tournamentPicker');
+          if (picker) picker.value = e.target.value;
+          renderContestsAdmin();
+        }
+      });
+    }
+
     async function renderContestsAdmin() {
       const wrap = $('#adminContestsList');
       if (!state.db) {
+        renderContestsTournamentBar(null);
         wrap.innerHTML = '<div class="msg warn" style="margin:10px 0;">Connect a database in the Tournament tab first.</div>';
         return;
       }
       wrap.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:6px 0;">Loading…</div>';
       try {
         const contests = await state.db.getContests(state.activeTournamentId);
+
+        renderContestsTournamentBar(contests.length);
 
         // Always render close-out panel when a DB is connected
         renderCloseOutPanel(state.activeTournamentId ?? null);
