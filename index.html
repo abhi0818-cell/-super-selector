@@ -1128,13 +1128,13 @@ p31,Sample Player,MI,bat,9.0,false
 
     // ─── BOOSTER METADATA ────────────────────────────────────────────────────
     const BOOSTER_META = {
-      triple_captain : { label: 'Triple Captain',   icon: '👑', desc: 'Captain scores 3× instead of 2× for one match.' },
+      triple_captain : { label: 'Triple Captain',   icon: '⚡', desc: 'Captain scores 3× instead of 2× for one match.' },
       dual_captain   : { label: 'Dual Captain',     icon: '👥', desc: 'Both Captain and Vice-Captain score 2× their base points for one match.' },
-      wildcard       : { label: 'Wildcard',          icon: '🃏', desc: 'Make unlimited free transfers for one match window — no deduction.' },
-      free_hit       : { label: 'Free Hit',          icon: '🎯', desc: 'Like Wildcard but your permanent XI reverts automatically after the match.' },
+      wildcard       : { label: 'Wildcard',          icon: '♾️', desc: 'Make unlimited free transfers for one match window — no deduction.' },
+      free_hit       : { label: 'Free Hit',          icon: '🔄', desc: 'Like Wildcard but your permanent XI reverts automatically after the match.' },
       os_double      : { label: 'OS Double',         icon: '✈️', desc: 'All overseas players in your XI score 2× their base points.' },
       indian_double  : { label: 'Indian Double',     icon: '🇮🇳', desc: 'All Indian (non-overseas) players in your XI score 2× their base points.' },
-      team_double    : { label: 'Team Double',       icon: '⚡', desc: 'Every player in your XI scores 2× their base points for the match.' },
+      team_double    : { label: 'Team Double',       icon: '🚀', desc: 'Every player in your XI scores 2× their base points for the match.' },
     };
 
     // ─── RULE METADATA (for the editor UI) ───────────────────────────────────
@@ -3170,6 +3170,16 @@ p31,Sample Player,MI,bat,9.0,false
         ? (activations.find(a => a.match_id === nextMatch.id)?.booster ?? null)
         : null;
 
+      // Is the next match the first of the season or the first of playoffs?
+      // On those matches transfers are already unlimited, so wildcard/free_hit are pointless.
+      const TRANSFER_BOOSTERS = new Set(['wildcard', 'free_hit']);
+      const mn = nextMatch?.match_number ?? null;
+      const transfersUnlimited =
+        mn !== null && (
+          mn === (contest.start_match_number           ?? null) ||
+          mn === (contest.playoff_start_match_number   ?? null)
+        );
+
       // Build pills
       const pills = Object.entries(available).map(([key, totalUses]) => {
         const meta       = BOOSTER_META[key]; if (!meta) return '';
@@ -3178,22 +3188,40 @@ p31,Sample Player,MI,bat,9.0,false
         const isActive   = activeForNext === key;
         const isSpent    = remaining <= 0;
 
-        let pillStyle = `display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:20px;font-size:12px;font-weight:600;cursor:${isSpent ? 'default' : 'pointer'};border:1px solid;transition:all .15s;`;
-        if (isActive)     pillStyle += 'background:rgba(34,211,238,0.18);border-color:var(--accent);color:var(--accent);';
-        else if (isSpent) pillStyle += 'background:var(--panel-2);border-color:var(--border);color:var(--muted);opacity:0.55;';
-        else              pillStyle += 'background:var(--panel-2);border-color:var(--border);color:var(--text);';
+        // Block this pill if another booster is already active for this match
+        const anotherActive = !!activeForNext && !isActive;
+        // Block transfer boosters on the first match of season / playoffs
+        const isBlocked = anotherActive || (TRANSFER_BOOSTERS.has(key) && transfersUnlimited);
 
-        const label   = isActive ? `${meta.icon} ${meta.label} ✓ Active`
-                      : isSpent  ? `${meta.icon} ${meta.label} (used)`
+        const blockedReason = anotherActive
+          ? `${BOOSTER_META[activeForNext]?.label ?? 'A booster'} is already active for this match`
+          : (TRANSFER_BOOSTERS.has(key) && transfersUnlimited)
+            ? 'Transfers are already unlimited on the first match — this booster has no effect'
+            : null;
+
+        const isDisabled = isSpent || isBlocked;
+
+        let pillStyle = `display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:20px;font-size:12px;font-weight:600;cursor:${isDisabled ? 'default' : 'pointer'};border:1px solid;transition:all .15s;`;
+        if (isActive)        pillStyle += 'background:rgba(34,211,238,0.18);border-color:var(--accent);color:var(--accent);';
+        else if (isSpent)    pillStyle += 'background:var(--panel-2);border-color:var(--border);color:var(--muted);opacity:0.45;';
+        else if (isBlocked)  pillStyle += 'background:var(--panel-2);border-color:var(--border);color:var(--muted);opacity:0.4;';
+        else                 pillStyle += 'background:var(--panel-2);border-color:var(--border);color:var(--text);';
+
+        const label   = isActive  ? `${meta.icon} ${meta.label} ✓ Active`
+                      : isSpent   ? `${meta.icon} ${meta.label} (used)`
+                      : isBlocked ? `${meta.icon} ${meta.label} ✗`
                       : `${meta.icon} ${meta.label} (${remaining} left)`;
-        const matchNote = nextMatch ? `M${nextMatch.match_number ?? '?'}` : 'no upcoming match';
+
+        const titleText = blockedReason
+          ? escapeHtml(blockedReason)
+          : `${escapeHtml(meta.desc)} · ${remaining}/${totalUses} uses remaining`;
 
         return `<button
           class="sl-booster-pill"
           data-booster="${key}"
           data-active="${isActive}"
-          data-spent="${isSpent}"
-          title="${escapeHtml(meta.desc)} · ${remaining}/${totalUses} uses remaining"
+          data-spent="${isDisabled}"
+          title="${titleText}"
           style="${pillStyle}"
         >${label}</button>`;
       }).filter(Boolean).join('');
