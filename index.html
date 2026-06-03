@@ -2148,6 +2148,14 @@ p31,Sample Player,MI,bat,9.0,false
           }
           renderTournamentSelector();
         } catch (e) { console.warn('Tournaments load failed.', e); }
+        // Pre-load contests so the Daily XI / Season Long mode tabs are correct on boot
+        // (syncModeTabs hides Daily XI if no daily contest exists for this tournament)
+        if (state.activeTournamentId) {
+          try {
+            state.sl.contests = await db.getContests(state.activeTournamentId);
+            syncModeTabs(state.sl.contests);
+          } catch (e) { console.warn('Contests pre-load failed.', e); }
+        }
         try {
           state.matches = await db.listMatches(state.activeTournamentId);
         } catch (e) { console.warn('Matches table empty / not migrated yet.', e); state.matches = []; }
@@ -2525,6 +2533,15 @@ p31,Sample Player,MI,bat,9.0,false
         });
       } catch (e) { console.warn('Could not reload scoring rules on tournament switch', e); }
       await loadPlayersForActiveTournament();
+      // Reload contests for the new tournament and sync mode tabs
+      state.sl.contests      = [];
+      state.sl.initialized   = false;
+      state.sl.seasonContest = null;
+      state.sl.squad         = null;
+      try {
+        state.sl.contests = await state.db.getContests(id);
+        syncModeTabs(state.sl.contests);
+      } catch (e) { console.warn('Contests reload failed on tournament switch', e); }
       renderMatchSelector();
       renderMatchesAdmin();
       renderPool();
@@ -5476,9 +5493,9 @@ p31,Sample Player,MI,bat,9.0,false
         </div>
       `;
 
-      // Insert before the existing #adminContestsList content
+      // Insert after the existing #adminContestsList content (bottom of the tab)
       const wrap = $('#adminContestsList');
-      wrap.parentNode.insertBefore(panel, wrap);
+      wrap.parentNode.insertBefore(panel, wrap.nextSibling);
 
       // Reset preview when the dropdown changes
       panel.querySelector('#coTournamentSelect').addEventListener('change', () => {
