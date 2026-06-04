@@ -2134,20 +2134,24 @@ export function createDb(cfg = {}) {
      */
     async updateContestMaxMembers(contestId, maxMembers) {
       const sb = await getClient();
-      const { error } = await sb
+      const { data, error } = await sb
         .from('contests')
         .update({ max_members: maxMembers ?? null })
-        .eq('id', contestId);
+        .eq('id', contestId)
+        .select('id');
       if (error) throw error;
+      if (!data || data.length === 0) throw new Error('No rows updated — check RLS policies on the contests table.');
     },
 
     async updateContestTransferBudget(contestId, totalAllowed) {
       const sb = await getClient();
-      const { error } = await sb
+      const { data, error } = await sb
         .from('contests')
         .update({ total_transfers_allowed: totalAllowed ?? null })
-        .eq('id', contestId);
+        .eq('id', contestId)
+        .select('id');
       if (error) throw error;
+      if (!data || data.length === 0) throw new Error('No rows updated — check RLS policies on the contests table.');
     },
 
     /**
@@ -2163,11 +2167,13 @@ export function createDb(cfg = {}) {
       if ('playoff_start_match_number' in fields) patch.playoff_start_match_number = fields.playoff_start_match_number ?? null;
       if ('playoff_transfers_allowed'  in fields) patch.playoff_transfers_allowed  = fields.playoff_transfers_allowed  ?? null;
       if (!Object.keys(patch).length) return;
-      const { error } = await sb
+      const { data, error } = await sb
         .from('contests')
         .update(patch)
-        .eq('id', contestId);
+        .eq('id', contestId)
+        .select('id');
       if (error) throw error;
+      if (!data || data.length === 0) throw new Error('No rows updated — check RLS policies on the contests table.');
     },
 
     // ─── Draft XI (carry-forward SL model) ───────────────────────────────────
@@ -2638,11 +2644,15 @@ export function createDb(cfg = {}) {
     async updateContestBoosters(contestId, boosters) {
       if (!contestId) throw new Error('updateContestBoosters: contestId required');
       const sb = await getClient();
-      const { error } = await sb
+      const { data, error } = await sb
         .from('contests')
         .update({ available_boosters: boosters ?? null })
-        .eq('id', contestId);
+        .eq('id', contestId)
+        .select('id');
       if (error) throw error;
+      if (!data || data.length === 0) {
+        throw new Error('No rows updated — your account may not have permission to edit this contest (check RLS policies on the contests table).');
+      }
     },
 
     // ─── Close-Out Tournament ─────────────────────────────────────────────────
