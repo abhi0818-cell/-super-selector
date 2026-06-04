@@ -1396,7 +1396,7 @@ export function createDb(cfg = {}) {
         }
         throw error;
       }
-      return (data || []).map(c => ({
+      const mapped = (data || []).map(c => ({
         ...c,
         start_match_number         : c.start_match_number         ?? null,
         playoff_start_match_number : c.playoff_start_match_number ?? null,
@@ -1407,6 +1407,9 @@ export function createDb(cfg = {}) {
         max_members                : c.max_members                ?? null,
         available_boosters         : c.available_boosters         ?? null,
       }));
+      console.log('[db] getContests ← available_boosters per contest:',
+        mapped.map(c => `${c.name}: ${JSON.stringify(c.available_boosters)}`));
+      return mapped;
     },
 
     /**
@@ -2644,11 +2647,13 @@ export function createDb(cfg = {}) {
     async updateContestBoosters(contestId, boosters) {
       if (!contestId) throw new Error('updateContestBoosters: contestId required');
       const sb = await getClient();
+      console.log('[db] updateContestBoosters → writing', contestId, JSON.stringify(boosters));
       const { data, error } = await sb
         .from('contests')
         .update({ available_boosters: boosters ?? null })
         .eq('id', contestId)
-        .select('id');
+        .select('id, available_boosters');
+      console.log('[db] updateContestBoosters ← result', JSON.stringify(data), error);
       if (error) throw error;
       if (!data || data.length === 0) {
         throw new Error('No rows updated — your account may not have permission to edit this contest (check RLS policies on the contests table).');
