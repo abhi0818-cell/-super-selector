@@ -658,14 +658,31 @@ export function createDb(cfg = {}) {
       if (!input.name) throw new Error('addTournament: name is required');
       const sb = await getClient();
       const row = {
-        name       : input.name.trim(),
-        format     : input.format     ?? 'T20',
-        start_date : input.startDate  ?? null,
-        end_date   : input.endDate    ?? null,
+        name                : input.name.trim(),
+        format              : input.format          ?? 'T20',
+        start_date          : input.startDate        ?? null,
+        end_date            : input.endDate          ?? null,
+        max_overseas_in_xi  : input.maxOverseasInXi  ?? null,
       };
       const { data, error } = await sb.from('tournaments').insert(row).select().single();
       if (error) throw error;
       return data;
+    },
+
+    /**
+     * Update the overseas player cap for a tournament.
+     * @param {string}      id   Tournament UUID
+     * @param {number|null} cap  Max overseas in XI (null = use format default)
+     */
+    async updateTournamentOverseasCap(id, cap) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('tournaments')
+        .update({ max_overseas_in_xi: cap ?? null })
+        .eq('id', id)
+        .select('id');
+      if (error) throw error;
+      if (!data || data.length === 0) throw new Error('No rows updated — check RLS policies.');
     },
 
     /** All matches, newest match_number first. Optional tournament filter. */

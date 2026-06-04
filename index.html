@@ -1022,6 +1022,12 @@
               <input id="newTournamentStart" type="date" style="flex:1;" title="Start date" />
               <input id="newTournamentEnd"   type="date" style="flex:1;" title="End date" />
             </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label for="newTournamentOsCap" style="font-size:12px; color:var(--muted); white-space:nowrap;">Max overseas in XI</label>
+              <input id="newTournamentOsCap" type="number" min="0" max="11" placeholder="e.g. 4"
+                     style="width:80px; font-size:13px;" title="IPL=4, MLC=6, Women's WC=0, leave blank for format default" />
+              <small style="color:var(--muted); font-size:11px;">IPL=4 · MLC=6 · Women's WC=0 · blank=format default</small>
+            </div>
             <button id="addTournamentBtn" class="primary" style="align-self:flex-start;">Create tournament</button>
           </div>
           <small style="color:var(--muted); display:block; margin-top:8px;">After creating, go to Teams → add franchises, then Players → import the pool, then Schedule → sync fixtures.</small>
@@ -1233,7 +1239,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=105';
+    import { createDb, NotConfiguredError } from './db.js?v=106';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -1621,9 +1627,17 @@ p31,Sample Player,MI,bat,9.0,false
       total: 11, budget: 100,
       role: { wk: [1,4], bat: [3,6], ar: [1,4], bowl: [3,6] },
       maxPerTeam: 7,
-      // IPL T20: max 4 overseas players in playing XI. Other formats unconstrained.
-      maxOverseas: { T20: 4, ODI: 11, TEST: 11 },
+      // Format-level defaults — overridden per-tournament via maxOverseas._tournament
+      maxOverseas: { T20: 4, ODI: 11, TEST: 11, _tournament: null },
     };
+
+    /** Returns the effective overseas cap for the current tournament+format. */
+    function getOverseasCap() {
+      if (RULES.maxOverseas._tournament !== null && RULES.maxOverseas._tournament !== undefined) {
+        return RULES.maxOverseas._tournament;
+      }
+      return getOverseasCap();
+    }
 
     // ─── STATE ───────────────────────────────────────────────────────────────
     const state = {
@@ -2463,6 +2477,8 @@ p31,Sample Player,MI,bat,9.0,false
       if (state.format === fmt && state.rulesEditing === fmt) return; // no-op
       state.format       = fmt;
       state.rulesEditing = fmt;
+      // Apply per-tournament overseas cap (overrides format default when set)
+      RULES.maxOverseas._tournament = tournament.max_overseas_in_xi ?? null;
       const fmtPill = $('#formatPill');
       if (fmtPill) fmtPill.textContent = fmt;
       renderRulesEditor();
@@ -2563,6 +2579,18 @@ p31,Sample Player,MI,bat,9.0,false
                        ${active ? 'checked' : ''} style="width:16px; height:16px; cursor:pointer;" />
               </label>
             </div>
+            <!-- Overseas cap row -->
+            <div style="display:flex; align-items:center; gap:6px; margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
+              <span style="font-size:11px; color:var(--muted); white-space:nowrap;">Max overseas in XI</span>
+              <input type="number" min="0" max="11" class="os-cap-input" data-tid="${t.id}"
+                     value="${t.max_overseas_in_xi ?? ''}"
+                     placeholder="format default"
+                     style="width:90px; font-size:12px; padding:4px 8px;"
+                     title="IPL=4 · MLC=6 · Women's WC=0 · blank=format default (T20:4, ODI/TEST:11)" />
+              <button class="os-cap-save" data-tid="${t.id}"
+                      style="font-size:11px; padding:4px 10px; white-space:nowrap;">Save</button>
+              <span class="os-cap-status" data-tid="${t.id}" style="font-size:11px; color:var(--muted);"></span>
+            </div>
             <!-- Series ID row -->
             <div style="display:flex; align-items:center; gap:6px; margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
               <span style="font-size:11px; color:var(--muted); white-space:nowrap;">CricAPI Series ID</span>
@@ -2593,6 +2621,37 @@ p31,Sample Player,MI,bat,9.0,false
             toast('Failed to update: ' + err.message);
             e.target.checked = !isActive; // revert
           }
+        });
+      });
+      // Wire overseas cap save buttons
+      list.querySelectorAll('.os-cap-save').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const tid      = btn.dataset.tid;
+          const input    = list.querySelector(`.os-cap-input[data-tid="${tid}"]`);
+          const statusEl = list.querySelector(`.os-cap-status[data-tid="${tid}"]`);
+          const raw      = input?.value.trim() ?? '';
+          const cap      = raw === '' ? null : parseInt(raw, 10);
+          if (raw !== '' && (!Number.isFinite(cap) || cap < 0 || cap > 11)) {
+            if (statusEl) { statusEl.textContent = 'Enter 0–11 or leave blank.'; statusEl.style.color = 'var(--bad)'; }
+            return;
+          }
+          btn.disabled = true;
+          if (statusEl) { statusEl.textContent = 'Saving…'; statusEl.style.color = 'var(--muted)'; }
+          try {
+            await state.db.updateTournamentOverseasCap(tid, cap);
+            const t = state.tournaments.find(x => x.id === tid);
+            if (t) t.max_overseas_in_xi = cap;
+            // If active tournament, update live RULES so XI picker reflects it immediately
+            if (tid === state.activeTournamentId) {
+              RULES.maxOverseas._tournament = cap;
+            }
+            if (statusEl) {
+              statusEl.textContent = cap === null ? '✓ Reset to format default' : `✓ Cap set to ${cap}`;
+              statusEl.style.color = 'var(--good)';
+            }
+          } catch (err) {
+            if (statusEl) { statusEl.textContent = 'Failed: ' + err.message; statusEl.style.color = 'var(--bad)'; }
+          } finally { btn.disabled = false; }
         });
       });
       // Wire series ID save buttons
@@ -2686,19 +2745,23 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     async function addTournamentHandler() {
-      const nameEl   = $('#newTournamentName');
-      const fmtEl    = $('#newTournamentFormat');
-      const startEl  = $('#newTournamentStart');
-      const endEl    = $('#newTournamentEnd');
+      const nameEl  = $('#newTournamentName');
+      const fmtEl   = $('#newTournamentFormat');
+      const startEl = $('#newTournamentStart');
+      const endEl   = $('#newTournamentEnd');
+      const osCapEl = $('#newTournamentOsCap');
       const name = nameEl?.value.trim();
       if (!name) { toast('Tournament name is required.'); return; }
       if (!state.db) { toast('Connect to the database first.'); return; }
+      const osCapRaw = osCapEl?.value.trim();
+      const maxOverseasInXi = osCapRaw === '' ? null : parseInt(osCapRaw, 10);
       try {
         const t = await state.db.addTournament({
           name,
-          format   : fmtEl?.value  || 'T20',
-          startDate: startEl?.value || null,
-          endDate  : endEl?.value   || null,
+          format          : fmtEl?.value  || 'T20',
+          startDate       : startEl?.value || null,
+          endDate         : endEl?.value   || null,
+          maxOverseasInXi : Number.isFinite(maxOverseasInXi) ? maxOverseasInXi : null,
         });
         const prevTournamentId = state.activeTournamentId; // capture before switching
         state.tournaments.unshift(t);           // newest first
@@ -2713,6 +2776,7 @@ p31,Sample Player,MI,bat,9.0,false
         if (nameEl)  nameEl.value  = '';
         if (startEl) startEl.value = '';
         if (endEl)   endEl.value   = '';
+        if (osCapEl) osCapEl.value = '';
 
         toast(`Tournament "${t.name}" created. Use Admin → Players → Clone to copy last season's pool, then update teams and credits.`, 5000);
       } catch (e) { toast('Failed to create tournament: ' + e.message, 5000); }
@@ -3050,7 +3114,7 @@ p31,Sample Player,MI,bat,9.0,false
       const used = xiPlayers.reduce((a, p) => a + p.credits, 0);
       const budgetLeft = RULES.budget - used;
       const osCount = xiPlayers.filter(p => p.overseas).length;
-      const osCap   = RULES.maxOverseas[state.format] ?? 11;
+      const osCap   = getOverseasCap();
 
       $('#slXiStatPlayers .value').textContent = xi.length + ' / 11';
       $('#slXiStatPlayers').className = 'stat ' + (xi.length === 11 ? 'ok' : xi.length > 11 ? 'bad' : '');
@@ -4227,7 +4291,7 @@ p31,Sample Player,MI,bat,9.0,false
       if (teamCount >= RULES.maxPerTeam) return false;
       // Overseas cap
       if (p.overseas) {
-        const osCap = RULES.maxOverseas[state.format] ?? 11;
+        const osCap = getOverseasCap();
         const osCount = xiPlayers.filter(x => x.overseas).length;
         if (osCount >= osCap) return false;
       }
@@ -4264,7 +4328,7 @@ p31,Sample Player,MI,bat,9.0,false
         const teamCount = xiPlayers.filter(x => x.team === p.team).length;
         if (teamCount >= RULES.maxPerTeam) { toast(`Max ${RULES.maxPerTeam} players from ${p.team}.`); return; }
         if (p.overseas) {
-          const osCap = RULES.maxOverseas[state.format] ?? 11;
+          const osCap = getOverseasCap();
           if (xiPlayers.filter(x => x.overseas).length >= osCap) { toast(`Overseas cap (${osCap}) reached for ${state.format}.`); return; }
         }
         xi.push(id);
@@ -4677,7 +4741,7 @@ p31,Sample Player,MI,bat,9.0,false
       $('#statTeams').classList.toggle('bad', maxTeam > RULES.maxPerTeam);
 
       const overseasCount = sel.filter(p => p.overseas).length;
-      const overseasCap = RULES.maxOverseas[state.format] ?? 11;
+      const overseasCap = getOverseasCap();
       $('#statOverseas .value').textContent = `${overseasCount}/${overseasCap}`;
       $('#statOverseas').classList.toggle('bad', overseasCount > overseasCap);
 
@@ -4975,7 +5039,7 @@ p31,Sample Player,MI,bat,9.0,false
       // Overseas cap (T20 only)
       if (p.overseas) {
         const overseasCount = state.selected.filter(id => playerById(id)?.overseas).length;
-        const cap = RULES.maxOverseas[state.format] ?? 11;
+        const cap = getOverseasCap();
         if (overseasCount >= cap) return false;
       }
       return true;
