@@ -1636,7 +1636,7 @@ p31,Sample Player,MI,bat,9.0,false
       if (RULES.maxOverseas._tournament !== null && RULES.maxOverseas._tournament !== undefined) {
         return RULES.maxOverseas._tournament;
       }
-      return getOverseasCap();
+      return RULES.maxOverseas[state.format] ?? 11;
     }
 
     // ─── STATE ───────────────────────────────────────────────────────────────
