@@ -1266,7 +1266,7 @@ p31,Sample Player,MI,bat,9.0,false
       wildcard       : { label: 'Wildcard',          icon: '♾️', desc: 'Make unlimited free transfers for one match window — no deduction.' },
       free_hit       : { label: 'Free Hit',          icon: '🔄', desc: 'Like Wildcard but your permanent XI reverts automatically after the match.' },
       os_double      : { label: 'OS Double',         icon: '✈️', desc: 'All overseas players in your XI score 2× their base points.' },
-      indian_double  : { label: 'Indian Double',     icon: '🇮🇳', desc: 'All Indian (non-overseas) players in your XI score 2× their base points.' },
+      indian_double  : { label: 'US Double',          icon: '🇺🇸', desc: 'All US domestic (non-overseas) players in your XI score 2× their base points.' },
       team_double    : { label: 'Team Double',       icon: '🚀', desc: 'Every player in your XI scores 2× their base points for the match.' },
     };
 
@@ -1362,7 +1362,7 @@ p31,Sample Player,MI,bat,9.0,false
     //   'triple_captain' → captain multiplier becomes 3× (vice-captain stays 1.5×)
     //   'dual_captain'   → vice-captain multiplier promoted to 2× (same as captain)
     //   'os_double'      → overseas players (is_overseas=true) get an extra 2× on raw points
-    //   'indian_double'  → domestic players (is_overseas=false) get an extra 2× on raw points
+    //   'indian_double'  → US domestic players (is_overseas=false) get an extra 2× on raw points
     //   'team_double'    → all players get an extra 2× on raw points
     //   'wildcard'/'free_hit' → no scoring effect (handled in transfer logic only)
     function calculateScore(player,fmt='T20',rulesOverride,booster){
