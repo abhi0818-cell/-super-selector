@@ -736,6 +736,28 @@ export function createDb(cfg = {}) {
     },
 
     /**
+     * Revert a match lock — deletes all user_match_xi rows for a given match.
+     *
+     * Use this when a match is delayed AFTER its lock time has already fired.
+     * Deleting the locked XI rows lets users re-pick from their squad_draft_xi
+     * until the rescheduled lock_time arrives.
+     *
+     * Requires the "user_match_xi_admin_delete" policy from migration_v20.
+     *
+     * Returns the count of deleted rows.
+     */
+    async revertMatchLock(matchId) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('user_match_xi')
+        .delete()
+        .eq('match_id', matchId)
+        .select('id');
+      if (error) throw error;
+      return data?.length ?? 0;
+    },
+
+    /**
      * Returns completed matches that have an external_id (CricAPI link) but
      * zero player_match_stats rows yet — i.e. ready to be "finalized".
      *

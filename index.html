@@ -1239,7 +1239,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=106';
+    import { createDb, NotConfiguredError } from './db.js?v=108';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -6731,18 +6731,39 @@ p31,Sample Player,MI,bat,9.0,false
             <option value="TEST" ${m.format==='TEST'?'selected':''}>Test</option>
           </select></td>
           <td><input data-f="start_time" type="datetime-local" value="${isoToLocalInput(m.start_time)}" /></td>
-          <td><select data-f="status">
-            <option value="scheduled"   ${m.status==='scheduled'  ?'selected':''}>Scheduled</option>
-            <option value="delayed"     ${m.status==='delayed'    ?'selected':''}>🌧 Delayed</option>
-            <option value="live"        ${m.status==='live'        ?'selected':''}>🔴 Live</option>
-            <option value="in_progress" ${m.status==='in_progress'?'selected':''}>In progress</option>
-            <option value="completed"   ${m.status==='completed'  ?'selected':''}>Completed</option>
-          </select></td>
+          <td style="white-space:nowrap;">
+            ${(() => {
+              const isDelayed = m.status === 'delayed';
+              const statusLabels = {
+                scheduled: '🕐 Scheduled', delayed: '🌧 Delayed',
+                live: '🔴 Live', in_progress: '▶ In Progress', completed: '✓ Completed',
+              };
+              const badge = statusLabels[m.status] ?? m.status ?? '—';
+              const badgeColor = isDelayed ? 'var(--accent-2)' : m.status === 'completed' ? 'var(--good)' : m.status === 'live' || m.status === 'in_progress' ? 'var(--bad)' : 'var(--muted)';
+              return `
+                <span style="font-size:11px;font-weight:600;color:${badgeColor};">${badge}</span>
+                <button class="delay-toggle-btn" data-id="${m.id}" data-delayed="${isDelayed}"
+                  style="margin-left:6px;font-size:10px;padding:2px 7px;border-radius:4px;
+                         background:${isDelayed ? 'rgba(166,124,0,0.12)' : 'transparent'};
+                         border:1px solid ${isDelayed ? 'var(--accent-2)' : 'var(--border)'};
+                         color:${isDelayed ? 'var(--accent-2)' : 'var(--muted)'};cursor:pointer;"
+                  title="${isDelayed ? 'Remove delay — CricAPI will re-sync status' : 'Mark match as delayed (rain/other)'}">
+                  ${isDelayed ? '✕ Delayed' : '🌧 Delay'}
+                </button>`;
+            })()}
+          </td>
           <td><input data-f="lock_time" type="datetime-local" value="${isoToLocalInput(m.lock_time)}" /></td>
           <td class="col-actions">
             ${(m.status === 'completed' || m.status === 'live') && m.external_id
               ? `<button class="row-finalize" data-act="finalize" title="Fetch scorecard &amp; save fantasy points">Finalize</button>
                  <button class="row-recalc" data-act="recalc" title="Re-parse cached scorecard &amp; overwrite player stats">Recalc</button>`
+              : ''}
+            ${m.status === 'delayed'
+              ? `<button class="row-revert-lock" data-act="revert-lock"
+                   style="font-size:11px;padding:2px 7px;border-radius:4px;
+                          background:rgba(80,160,255,0.10);border:1px solid rgba(80,160,255,0.4);
+                          color:rgba(80,160,255,0.9);cursor:pointer;"
+                   title="Delete locked XIs so users can re-pick after the delay">🔓 Revert Lock</button>`
               : ''}
             <button class="row-del" data-act="del" title="Delete">×</button>
           </td>
@@ -6760,6 +6781,45 @@ p31,Sample Player,MI,bat,9.0,false
         tr.querySelector('[data-act="del"]').addEventListener('click', () => deleteMatchHandler(id));
         tr.querySelector('[data-act="finalize"]')?.addEventListener('click', () => finalizeMatchById(id));
         tr.querySelector('[data-act="recalc"]')?.addEventListener('click',  () => forceRefinalizeMatch(id));
+        tr.querySelector('[data-act="revert-lock"]')?.addEventListener('click', async (e) => {
+          const btn = e.currentTarget;
+          const match = state.matches.find(x => x.id === id);
+          const label = match
+            ? `Match ${match.match_number ?? ''} (${match.home_team_id ?? ''} vs ${match.away_team_id ?? ''})`
+            : `match ${id}`;
+          if (!confirm(
+            `Revert lock for ${label}?\n\n` +
+            `This will DELETE all locked XIs for this match so users can re-pick ` +
+            `before the rescheduled start time.\n\n` +
+            `Proceed?`
+          )) return;
+          btn.disabled = true;
+          try {
+            const count = await state.db.revertMatchLock(id);
+            toast(`🔓 Lock reverted — ${count} XI${count !== 1 ? 's' : ''} unlocked. Users can now re-pick.`, 4000);
+          } catch (err) {
+            toast('Revert failed: ' + err.message, 5000);
+            btn.disabled = false;
+          }
+        });
+        tr.querySelector('.delay-toggle-btn')?.addEventListener('click', async (e) => {
+          const btn       = e.currentTarget;
+          const isDelayed = btn.dataset.delayed === 'true';
+          // Toggle: if currently delayed → revert to scheduled (CricAPI will correct on next sync)
+          //         if not delayed → mark as delayed
+          const newStatus = isDelayed ? 'scheduled' : 'delayed';
+          btn.disabled = true;
+          try {
+            await state.db.updateMatch(id, { status: newStatus });
+            const m = state.matches.find(x => x.id === id);
+            if (m) m.status = newStatus;
+            renderMatchesAdmin(); // re-render so badge + button reflect new state
+            toast(isDelayed ? 'Delay removed — CricAPI will re-sync status on next poll.' : '🌧 Match marked as delayed.');
+          } catch (err) {
+            toast('Failed: ' + err.message);
+            btn.disabled = false;
+          }
+        });
       });
       $('#adminCount').textContent = `${matches.length} matches`;
     }
@@ -6807,6 +6867,10 @@ p31,Sample Player,MI,bat,9.0,false
     async function saveMatchEdit(id, tr) {
       const startTime = localInputToIso(tr.querySelector('[data-f="start_time"]').value);
       const lockTime  = localInputToIso(tr.querySelector('[data-f="lock_time"]').value) || null;
+      // Existing rows show a read-only badge; status is managed via the delay toggle button.
+      // Fall back to the current status stored in state to avoid overwriting it.
+      const statusEl  = tr.querySelector('[data-f="status"]');
+      const currentStatus = state.matches.find(m => m.id === id)?.status ?? 'scheduled';
       const patch = {
         matchNumber: parseInt(tr.querySelector('[data-f="match_number"]').value, 10),
         homeTeamId : tr.querySelector('[data-f="home_team_id"]').value || null,
@@ -6815,7 +6879,7 @@ p31,Sample Player,MI,bat,9.0,false
         startTime  : startTime,
         playedOn   : startTime ? startTime.slice(0, 10) : null,
         lockTime   : lockTime,
-        status     : tr.querySelector('[data-f="status"]').value,
+        status     : statusEl ? statusEl.value : currentStatus,
       };
       if (patch.homeTeamId && patch.awayTeamId && patch.homeTeamId === patch.awayTeamId) {
         toast('Home and away teams must differ.'); return;
