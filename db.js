@@ -52,6 +52,10 @@ export function createDb(cfg = {}) {
   return {
     isConfigured() { return configured; },
 
+    /** Expose project URL + anonKey so the admin panel can construct Edge Function URLs. */
+    _supabaseUrl()  { return url ?? '' },
+    _anonKey()      { return anonKey ?? '' },
+
     /** Expose the raw Supabase client for one-off calls (e.g. verifyOtp). */
     async _getRawClient() { return getClient(); },
 
@@ -685,6 +689,18 @@ export function createDb(cfg = {}) {
       if (!data || data.length === 0) throw new Error('No rows updated — check RLS policies.');
     },
 
+    /** Toggle the scraper on/off for a tournament. */
+    async updateTournamentScraper(id, enabled) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('tournaments')
+        .update({ scraper_enabled: !!enabled })
+        .eq('id', id)
+        .select('id');
+      if (error) throw error;
+      if (!data || data.length === 0) throw new Error('No rows updated — check RLS policies.');
+    },
+
     /** All matches, newest match_number first. Optional tournament filter. */
     async listMatches(tournamentId) {
       const sb = await getClient();
@@ -708,6 +724,7 @@ export function createDb(cfg = {}) {
         start_time   : input.startTime  ?? null,
         lock_time    : input.lockTime   ?? null,
         status       : input.status     ?? 'scheduled',
+        match_type   : input.matchType  ?? null,
         notes        : input.notes      ?? null,
         external_id  : input.externalId ?? null,
       };
@@ -728,6 +745,7 @@ export function createDb(cfg = {}) {
       if (patch.startTime    !== undefined) row.start_time    = patch.startTime;
       if (patch.lockTime     !== undefined) row.lock_time     = patch.lockTime;
       if (patch.status       !== undefined) row.status        = patch.status;
+      if (patch.matchType    !== undefined) row.match_type    = patch.matchType ?? null;
       if (patch.notes        !== undefined) row.notes         = patch.notes;
       if (patch.externalId   !== undefined) row.external_id   = patch.externalId;
       const { data, error } = await sb.from('matches').update(row).eq('id', id).select().single();

@@ -1239,7 +1239,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=108';
+    import { createDb, NotConfiguredError } from './db.js?v=109';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -2591,6 +2591,19 @@ p31,Sample Player,MI,bat,9.0,false
                       style="font-size:11px; padding:4px 10px; white-space:nowrap;">Save</button>
               <span class="os-cap-status" data-tid="${t.id}" style="font-size:11px; color:var(--muted);"></span>
             </div>
+            <!-- Scraper toggle row -->
+            <div style="display:flex; align-items:center; gap:8px; margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
+              <span style="font-size:11px; color:var(--muted); white-space:nowrap;">🕷 Scraper</span>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;">
+                <input type="checkbox" class="scraper-toggle" data-tid="${t.id}"
+                       ${t.scraper_enabled ? 'checked' : ''}
+                       style="width:16px; height:16px; cursor:pointer;" />
+                <span class="scraper-toggle-label" data-tid="${t.id}"
+                      style="font-size:11px; font-weight:600; color:${t.scraper_enabled ? 'var(--accent)' : 'var(--muted)'};">
+                  ${t.scraper_enabled ? 'ON — auto-scrapes every 15 min when live' : 'OFF — uses CricAPI only'}
+                </span>
+              </label>
+            </div>
             <!-- Series ID row -->
             <div style="display:flex; align-items:center; gap:6px; margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
               <span style="font-size:11px; color:var(--muted); white-space:nowrap;">CricAPI Series ID</span>
@@ -2672,6 +2685,29 @@ p31,Sample Player,MI,bat,9.0,false
             toast('Series ID saved — Schedule tab will auto-fill from now on.');
           } catch (err) {
             toast('Failed to save: ' + err.message);
+          }
+        });
+      });
+      // Wire scraper toggles
+      list.querySelectorAll('.scraper-toggle').forEach(cb => {
+        cb.addEventListener('change', async e => {
+          const tid     = e.target.dataset.tid;
+          const enabled = e.target.checked;
+          const label   = list.querySelector(`.scraper-toggle-label[data-tid="${tid}"]`);
+          try {
+            await state.db.updateTournamentScraper(tid, enabled);
+            const t = state.tournaments.find(x => x.id === tid);
+            if (t) t.scraper_enabled = enabled;
+            if (label) {
+              label.textContent = enabled
+                ? 'ON — auto-scrapes every 15 min when live'
+                : 'OFF — uses CricAPI only';
+              label.style.color = enabled ? 'var(--accent)' : 'var(--muted)';
+            }
+            toast(enabled ? '🕷 Scraper enabled for this tournament.' : 'Scraper disabled — CricAPI only.');
+          } catch (err) {
+            toast('Failed: ' + err.message);
+            e.target.checked = !enabled; // revert
           }
         });
       });
@@ -6701,6 +6737,14 @@ p31,Sample Player,MI,bat,9.0,false
             <option value="in_progress">In progress</option>
             <option value="completed">Completed</option>
           </select></td>
+          <td><select data-f="match_type" style="font-size:11px;">
+            <option value="">League</option>
+            <option value="qualifier_1">Q1</option>
+            <option value="qualifier_2">Q2</option>
+            <option value="eliminator">Elim</option>
+            <option value="semi_final">SF</option>
+            <option value="final">Final</option>
+          </select></td>
           <td><input data-f="lock_time" type="datetime-local" /></td>
           <td class="col-actions"><button class="row-add" id="addMatchBtn" title="Add">+</button></td>
         </tr>
@@ -6731,6 +6775,14 @@ p31,Sample Player,MI,bat,9.0,false
             <option value="TEST" ${m.format==='TEST'?'selected':''}>Test</option>
           </select></td>
           <td><input data-f="start_time" type="datetime-local" value="${isoToLocalInput(m.start_time)}" /></td>
+          <td><select data-f="match_type" style="font-size:11px;">
+            <option value=""        ${!m.match_type?'selected':''}>League</option>
+            <option value="qualifier_1" ${m.match_type==='qualifier_1'?'selected':''}>Q1</option>
+            <option value="qualifier_2" ${m.match_type==='qualifier_2'?'selected':''}>Q2</option>
+            <option value="eliminator"  ${m.match_type==='eliminator'?'selected':''}>Elim</option>
+            <option value="semi_final"  ${m.match_type==='semi_final'?'selected':''}>SF</option>
+            <option value="final"       ${m.match_type==='final'?'selected':''}>Final</option>
+          </select></td>
           <td style="white-space:nowrap;">
             ${(() => {
               const isDelayed = m.status === 'delayed';
@@ -6765,6 +6817,16 @@ p31,Sample Player,MI,bat,9.0,false
                           color:rgba(80,160,255,0.9);cursor:pointer;"
                    title="Delete locked XIs so users can re-pick after the delay">🔓 Revert Lock</button>`
               : ''}
+            ${(m.status === 'live' || m.status === 'in_progress')
+              ? `<button class="row-scrape" data-act="scrape"
+                   style="font-size:11px;padding:2px 7px;border-radius:4px;
+                          background:rgba(120,200,80,0.10);border:1px solid rgba(120,200,80,0.4);
+                          color:rgba(100,180,60,0.95);cursor:pointer;"
+                   title="Fetch scorecard now from scraper sources">🕷 Scrape</button>
+                 ${m.scorecard_url
+                   ? `<span style="font-size:9px;color:var(--muted);display:block;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(m.scorecard_url ?? '')}">↳ ${escapeHtml((m.scorecard_url??'').replace('https://','').split('/')[0])}</span>`
+                   : '<span style="font-size:9px;color:var(--muted);">↳ URL pending</span>'}`
+              : ''}
             <button class="row-del" data-act="del" title="Delete">×</button>
           </td>
         </tr>
@@ -6781,6 +6843,35 @@ p31,Sample Player,MI,bat,9.0,false
         tr.querySelector('[data-act="del"]').addEventListener('click', () => deleteMatchHandler(id));
         tr.querySelector('[data-act="finalize"]')?.addEventListener('click', () => finalizeMatchById(id));
         tr.querySelector('[data-act="recalc"]')?.addEventListener('click',  () => forceRefinalizeMatch(id));
+        tr.querySelector('[data-act="scrape"]')?.addEventListener('click', async (e) => {
+          const btn = e.currentTarget;
+          btn.disabled = true; btn.textContent = '⏳';
+          try {
+            // Call the Edge Function for this specific match
+            const supabaseUrl = state.db._supabaseUrl?.() ?? '';
+            const anonKey     = state.db._anonKey?.() ?? '';
+            const edgeFnUrl   = supabaseUrl.replace('.supabase.co', '.supabase.co/functions/v1') + '/scrape-scorecard';
+            const res = await fetch(edgeFnUrl, {
+              method : 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${anonKey}` },
+              body   : JSON.stringify({ matchId: id }),
+            });
+            const json = await res.json();
+            if (!json.ok) throw new Error(json.error ?? 'Scrape failed');
+            const r = json.results?.[0];
+            if (r?.status === 'ok') {
+              // Update cached scorecard_url in state
+              const m = state.matches.find(x => x.id === id);
+              if (m && r.url) m.scorecard_url = r.url;
+              toast(`🕷 Scraped ${r.matched} players from ${r.source}. Unmatched: ${r.unmatched?.length ?? 0}.`, 4000);
+              renderMatchesAdmin();
+            } else {
+              toast(`Scrape: ${r?.status ?? 'unknown'} — ${r?.error ?? r?.fallback ?? ''}`, 4000);
+            }
+          } catch (err) {
+            toast('Scrape failed: ' + err.message, 5000);
+          } finally { btn.disabled = false; btn.textContent = '🕷 Scrape'; }
+        });
         tr.querySelector('[data-act="revert-lock"]')?.addEventListener('click', async (e) => {
           const btn = e.currentTarget;
           const match = state.matches.find(x => x.id === id);
@@ -6840,15 +6931,16 @@ p31,Sample Player,MI,bat,9.0,false
       const format  = row.querySelector('[data-f="format"]').value;
       const startTime = localInputToIso(row.querySelector('[data-f="start_time"]').value);
       const playedOn = startTime ? startTime.slice(0, 10) : null;
-      const status   = row.querySelector('[data-f="status"]').value;
-      const lockTime = localInputToIso(row.querySelector('[data-f="lock_time"]').value) || null;
+      const status    = row.querySelector('[data-f="status"]').value;
+      const matchType = row.querySelector('[data-f="match_type"]')?.value || null;
+      const lockTime  = localInputToIso(row.querySelector('[data-f="lock_time"]').value) || null;
       if (home === away) { toast('Home and away teams must differ.'); return; }
       try {
         if (state.db) {
           const m = await state.db.addMatch({
             tournamentId: state.activeTournamentId,
             matchNumber, format, homeTeamId: home, awayTeamId: away,
-            playedOn, startTime, lockTime, status,
+            playedOn, startTime, lockTime, status, matchType,
           });
           state.matches.push(m);
         } else {
@@ -6869,13 +6961,15 @@ p31,Sample Player,MI,bat,9.0,false
       const lockTime  = localInputToIso(tr.querySelector('[data-f="lock_time"]').value) || null;
       // Existing rows show a read-only badge; status is managed via the delay toggle button.
       // Fall back to the current status stored in state to avoid overwriting it.
-      const statusEl  = tr.querySelector('[data-f="status"]');
+      const statusEl      = tr.querySelector('[data-f="status"]');
+      const matchTypeEl   = tr.querySelector('[data-f="match_type"]');
       const currentStatus = state.matches.find(m => m.id === id)?.status ?? 'scheduled';
       const patch = {
         matchNumber: parseInt(tr.querySelector('[data-f="match_number"]').value, 10),
         homeTeamId : tr.querySelector('[data-f="home_team_id"]').value || null,
         awayTeamId : tr.querySelector('[data-f="away_team_id"]').value || null,
         format     : tr.querySelector('[data-f="format"]').value,
+        matchType  : matchTypeEl ? (matchTypeEl.value || null) : undefined,
         startTime  : startTime,
         playedOn   : startTime ? startTime.slice(0, 10) : null,
         lockTime   : lockTime,
