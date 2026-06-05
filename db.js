@@ -701,6 +701,122 @@ export function createDb(cfg = {}) {
       if (!data || data.length === 0) throw new Error('No rows updated — check RLS policies.');
     },
 
+    // ── Scraper unmatched player reconciliation ──────────────────────────────
+
+    /**
+     * Returns all unresolved unmatched player names for a tournament.
+     * Each row includes match info (number + team names) for context.
+     */
+    async getUnmatchedPlayers(tournamentId) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('scraper_unmatched')
+        .select(`
+          id, raw_name, source, context, created_at,
+          match_id,
+          match:matches!match_id(
+            match_number,
+            home_team:teams!home_team_id(name),
+            away_team:teams!away_team_id(name)
+          )
+        `)
+        .eq('tournament_id', tournamentId)
+        .is('resolved_at', null)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data ?? []).map(u => ({
+        id       : u.id,
+        rawName  : u.raw_name,
+        source   : u.source,
+        context  : u.context,
+        createdAt: u.created_at,
+        matchId  : u.match_id,
+        matchLabel: u.match
+          ? `M${u.match.match_number} · ${u.match.home_team?.name ?? '?'} vs ${u.match.away_team?.name ?? '?'}`
+          : u.match_id,
+      }));
+    },
+
+    /**
+     * Resolve an unmatched name by mapping it to an existing player.
+     * Creates a player_name_alias so future scraper runs auto-resolve the name.
+     */
+    async resolveUnmatchedAsAlias(id, playerId, tournamentId, rawName, source) {
+      const sb = await getClient();
+      const { error: ae } = await sb.from('player_name_aliases').upsert({
+        player_id    : playerId,
+        tournament_id: tournamentId,
+        alias        : rawName.toLowerCase().trim(),
+        source,
+      }, { onConflict: 'alias,source,tournament_id', ignoreDuplicates: true });
+      if (ae) throw ae;
+      const { error } = await sb
+        .from('scraper_unmatched')
+        .update({ resolved_at: new Date().toISOString(), resolved_by: 'alias' })
+        .eq('id', id);
+      if (error) throw error;
+    },
+
+    /**
+     * Resolve an unmatched name by adding the player to the global pool + tournament roster.
+     * Also creates an alias for future auto-resolution.
+     *
+     * @param {string} id             - scraper_unmatched row id
+     * @param {{name, teamId, role, overseas, credits, playerId?}} playerData
+     * @param {string} tournamentId
+     * @param {string} rawName        - original scraper name (for alias)
+     * @param {string} source         - 'cricketaddictor' | 'business_standard'
+     */
+    async resolveUnmatchedAsNewPlayer(id, playerData, tournamentId, rawName, source) {
+      const sb = await getClient();
+      const playerId = playerData.playerId || `scr_${Date.now()}`;
+      // 1. Insert into global players pool
+      const { error: pe } = await sb.from('players').insert({
+        id         : playerId,
+        name       : playerData.name,
+        team_id    : playerData.teamId,
+        role       : playerData.role,
+        credits    : playerData.credits ?? 8,
+        is_overseas: !!playerData.overseas,
+      });
+      if (pe) throw pe;
+      // 2. Add to tournament_players
+      const { error: te } = await sb.from('tournament_players').insert({
+        tournament_id: tournamentId,
+        player_id    : playerId,
+        team_id      : playerData.teamId,
+        credit_value : playerData.credits ?? 8,
+        is_active    : true,
+      });
+      if (te) throw te;
+      // 3. Create alias
+      await sb.from('player_name_aliases').upsert({
+        player_id    : playerId,
+        tournament_id: tournamentId,
+        alias        : rawName.toLowerCase().trim(),
+        source,
+      }, { onConflict: 'alias,source,tournament_id', ignoreDuplicates: true });
+      // 4. Mark resolved
+      const { error: re } = await sb
+        .from('scraper_unmatched')
+        .update({ resolved_at: new Date().toISOString(), resolved_by: 'new_player' })
+        .eq('id', id);
+      if (re) throw re;
+      return playerId;
+    },
+
+    /** Dismiss an unmatched name without creating an alias (e.g. extras, sub fielder). */
+    async ignoreUnmatched(id) {
+      const sb = await getClient();
+      const { error } = await sb
+        .from('scraper_unmatched')
+        .update({ resolved_at: new Date().toISOString(), resolved_by: 'ignored' })
+        .eq('id', id);
+      if (error) throw error;
+    },
+
+    // ────────────────────────────────────────────────────────────────────────
+
     /** All matches, newest match_number first. Optional tournament filter. */
     async listMatches(tournamentId) {
       const sb = await getClient();

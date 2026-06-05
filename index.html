@@ -1239,7 +1239,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=109';
+    import { createDb, NotConfiguredError } from './db.js?v=110';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -2617,6 +2617,21 @@ p31,Sample Player,MI,bat,9.0,false
                       title="Delete tournament"
                       style="font-size:11px; padding:4px 8px; background:transparent; border:1px solid var(--bad); color:var(--bad); border-radius:4px; cursor:pointer; white-space:nowrap;">🗑 Delete</button>
             </div>
+            <!-- Unmatched players panel -->
+            <div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
+              <button class="unmatched-toggle" data-tid="${t.id}"
+                      style="display:flex; align-items:center; gap:6px; background:none; border:none;
+                             cursor:pointer; padding:0; width:100%; text-align:left;">
+                <span style="font-size:11px; color:var(--muted);">⚠️ Unmatched Players</span>
+                <span class="unmatched-badge" data-tid="${t.id}"
+                      style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:10px;
+                             background:rgba(220,80,60,0.15); color:rgba(220,80,60,0.9); display:none;">0</span>
+                <span class="unmatched-chevron" data-tid="${t.id}"
+                      style="font-size:10px; color:var(--muted); margin-left:auto;">▶ Load</span>
+              </button>
+              <div class="unmatched-panel" data-tid="${t.id}"
+                   style="display:none; margin-top:6px;"></div>
+            </div>
           </div>`;
       }).join('');
       // Wire active toggles
@@ -2711,6 +2726,229 @@ p31,Sample Player,MI,bat,9.0,false
           }
         });
       });
+      // Wire unmatched players panels
+      list.querySelectorAll('.unmatched-toggle').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const tid     = btn.dataset.tid;
+          const panel   = list.querySelector(`.unmatched-panel[data-tid="${tid}"]`);
+          const chevron = list.querySelector(`.unmatched-chevron[data-tid="${tid}"]`);
+          const badge   = list.querySelector(`.unmatched-badge[data-tid="${tid}"]`);
+          if (!panel) return;
+
+          // Toggle close
+          if (panel.style.display !== 'none') {
+            panel.style.display = 'none';
+            if (chevron) chevron.textContent = '▶ Load';
+            return;
+          }
+
+          // Load
+          if (chevron) chevron.textContent = '⏳';
+          panel.style.display = 'block';
+          panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">Loading…</span>';
+
+          try {
+            const rows = await state.db.getUnmatchedPlayers(tid);
+            // Fetch tournament players for the "map to player" dropdown
+            const tPlayers = await state.db.getPlayersForTournament(tid);
+
+            if (chevron) chevron.textContent = rows.length ? '▼ Hide' : '▼';
+            if (badge) {
+              badge.textContent = rows.length;
+              badge.style.display = rows.length ? 'inline' : 'none';
+            }
+
+            if (!rows.length) {
+              panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ No unmatched players — all names resolved.</span>';
+              return;
+            }
+
+            // Build player options for dropdown
+            const playerOpts = tPlayers.map(p =>
+              `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${p.role}${p.overseas ? ', OS' : ''})</option>`
+            ).join('');
+
+            // Build team options
+            const teamSet = new Map();
+            tPlayers.forEach(p => { if (p.team) teamSet.set(p.team, p.team); });
+            const teamOpts = [...teamSet.keys()].map(tid2 =>
+              `<option value="${escapeHtml(tid2)}">${escapeHtml(tid2)}</option>`
+            ).join('');
+
+            panel.innerHTML = `
+              <table style="width:100%; border-collapse:collapse; font-size:11px;">
+                <thead>
+                  <tr style="color:var(--muted); border-bottom:1px solid var(--border);">
+                    <th style="text-align:left; padding:4px 6px; font-weight:600;">Name (raw)</th>
+                    <th style="text-align:left; padding:4px 6px; font-weight:600;">Source / Ctx</th>
+                    <th style="text-align:left; padding:4px 6px; font-weight:600;">Match</th>
+                    <th style="padding:4px 6px; font-weight:600; min-width:220px;">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${rows.map(u => `
+                    <tr class="unmatched-row" data-uid="${u.id}" data-rawname="${escapeHtml(u.rawName)}"
+                        data-source="${u.source}" data-tid="${tid}" data-matchid="${u.matchId}"
+                        style="border-bottom:1px solid var(--border);">
+                      <td style="padding:5px 6px; font-weight:600; color:rgba(220,80,60,0.9);">${escapeHtml(u.rawName)}</td>
+                      <td style="padding:5px 6px; color:var(--muted);">
+                        ${u.source === 'cricketaddictor' ? 'CA' : 'BS'} · ${u.context}
+                      </td>
+                      <td style="padding:5px 6px; color:var(--muted); font-size:10px;">${escapeHtml(u.matchLabel)}</td>
+                      <td style="padding:5px 6px;">
+                        <!-- Mode toggle -->
+                        <div class="unmatched-actions" style="display:flex; gap:4px; flex-wrap:wrap; align-items:center;">
+                          <button class="ua-map-btn" title="Map to existing player"
+                                  style="font-size:10px; padding:2px 7px; border-radius:4px;
+                                         background:rgba(201,168,76,0.12); border:1px solid var(--accent);
+                                         color:var(--accent); cursor:pointer; white-space:nowrap;">Map</button>
+                          <button class="ua-add-btn" title="Add as new player"
+                                  style="font-size:10px; padding:2px 7px; border-radius:4px;
+                                         background:rgba(80,180,120,0.10); border:1px solid rgba(80,180,120,0.5);
+                                         color:rgba(60,160,100,0.9); cursor:pointer; white-space:nowrap;">+ Add</button>
+                          <button class="ua-ignore-btn" title="Ignore (extras / sub fielder)"
+                                  style="font-size:10px; padding:2px 7px; border-radius:4px;
+                                         background:transparent; border:1px solid var(--border);
+                                         color:var(--muted); cursor:pointer; white-space:nowrap;">Ignore</button>
+                        </div>
+                        <!-- Map form (hidden by default) -->
+                        <div class="ua-map-form" style="display:none; margin-top:4px; display:none;">
+                          <select class="ua-player-select" style="font-size:11px; max-width:200px;">
+                            <option value="">— select player —</option>
+                            ${playerOpts}
+                          </select>
+                          <button class="ua-map-save"
+                                  style="font-size:10px; padding:2px 8px; margin-left:4px; border-radius:4px;
+                                         background:var(--accent); color:#000; border:none; cursor:pointer;">Save alias</button>
+                          <button class="ua-cancel"
+                                  style="font-size:10px; padding:2px 6px; margin-left:2px; border-radius:4px;
+                                         background:transparent; border:1px solid var(--border); color:var(--muted); cursor:pointer;">✕</button>
+                        </div>
+                        <!-- Add new player form (hidden by default) -->
+                        <div class="ua-add-form" style="display:none; margin-top:4px; background:rgba(80,180,120,0.06);
+                             border:1px solid rgba(80,180,120,0.2); border-radius:4px; padding:6px; font-size:11px;">
+                          <div style="display:flex; gap:4px; flex-wrap:wrap; margin-bottom:4px;">
+                            <input class="ua-new-name" placeholder="Name" value="${escapeHtml(u.rawName)}"
+                                   style="flex:1; min-width:120px; font-size:11px; padding:3px 6px;" />
+                            <input class="ua-new-id" placeholder="ID (e.g. p99)"
+                                   style="width:80px; font-size:11px; padding:3px 6px;" />
+                          </div>
+                          <div style="display:flex; gap:4px; flex-wrap:wrap;">
+                            <select class="ua-new-role" style="font-size:11px; padding:3px 5px;">
+                              <option value="bat">BAT</option>
+                              <option value="bowl">BOWL</option>
+                              <option value="ar">AR</option>
+                              <option value="wk">WK</option>
+                            </select>
+                            <select class="ua-new-team" style="font-size:11px; padding:3px 5px; max-width:110px;">
+                              <option value="">— team —</option>
+                              ${teamOpts}
+                            </select>
+                            <input class="ua-new-credits" type="number" min="6" max="14" step="0.5"
+                                   placeholder="Credits" value="8"
+                                   style="width:70px; font-size:11px; padding:3px 6px;" />
+                            <label style="display:flex; align-items:center; gap:3px; font-size:10px; color:var(--muted);">
+                              <input class="ua-new-os" type="checkbox" /> OS
+                            </label>
+                          </div>
+                          <div style="margin-top:4px; display:flex; gap:4px;">
+                            <button class="ua-add-save"
+                                    style="font-size:10px; padding:2px 10px; border-radius:4px;
+                                           background:rgba(80,180,120,0.8); color:#fff; border:none; cursor:pointer;">Add Player</button>
+                            <button class="ua-cancel"
+                                    style="font-size:10px; padding:2px 6px; border-radius:4px;
+                                           background:transparent; border:1px solid var(--border); color:var(--muted); cursor:pointer;">✕</button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>`;
+
+            // Wire row-level buttons
+            panel.querySelectorAll('.unmatched-row').forEach(row => {
+              const uid     = row.dataset.uid;
+              const rawName = row.dataset.rawname;
+              const src     = row.dataset.source;
+              const matchId = row.dataset.matchid;
+              const mapForm = row.querySelector('.ua-map-form');
+              const addForm = row.querySelector('.ua-add-form');
+              const actions = row.querySelector('.unmatched-actions');
+
+              function showForm(form) {
+                mapForm.style.display = 'none';
+                addForm.style.display = 'none';
+                actions.style.display = 'none';
+                form.style.display = 'block';
+              }
+              function resetRow() {
+                mapForm.style.display = 'none';
+                addForm.style.display = 'none';
+                actions.style.display = 'flex';
+              }
+
+              row.querySelector('.ua-map-btn').addEventListener('click', () => showForm(mapForm));
+              row.querySelector('.ua-add-btn').addEventListener('click', () => showForm(addForm));
+              row.querySelectorAll('.ua-cancel').forEach(b => b.addEventListener('click', resetRow));
+
+              // Save alias
+              row.querySelector('.ua-map-save').addEventListener('click', async () => {
+                const playerId = row.querySelector('.ua-player-select').value;
+                if (!playerId) { toast('Select a player first.'); return; }
+                try {
+                  await state.db.resolveUnmatchedAsAlias(uid, playerId, tid, rawName, src);
+                  row.remove();
+                  // Update badge
+                  const remaining = panel.querySelectorAll('.unmatched-row').length;
+                  if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
+                  if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All names resolved.</span>';
+                  toast('Alias saved — next scraper run will auto-resolve this name.');
+                } catch (err) { toast('Failed: ' + err.message); }
+              });
+
+              // Add new player
+              row.querySelector('.ua-add-save').addEventListener('click', async () => {
+                const name    = row.querySelector('.ua-new-name').value.trim();
+                const pid     = row.querySelector('.ua-new-id').value.trim();
+                const role    = row.querySelector('.ua-new-role').value;
+                const teamId  = row.querySelector('.ua-new-team').value;
+                const credits = parseFloat(row.querySelector('.ua-new-credits').value) || 8;
+                const os      = row.querySelector('.ua-new-os').checked;
+                if (!name || !teamId) { toast('Name and team are required.'); return; }
+                try {
+                  const newId = await state.db.resolveUnmatchedAsNewPlayer(
+                    uid,
+                    { name, playerId: pid || undefined, role, teamId, credits, overseas: os },
+                    tid, matchId, rawName, src
+                  );
+                  row.remove();
+                  const remaining = panel.querySelectorAll('.unmatched-row').length;
+                  if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
+                  if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All names resolved.</span>';
+                  toast(`Player added (${newId}) and alias saved.`);
+                } catch (err) { toast('Failed: ' + err.message); }
+              });
+
+              // Ignore
+              row.querySelector('.ua-ignore-btn').addEventListener('click', async () => {
+                try {
+                  await state.db.ignoreUnmatched(uid);
+                  row.remove();
+                  const remaining = panel.querySelectorAll('.unmatched-row').length;
+                  if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
+                  if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All names resolved.</span>';
+                } catch (err) { toast('Failed: ' + err.message); }
+              });
+            });
+
+          } catch (err) {
+            panel.innerHTML = `<span style="font-size:11px;color:var(--bad);">Error: ${escapeHtml(err.message)}</span>`;
+            if (chevron) chevron.textContent = '▶ Retry';
+          }
+        });
+      });
+
       // Wire delete buttons
       list.querySelectorAll('.tournament-delete-btn').forEach(btn => {
         btn.addEventListener('click', async e => {
