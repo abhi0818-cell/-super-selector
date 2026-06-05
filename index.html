@@ -3159,7 +3159,7 @@ p31,Sample Player,MI,bat,9.0,false
           state.sl.seasonContest = contests.find(c => c.contest_type === 'season_long' && !c.is_private) ?? null;
         }
         if (!state.sl.seasonContest) {
-          toast('No season-long contest found for this tournament. Run migration_v2 first.', 4000);
+          toast('No season-long contest found for this tournament. Create one in the Contests tab first.', 4000);
           return;
         }
         // Warn if transfer-config columns are missing (migration_v3 not yet run).
