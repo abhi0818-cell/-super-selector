@@ -3114,14 +3114,18 @@ p31,Sample Player,MI,bat,9.0,false
           state.savedTeams = await state.db.listUserTeams();
           let loadTeam = null;
 
+          // Restrict to this tournament's match IDs so we don't grab a stale cross-tournament XI
+          const switchMatchIds = new Set(state.matches.map(m => m.id));
           // 1. Try web daily save for the next upcoming match
           if (nextMatch) {
             loadTeam = state.savedTeams.filter(t => !t.squadId)
               .find(t => t.matchId === nextMatch.id && t.playerIds?.length === 11) || null;
           }
-          // 2. Any recent web daily save for this tournament
+          // 2. Any recent web daily save for THIS tournament specifically
           if (!loadTeam) {
-            loadTeam = state.savedTeams.filter(t => !t.squadId && t.playerIds?.length === 11)[0] || null;
+            loadTeam = state.savedTeams.filter(
+              t => !t.squadId && t.playerIds?.length === 11 && switchMatchIds.has(t.matchId)
+            )[0] || null;
           }
           // 3. Broader search across ALL matches in this tournament (catches mobile saves)
           if (!loadTeam) {
