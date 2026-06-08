@@ -2557,11 +2557,12 @@ p31,Sample Player,MI,bat,9.0,false
     function applyTournamentFormat(tournament) {
       if (!tournament) return;
       const fmt = tournament.format || 'T20';
-      if (state.format === fmt && state.rulesEditing === fmt) return; // no-op
+      // Always update overseas cap — two same-format tournaments (e.g. IPL T20 → MLC T20)
+      // can have different caps, so this must run even when the format hasn't changed.
+      RULES.maxOverseas._tournament = tournament.max_overseas_in_xi ?? null;
+      if (state.format === fmt && state.rulesEditing === fmt) return; // no-op for format-only changes
       state.format       = fmt;
       state.rulesEditing = fmt;
-      // Apply per-tournament overseas cap (overrides format default when set)
-      RULES.maxOverseas._tournament = tournament.max_overseas_in_xi ?? null;
       const fmtPill = $('#formatPill');
       if (fmtPill) fmtPill.textContent = fmt;
       renderRulesEditor();
