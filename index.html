@@ -1278,7 +1278,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=112';
+    import { createDb, NotConfiguredError } from './db.js?v=113';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -3831,10 +3831,12 @@ p31,Sample Player,MI,bat,9.0,false
       // Build pills
       const pills = Object.entries(available).map(([key, totalUses]) => {
         const meta       = BOOSTER_META[key]; if (!meta) return '';
-        const usedCount  = activations.filter(a => a.booster === key).length;
-        const remaining  = totalUses - usedCount;
         const isActive   = activeForNext === key;
-        const isSpent    = remaining <= 0;
+        // Exclude the current match's activation from "spent" count —
+        // an active booster is always deactivatable before the match starts.
+        const usedInOther = activations.filter(a => a.booster === key && a.match_id !== nextMatch?.id).length;
+        const remaining   = totalUses - usedInOther;
+        const isSpent     = remaining <= 0;  // all uses consumed in OTHER matches
 
         // Block this pill if another booster is already active for this match
         const anotherActive = !!activeForNext && !isActive;
@@ -3847,7 +3849,8 @@ p31,Sample Player,MI,bat,9.0,false
             ? 'Transfers are already unlimited on the first match — this booster has no effect'
             : null;
 
-        const isDisabled = isSpent || isBlocked;
+        // An active booster is never disabled — it must remain clickable to deactivate
+        const isDisabled = isActive ? false : (isSpent || isBlocked);
 
         let pillStyle = `display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:20px;font-size:12px;font-weight:600;cursor:${isDisabled ? 'default' : 'pointer'};border:1px solid;transition:all .15s;`;
         if (isActive)        pillStyle += 'background:rgba(201,168,76,0.18);border-color:var(--accent);color:var(--accent);';
@@ -3855,14 +3858,16 @@ p31,Sample Player,MI,bat,9.0,false
         else if (isBlocked)  pillStyle += 'background:var(--panel-2);border-color:var(--border);color:var(--muted);opacity:0.4;';
         else                 pillStyle += 'background:var(--panel-2);border-color:var(--border);color:var(--text);';
 
-        const label   = isActive  ? `${meta.icon} ${meta.label} ✓ Active`
+        const label   = isActive  ? `${meta.icon} ${meta.label} ✓ (tap to remove)`
                       : isSpent   ? `${meta.icon} ${meta.label} (used)`
                       : isBlocked ? `${meta.icon} ${meta.label} ✗`
                       : `${meta.icon} ${meta.label} (${remaining} left)`;
 
-        const titleText = blockedReason
-          ? escapeHtml(blockedReason)
-          : `${escapeHtml(meta.desc)} · ${remaining}/${totalUses} uses remaining`;
+        const titleText = isActive
+          ? `${escapeHtml(meta.desc)} · Active for this match — click to deactivate`
+          : blockedReason
+            ? escapeHtml(blockedReason)
+            : `${escapeHtml(meta.desc)} · ${remaining}/${totalUses} uses remaining`;
 
         return `<button
           class="sl-booster-pill"
