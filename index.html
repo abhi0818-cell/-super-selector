@@ -925,22 +925,8 @@
       <!-- ═══ SEASON LONG PANEL ═══ -->
       <div id="slPanel" style="display:none;">
 
-        <!-- STATE 1: Not joined yet -->
-        <div id="slJoinScreen">
-          <div style="padding:16px 0 8px;">
-            <p style="color:var(--muted); font-size:13px; margin:0 0 10px; line-height:1.6;">
-              Season Long tracks your XI across every match.<br>
-              Pick 11 before each game — changes vs your last XI are logged as transfers.
-            </p>
-          </div>
-          <div class="save-bar">
-            <input id="slTeamName" type="text" placeholder="Team name (e.g. Super XI 2026)" />
-            <button id="slJoinBtn" class="primary">Start Season</button>
-          </div>
-        </div><!-- end slJoinScreen -->
-
-        <!-- STATE 2: Joined -->
-        <div id="slActiveScreen" style="display:none;">
+        <!-- Single screen — no join gate; squad is created automatically on first Save XI -->
+        <div id="slActiveScreen">
           <div class="sl-tabs">
             <span class="sl-tab active" data-sltab="xi">Pick XI</span>
             <span class="sl-tab" data-sltab="live">Live Score</span>
@@ -950,6 +936,15 @@
 
           <!-- XI picker tab -->
           <div id="slXiTab">
+            <!-- Optional squad-name bar shown only before first save -->
+            <div id="slNameHint" style="display:none; padding:8px 0 6px; border-bottom:1px solid var(--border); margin-bottom:8px;">
+              <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">
+                🏏 Pick your 11 players and save to start your season.
+              </div>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <input id="slTeamName" type="text" placeholder="Squad name — optional (e.g. Super XI 2026)" style="flex:1; font-size:12px;" />
+              </div>
+            </div>
             <div class="squad-stats">
               <div class="stat" id="slXiStatPlayers"><div class="label">XI</div><div class="value">0 / 11</div></div>
               <div class="stat" id="slXiStatBudget"><div class="label">Budget left</div><div class="value">100.0</div></div>
@@ -3365,14 +3360,10 @@ p31,Sample Player,MI,bat,9.0,false
       if (state.mode !== 'season_long') return;
       if (state.sl.loading) return;
       if (!state.sl.initialized) return;
-      if (!state.sl.squad) {
-        $('#slJoinScreen').style.display   = '';
-        $('#slActiveScreen').style.display = 'none';
-      } else {
-        $('#slJoinScreen').style.display   = 'none';
-        $('#slActiveScreen').style.display = '';
-        renderSlActiveScreen();
-      }
+      // Always show the active screen — squad is created on first save (no join gate)
+      const nameHint = $('#slNameHint');
+      if (nameHint) nameHint.style.display = state.sl.squad ? 'none' : '';
+      renderSlActiveScreen();
     }
 
     // ─── JOIN SEASON ─────────────────────────────────────────────────────────
@@ -3802,7 +3793,7 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     async function saveSlXiHandler() {
-      if (!state.db || !state.sl.squad) { toast('Not connected.'); return; }
+      if (!state.db) { toast('Not connected.'); return; }
 
       const xi  = state.sl.xiPlayers;
       const cap = state.sl.xiCaptain;
@@ -3812,6 +3803,25 @@ p31,Sample Player,MI,bat,9.0,false
       if (cap === vc)       { toast('Captain and vice-captain must differ.'); return; }
 
       const btn = $('#slSaveXiBtn'); btn.disabled = true; btn.textContent = 'Saving...';
+
+      // Auto-join on first save (no gate screen — mirrors mobile behaviour)
+      if (!state.sl.squad) {
+        if (!state.sl.seasonContest) { toast('No season-long contest found for this tournament.'); btn.disabled = false; btn.textContent = 'Save XI'; return; }
+        const squadName = $('#slTeamName')?.value.trim() || 'My Squad';
+        try {
+          state.sl.squad = await state.db.joinSeason(state.sl.seasonContest.id, squadName);
+          state.sl.seasonXferCount = 0;
+          state.sl.seasonXferCap   = state.sl.seasonContest?.total_transfers_allowed ?? null;
+          state.sl.seasonPhase     = 'regular';
+          await slLoadDraft();
+          const nameHint = $('#slNameHint');
+          if (nameHint) nameHint.style.display = 'none';
+        } catch (e) {
+          toast('Could not start season: ' + e.message, 5000);
+          btn.disabled = false; btn.textContent = 'Save XI';
+          return;
+        }
+      }
       try {
         // 1. Persist draft (no match association, no transfers)
         await state.db.saveDraft(state.sl.squad.id, { playerIds: xi, captainId: cap, vcId: vc });
@@ -4638,10 +4648,6 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     function slTogglePlayer(id) {
-      if (!state.sl.squad) {
-        toast('Start a season first (Season Long -> Start Season).', 3000);
-        return;
-      }
       const xi  = state.sl.xiPlayers;
       const idx = xi.indexOf(id);
       if (idx >= 0) {
@@ -9376,7 +9382,6 @@ p31,Sample Player,MI,bat,9.0,false
         if (t.dataset.sltab === 'season' && !state.sl.seasonData) loadAndRenderSeason();
         // Leagues tab: renderSlLeaguesTab() is async and called inside renderSlActiveScreen()
       }));
-    $('#slJoinBtn').addEventListener('click', joinSeasonHandler);
     // Note: private league create/join listeners are wired inside renderSlLeaguesTab()
     // (dynamic because the tab is re-rendered on each visit).
     $('#slSaveXiBtn').addEventListener('click', saveSlXiHandler);
