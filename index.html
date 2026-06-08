@@ -3085,12 +3085,55 @@ p31,Sample Player,MI,bat,9.0,false
         state.sl.contests = await state.db.getContests(id);
         syncModeTabs(state.sl.contests);
       } catch (e) { console.warn('Contests reload failed on tournament switch', e); }
+      // ── Clear + restore Daily XI for the new tournament ───────────────────
+      state.selected    = [];
+      state.captain     = null;
+      state.viceCaptain = null;
+      state.activeSavedTeamId = null;
+
+      // Find next upcoming match for this tournament
+      const nextMatch = state.matches
+        .filter(m => m.status !== 'completed' && m.start_time)
+        .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))[0]
+        || state.matches
+            .filter(m => m.status !== 'completed')
+            .sort((a, b) => (a.match_number || 0) - (b.match_number || 0))[0]
+        || null;
+      if (nextMatch) state.activeMatchId = nextMatch.id;
+
+      // Try to restore saved XI: web daily team first, then mobile user_match_xi
+      if (nextMatch && state.db) {
+        try {
+          state.savedTeams = await state.db.listUserTeams();
+          const dailyForMatch = state.savedTeams.filter(t => !t.squadId)
+            .find(t => t.matchId === nextMatch.id && t.playerIds?.length === 11);
+          let loadTeam = dailyForMatch || null;
+
+          if (!loadTeam) {
+            const mobileXI = await state.db.getUserMatchXI(nextMatch.id);
+            if (mobileXI?.playerIds?.length === 11) loadTeam = mobileXI;
+          }
+
+          if (loadTeam) {
+            const validIds = loadTeam.playerIds.filter(pid => PLAYERS.some(p => p.id === pid));
+            if (validIds.length === 11) {
+              state.selected          = validIds;
+              state.captain           = loadTeam.captainId      ?? null;
+              state.viceCaptain       = loadTeam.viceCaptainId  ?? null;
+              state.activeSavedTeamId = loadTeam.id             ?? null;
+              console.log(`[switchTournament] Auto-loaded XI for ${tournament?.name}`);
+            }
+          }
+        } catch (e) { console.warn('[switchTournament] XI restore failed:', e); }
+      }
+
       renderMatchSelector();
       renderMatchesAdmin();
       renderPool();
       renderAdmin();
       renderTournamentScoringRules();
       renderRulesEditor();
+      render();   // update squadList, liveLabel, saveBar with restored (or empty) XI
       const fmt = tournament?.format || 'T20';
       toast(`Switched to ${tournament?.name ?? 'tournament'} · ${fmt} scoring.`);
     }
