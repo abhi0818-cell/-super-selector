@@ -2373,16 +2373,16 @@ p31,Sample Player,MI,bat,9.0,false
           || dailyTeamsForBoot[0]
           || null;
 
-        // Fallback: check user_match_xi (saved by the mobile app) if no web team found
-        if (!bootTeam && nextMatch && db) {
+        // Fallback: broader search across ALL matches in this tournament (catches mobile saves)
+        if (!bootTeam && db && state.activeTournamentId) {
           try {
-            const mobileXI = await db.getUserMatchXI(nextMatch.id);
-            if (mobileXI && mobileXI.playerIds?.length === 11) {
-              bootTeam = mobileXI;
-              console.log('[boot] Falling back to mobile-saved XI from user_match_xi');
+            const tournamentXI = await db.getLatestUserXIForTournament(state.activeTournamentId);
+            if (tournamentXI && tournamentXI.playerIds?.length === 11) {
+              bootTeam = tournamentXI;
+              console.log('[boot] Falling back to tournament-wide XI search');
             }
           } catch (e) {
-            console.warn('[boot] getUserMatchXI fallback failed:', e);
+            console.warn('[boot] getLatestUserXIForTournament fallback failed:', e);
           }
         }
 
@@ -2405,22 +2405,22 @@ p31,Sample Player,MI,bat,9.0,false
             console.log(`[boot] Auto-loaded XI (${reason}): ${bootTeam.name}`);
           } else {
             // Stale team references players no longer in the active pool.
-            // Try the mobile-saved XI for the next match as a last resort.
-            console.warn('[boot] Boot XI has stale players — trying mobile fallback.');
-            if (nextMatch && db) {
+            // Try a tournament-wide search as a last resort.
+            console.warn('[boot] Boot XI has stale players — trying tournament-wide fallback.');
+            if (db && state.activeTournamentId) {
               try {
-                const mobileXI = await db.getUserMatchXI(nextMatch.id);
-                if (mobileXI && mobileXI.playerIds?.length === 11) {
-                  const freshIds = mobileXI.playerIds.filter(pid => PLAYERS.some(p => p.id === pid));
+                const recoveryXI = await db.getLatestUserXIForTournament(state.activeTournamentId);
+                if (recoveryXI && recoveryXI.playerIds?.length === 11) {
+                  const freshIds = recoveryXI.playerIds.filter(pid => PLAYERS.some(p => p.id === pid));
                   if (freshIds.length === 11) {
                     state.selected    = freshIds;
-                    state.captain     = mobileXI.captainId;
-                    state.viceCaptain = mobileXI.viceCaptainId;
-                    if (mobileXI.matchId) state.activeMatchId = mobileXI.matchId;
-                    console.log('[boot] Recovered XI from mobile user_match_xi.');
+                    state.captain     = recoveryXI.captainId;
+                    state.viceCaptain = recoveryXI.viceCaptainId;
+                    if (recoveryXI.matchId) state.activeMatchId = recoveryXI.matchId;
+                    console.log('[boot] Recovered XI from tournament-wide search.');
                   }
                 }
-              } catch (e) { console.warn('[boot] Mobile XI recovery failed:', e); }
+              } catch (e) { console.warn('[boot] Tournament-wide XI recovery failed:', e); }
             }
           }
         }
@@ -3101,17 +3101,24 @@ p31,Sample Player,MI,bat,9.0,false
         || null;
       if (nextMatch) state.activeMatchId = nextMatch.id;
 
-      // Try to restore saved XI: web daily team first, then mobile user_match_xi
-      if (nextMatch && state.db) {
+      // Try to restore saved XI: web daily team first, then tournament-wide search
+      if (state.db) {
         try {
           state.savedTeams = await state.db.listUserTeams();
-          const dailyForMatch = state.savedTeams.filter(t => !t.squadId)
-            .find(t => t.matchId === nextMatch.id && t.playerIds?.length === 11);
-          let loadTeam = dailyForMatch || null;
+          let loadTeam = null;
 
+          // 1. Try web daily save for the next upcoming match
+          if (nextMatch) {
+            loadTeam = state.savedTeams.filter(t => !t.squadId)
+              .find(t => t.matchId === nextMatch.id && t.playerIds?.length === 11) || null;
+          }
+          // 2. Any recent web daily save for this tournament
           if (!loadTeam) {
-            const mobileXI = await state.db.getUserMatchXI(nextMatch.id);
-            if (mobileXI?.playerIds?.length === 11) loadTeam = mobileXI;
+            loadTeam = state.savedTeams.filter(t => !t.squadId && t.playerIds?.length === 11)[0] || null;
+          }
+          // 3. Broader search across ALL matches in this tournament (catches mobile saves)
+          if (!loadTeam) {
+            loadTeam = await state.db.getLatestUserXIForTournament(id) ?? null;
           }
 
           if (loadTeam) {

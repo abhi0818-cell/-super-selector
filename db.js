@@ -554,6 +554,111 @@ export function createDb(cfg = {}) {
     },
 
     /**
+     * Find the most recent complete XI (11 players) saved by the current user
+     * for any match belonging to a given tournament.
+     *
+     * Search order:
+     *   1. user_match_xi  — mobile / SL saves across all the user's squads
+     *   2. user_teams     — web daily saves
+     *
+     * Prefers the row set with the highest match_number so the user sees their
+     * most recent pick.
+     *
+     * @param {string} tournamentId
+     * @returns {Promise<{playerIds, captainId, viceCaptainId, matchId, name} | null>}
+     */
+    async getLatestUserXIForTournament(tournamentId) {
+      if (!tournamentId) return null;
+      const sb = await getClient();
+      const { data: { user } } = await sb.auth.getUser();
+      if (!user) return null;
+
+      // All match IDs for this tournament
+      const { data: matchRows } = await sb
+        .from('matches')
+        .select('id, match_number')
+        .eq('tournament_id', tournamentId);
+      if (!matchRows?.length) return null;
+      const matchIds  = matchRows.map(m => m.id);
+      const matchNumById = Object.fromEntries(matchRows.map(m => [m.id, m.match_number ?? 0]));
+
+      // ── 1. user_match_xi (mobile / SL) ─────────────────────────────────────
+      const { data: squads } = await sb
+        .from('user_squads')
+        .select('id')
+        .eq('user_id', user.id);
+
+      if (squads?.length) {
+        const squadIds = squads.map(s => s.id);
+        const { data: xiRows } = await sb
+          .from('user_match_xi')
+          .select('player_id, is_captain, is_vc, match_id')
+          .in('squad_id', squadIds)
+          .in('match_id', matchIds);
+
+        if (xiRows?.length) {
+          // Group by match_id, keep groups with exactly 11 rows
+          const byMatch = {};
+          for (const row of xiRows) {
+            (byMatch[row.match_id] = byMatch[row.match_id] || []).push(row);
+          }
+          const best = Object.entries(byMatch)
+            .filter(([, rows]) => rows.length === 11)
+            .sort((a, b) => (matchNumById[b[0]] ?? 0) - (matchNumById[a[0]] ?? 0))[0];
+
+          if (best) {
+            const [mid, rows] = best;
+            const capRow = rows.find(r => r.is_captain);
+            const vcRow  = rows.find(r => r.is_vc);
+            console.log(`[getLatestUserXIForTournament] Found mobile XI for match ${matchNumById[mid]} (${mid})`);
+            return {
+              id:            null,
+              name:          'My XI',
+              format:        null,
+              captainId:     capRow?.player_id    ?? null,
+              viceCaptainId: vcRow?.player_id     ?? null,
+              matchId:       mid,
+              createdAt:     null,
+              playerIds:     rows.map(r => r.player_id),
+              _source:       'user_match_xi',
+            };
+          }
+        }
+      }
+
+      // ── 2. user_teams (web daily saves) ────────────────────────────────────
+      const { data: teams } = await sb
+        .from('user_teams')
+        .select('id, name, format, captain_id, vice_captain_id, match_id, created_at, user_team_players(player_id)')
+        .eq('user_id', user.id)
+        .in('match_id', matchIds)
+        .is('squad_id', null)
+        .order('created_at', { ascending: false })
+        .limit(5);
+
+      for (const t of (teams ?? [])) {
+        const playerIds = (t.user_team_players ?? []).map(x => x.player_id);
+        if (playerIds.length === 11) {
+          console.log(`[getLatestUserXIForTournament] Found web daily XI for match ${matchNumById[t.match_id]}`);
+          return {
+            id:            t.id,
+            name:          t.name,
+            format:        t.format,
+            captainId:     t.captain_id,
+            viceCaptainId: t.vice_captain_id,
+            matchId:       t.match_id,
+            createdAt:     t.created_at,
+            playerIds,
+            _source:       'user_teams',
+          };
+        }
+      }
+
+      console.log(`[getLatestUserXIForTournament] No saved XI found for tournament ${tournamentId}`);
+      return null;
+    },
+
+    /**
      * Returns ALL daily teams (squad_id IS NULL) saved for a specific match,
      * across every user. Used by the scoring pipeline so admin recalculation
      * covers every participant's team, not just the currently signed-in user's.
