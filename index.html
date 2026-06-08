@@ -2404,7 +2404,24 @@ p31,Sample Player,MI,bat,9.0,false
               : (nextMatch && bootTeam.matchId === nextMatch.id) ? 'next match' : 'last saved';
             console.log(`[boot] Auto-loaded XI (${reason}): ${bootTeam.name}`);
           } else {
-            console.warn('Boot XI references players not in current pool — skipping auto-load.');
+            // Stale team references players no longer in the active pool.
+            // Try the mobile-saved XI for the next match as a last resort.
+            console.warn('[boot] Boot XI has stale players — trying mobile fallback.');
+            if (nextMatch && db) {
+              try {
+                const mobileXI = await db.getUserMatchXI(nextMatch.id);
+                if (mobileXI && mobileXI.playerIds?.length === 11) {
+                  const freshIds = mobileXI.playerIds.filter(pid => PLAYERS.some(p => p.id === pid));
+                  if (freshIds.length === 11) {
+                    state.selected    = freshIds;
+                    state.captain     = mobileXI.captainId;
+                    state.viceCaptain = mobileXI.viceCaptainId;
+                    if (mobileXI.matchId) state.activeMatchId = mobileXI.matchId;
+                    console.log('[boot] Recovered XI from mobile user_match_xi.');
+                  }
+                }
+              } catch (e) { console.warn('[boot] Mobile XI recovery failed:', e); }
+            }
           }
         }
         // Always default the match dropdown to the next upcoming match if nothing else set it.
@@ -3283,7 +3300,7 @@ p31,Sample Player,MI,bat,9.0,false
         ? { playerIds: lastLocked.playerIds, captainId: lastLocked.captainId, vcId: lastLocked.vcId }
         : { playerIds: [], captainId: null, vcId: null };
 
-      // 3. Populate the picker: draft > lastLockedXI > empty
+      // 3. Populate the picker: draft > lastLockedXI > mobile XI > empty
       // Skip if refreshOnly=true (e.g. pool dropdown changed) — preserve the
       // user's in-progress picks and only update the transfer baseline above.
       if (!refreshOnly) {
@@ -3296,9 +3313,35 @@ p31,Sample Player,MI,bat,9.0,false
           state.sl.xiCaptain = lastLocked.captainId ?? null;
           state.sl.xiVc      = lastLocked.vcId      ?? null;
         } else {
+          // Neither a web draft nor a prior locked XI found.
+          // Try mobile-saved XI from user_match_xi for the next upcoming match.
           state.sl.xiPlayers = [];
           state.sl.xiCaptain = null;
           state.sl.xiVc      = null;
+          const nextUpcoming = state.matches
+            .filter(m => m.status !== 'completed' && m.status !== 'live' && m.status !== 'in_progress')
+            .sort((a, b) => (a.match_number || 0) - (b.match_number || 0))[0] ?? null;
+          if (nextUpcoming && state.db) {
+            try {
+              const mobileXI = await state.db.getUserMatchXI(nextUpcoming.id);
+              if (mobileXI && mobileXI.playerIds?.length === 11) {
+                state.sl.xiPlayers = [...mobileXI.playerIds];
+                state.sl.xiCaptain = mobileXI.captainId      ?? null;
+                state.sl.xiVc      = mobileXI.viceCaptainId  ?? null;
+                // Promote to squad_draft_xi so web edits stick immediately
+                if (state.sl.squad?.id) {
+                  await state.db.saveDraft(state.sl.squad.id, {
+                    playerIds: mobileXI.playerIds,
+                    captainId: mobileXI.captainId     ?? null,
+                    vcId:      mobileXI.viceCaptainId ?? null,
+                  });
+                }
+                console.log('[SL] Auto-loaded mobile XI from user_match_xi for M' + nextUpcoming.match_number);
+              }
+            } catch (e) {
+              console.warn('[SL] Mobile XI fallback failed:', e);
+            }
+          }
         }
       }
 
