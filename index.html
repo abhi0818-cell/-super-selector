@@ -1075,6 +1075,7 @@
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:8px;">
             <div>
               <div style="font-size:13px; font-weight:600;">Scoring Rules</div>
+              <div id="tournamentScoringName" style="font-size:11px; color:var(--accent-2); font-weight:600; margin-top:1px;"></div>
               <div id="tournamentScoringStatus" style="font-size:11px; color:var(--muted); margin-top:2px;"></div>
             </div>
             <div id="tournamentScoringActions" style="display:flex; gap:6px; flex-shrink:0;">
@@ -8930,6 +8931,12 @@ p31,Sample Player,MI,bat,9.0,false
       if (!section) return;
       if (!state.activeTournamentId) { section.style.display = 'none'; return; }
       section.style.display = 'block';
+
+      const nameEl = $('#tournamentScoringName');
+      if (nameEl) {
+        const activeTournament = (state.tournaments || []).find(t => t.id === state.activeTournamentId);
+        nameEl.textContent = activeTournament?.name ? `Editing rules for: ${activeTournament.name}` : '';
+      }
 
       const locked   = isTournamentStarted();
       const fmt      = state.rulesEditing || 'T20';
