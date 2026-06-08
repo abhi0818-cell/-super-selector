@@ -3152,6 +3152,10 @@ p31,Sample Player,MI,bat,9.0,false
       renderTournamentScoringRules();
       renderRulesEditor();
       render();   // update squadList, liveLabel, saveBar with restored (or empty) XI
+      // If already on Season Long tab, re-init so slLoadDraft runs for the new tournament
+      if (state.mode === 'season_long') {
+        initSeasonLong();
+      }
       const fmt = tournament?.format || 'T20';
       toast(`Switched to ${tournament?.name ?? 'tournament'} · ${fmt} scoring.`);
     }
