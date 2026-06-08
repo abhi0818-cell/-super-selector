@@ -570,7 +570,8 @@ export function createDb(cfg = {}) {
     async getLatestUserXIForTournament(tournamentId) {
       if (!tournamentId) return null;
       const sb = await getClient();
-      const { data: { user } } = await sb.auth.getUser();
+      const { data: { user }, error: userErr } = await sb.auth.getUser();
+      console.log(`[getLatestUserXIForTournament] user=${user?.id ?? 'NULL'} err=${userErr?.message ?? 'none'}`);
       if (!user) return null;
 
       // All match IDs for this tournament
@@ -578,6 +579,7 @@ export function createDb(cfg = {}) {
         .from('matches')
         .select('id, match_number')
         .eq('tournament_id', tournamentId);
+      console.log(`[getLatestUserXIForTournament] tournament=${tournamentId} matchRows=${matchRows?.length ?? 0}`);
       if (!matchRows?.length) return null;
       const matchIds  = matchRows.map(m => m.id);
       const matchNumById = Object.fromEntries(matchRows.map(m => [m.id, m.match_number ?? 0]));
@@ -587,6 +589,7 @@ export function createDb(cfg = {}) {
         .from('user_squads')
         .select('id')
         .eq('user_id', user.id);
+      console.log(`[getLatestUserXIForTournament] squads=${squads?.length ?? 0}`);
 
       if (squads?.length) {
         const squadIds = squads.map(s => s.id);
@@ -595,6 +598,7 @@ export function createDb(cfg = {}) {
           .select('player_id, is_captain, is_vc, match_id')
           .in('squad_id', squadIds)
           .in('match_id', matchIds);
+        console.log(`[getLatestUserXIForTournament] user_match_xi rows=${xiRows?.length ?? 0}`);
 
         if (xiRows?.length) {
           // Group by match_id, keep groups with exactly 11 rows
@@ -602,6 +606,8 @@ export function createDb(cfg = {}) {
           for (const row of xiRows) {
             (byMatch[row.match_id] = byMatch[row.match_id] || []).push(row);
           }
+          const groupSizes = Object.entries(byMatch).map(([mid, rows]) => `${matchNumById[mid] ?? mid.slice(0,8)}:${rows.length}`);
+          console.log(`[getLatestUserXIForTournament] groups=${groupSizes.join(', ')}`);
           const best = Object.entries(byMatch)
             .filter(([, rows]) => rows.length === 11)
             .sort((a, b) => (matchNumById[b[0]] ?? 0) - (matchNumById[a[0]] ?? 0))[0];
