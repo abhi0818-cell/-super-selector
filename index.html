@@ -2377,9 +2377,12 @@ p31,Sample Player,MI,bat,9.0,false
           || null;
 
         // Fallback: broader search across ALL matches in this tournament (catches mobile saves)
+        console.log(`[boot] dailyTeamsForBoot=${dailyTeamsForBoot.length} bootTeam=${bootTeam ? bootTeam.name : 'null'} activeTournament=${state.activeTournamentId}`);
         if (!bootTeam && db && state.activeTournamentId) {
           try {
+            console.log('[boot] Trying getLatestUserXIForTournament...');
             const tournamentXI = await db.getLatestUserXIForTournament(state.activeTournamentId);
+            console.log('[boot] getLatestUserXIForTournament result:', tournamentXI);
             if (tournamentXI && tournamentXI.playerIds?.length === 11) {
               bootTeam = tournamentXI;
               console.log('[boot] Falling back to tournament-wide XI search');
@@ -3057,6 +3060,7 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     async function switchTournament(id) {
+      console.log(`[switchTournament] called id=${id} active=${state.activeTournamentId} same=${id === state.activeTournamentId}`);
       if (!id || id === state.activeTournamentId) return;
       state.activeTournamentId = id;
       state.matches       = [];
