@@ -3368,44 +3368,55 @@ p31,Sample Player,MI,bat,9.0,false
       // 3. Populate the picker: draft > lastLockedXI > mobile XI > empty
       // Skip if refreshOnly=true (e.g. pool dropdown changed) — preserve the
       // user's in-progress picks and only update the transfer baseline above.
+      console.log(`[slLoadDraft] draft=${draft?.playerIds?.length ?? 'null'} lastLocked=${lastLocked?.playerIds?.length ?? 'null'} matches=${state.matches.length}`);
       if (!refreshOnly) {
         if (draft?.playerIds?.length === 11) {
           state.sl.xiPlayers = [...draft.playerIds];
           state.sl.xiCaptain = draft.captainId ?? null;
           state.sl.xiVc      = draft.vcId      ?? null;
+          console.log('[slLoadDraft] loaded from draft');
         } else if (lastLocked?.playerIds?.length) {
           state.sl.xiPlayers = [...lastLocked.playerIds];
           state.sl.xiCaptain = lastLocked.captainId ?? null;
           state.sl.xiVc      = lastLocked.vcId      ?? null;
+          console.log('[slLoadDraft] loaded from lastLocked');
         } else {
           // Neither a web draft nor a prior locked XI found.
-          // Try mobile-saved XI from user_match_xi for the next upcoming match.
+          // Try mobile-saved XI — check ALL matches (not just upcoming) so completed M1 is found too.
           state.sl.xiPlayers = [];
           state.sl.xiCaptain = null;
           state.sl.xiVc      = null;
-          const nextUpcoming = state.matches
-            .filter(m => m.status !== 'completed' && m.status !== 'live' && m.status !== 'in_progress')
-            .sort((a, b) => (a.match_number || 0) - (b.match_number || 0))[0] ?? null;
+          // Sort all matches by match_number; try each until we find a saved XI.
+          const allMatchesSorted = [...state.matches]
+            .sort((a, b) => (a.match_number || 0) - (b.match_number || 0));
+          const nextUpcoming = allMatchesSorted
+            .find(m => m.status !== 'completed' && m.status !== 'live' && m.status !== 'in_progress')
+            ?? allMatchesSorted[0] ?? null;
+          console.log(`[slLoadDraft] mobile fallback — nextUpcoming=${nextUpcoming?.match_number ?? 'null'} status=${nextUpcoming?.status ?? 'null'}`);
+          // Try upcoming first, then fall back to tournament-wide search
+          let mobileXI = null;
           if (nextUpcoming && state.db) {
-            try {
-              const mobileXI = await state.db.getUserMatchXI(nextUpcoming.id);
-              if (mobileXI && mobileXI.playerIds?.length === 11) {
-                state.sl.xiPlayers = [...mobileXI.playerIds];
-                state.sl.xiCaptain = mobileXI.captainId      ?? null;
-                state.sl.xiVc      = mobileXI.viceCaptainId  ?? null;
-                // Promote to squad_draft_xi so web edits stick immediately
-                if (state.sl.squad?.id) {
-                  await state.db.saveDraft(state.sl.squad.id, {
-                    playerIds: mobileXI.playerIds,
-                    captainId: mobileXI.captainId     ?? null,
-                    vcId:      mobileXI.viceCaptainId ?? null,
-                  });
-                }
-                console.log('[SL] Auto-loaded mobile XI from user_match_xi for M' + nextUpcoming.match_number);
-              }
-            } catch (e) {
-              console.warn('[SL] Mobile XI fallback failed:', e);
+            try { mobileXI = await state.db.getUserMatchXI(nextUpcoming.id); } catch (_) {}
+          }
+          if (!mobileXI && state.db && state.activeTournamentId) {
+            try { mobileXI = await state.db.getLatestUserXIForTournament(state.activeTournamentId); } catch (_) {}
+          }
+          console.log(`[slLoadDraft] mobileXI=${mobileXI?.playerIds?.length ?? 'null'}`);
+          if (mobileXI && mobileXI.playerIds?.length === 11) {
+            state.sl.xiPlayers = [...mobileXI.playerIds];
+            state.sl.xiCaptain = mobileXI.captainId      ?? null;
+            state.sl.xiVc      = mobileXI.viceCaptainId  ?? null;
+            // Promote to squad_draft_xi so web edits stick immediately
+            if (state.sl.squad?.id) {
+              try {
+                await state.db.saveDraft(state.sl.squad.id, {
+                  playerIds: mobileXI.playerIds,
+                  captainId: mobileXI.captainId     ?? null,
+                  vcId:      mobileXI.viceCaptainId ?? null,
+                });
+              } catch (_) {}
             }
+            console.log('[SL] Auto-loaded mobile XI from user_match_xi for M' + (nextUpcoming?.match_number ?? '?'));
           }
         }
       }
