@@ -688,6 +688,48 @@
 </head>
 <body>
 
+  <!-- ── Rules modal ─────────────────────────────────────────────────── -->
+  <div id="rulesModal" style="display:none; position:fixed; inset:0; z-index:100;
+       background:rgba(0,0,0,0.7); backdrop-filter:blur(4px);
+       align-items:flex-start; justify-content:center; padding-top:48px;">
+    <div style="background:var(--panel); border:1px solid var(--border); border-radius:14px;
+                width:min(680px,96vw); max-height:88vh; display:flex; flex-direction:column;
+                overflow:hidden; box-shadow:0 8px 32px rgba(0,0,0,0.25);">
+      <!-- Header -->
+      <div style="display:flex; align-items:center; justify-content:space-between;
+                  padding:14px 18px; border-bottom:1px solid var(--border);
+                  background:var(--bg); flex-shrink:0;">
+        <div>
+          <div style="font-size:16px; font-weight:800;">📖 Rules</div>
+          <div id="rulesModalSub" style="font-size:11px; color:var(--muted); margin-top:1px;"></div>
+        </div>
+        <button id="rulesCloseBtn"
+                style="background:none; border:1px solid var(--border); border-radius:6px;
+                       padding:4px 10px; cursor:pointer; font-size:13px; color:var(--muted);">✕</button>
+      </div>
+      <!-- Inner tabs -->
+      <div style="display:flex; gap:0; border-bottom:1px solid var(--border); flex-shrink:0; overflow-x:auto;">
+        <button class="rules-inner-tab active" data-rtab="scoring"
+                style="padding:10px 16px; font-size:12px; font-weight:600; border:none;
+                       border-bottom:2px solid var(--accent); background:transparent;
+                       color:var(--text); cursor:pointer; white-space:nowrap;">🏏 Scoring</button>
+        <button class="rules-inner-tab" data-rtab="boosters"
+                style="padding:10px 16px; font-size:12px; font-weight:600; border:none;
+                       border-bottom:2px solid transparent; background:transparent;
+                       color:var(--muted); cursor:pointer; white-space:nowrap;">⚡ Boosters</button>
+        <button class="rules-inner-tab" data-rtab="leagues"
+                style="padding:10px 16px; font-size:12px; font-weight:600; border:none;
+                       border-bottom:2px solid transparent; background:transparent;
+                       color:var(--muted); cursor:pointer; white-space:nowrap;">🔒 Private Leagues</button>
+      </div>
+      <!-- Content area -->
+      <div id="rulesModalContent"
+           style="overflow-y:auto; padding:16px 18px; flex:1;">
+        <div style="color:var(--muted); font-size:13px; text-align:center; padding:32px 0;">Loading…</div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Leaderboard modal ────────────────────────────────────────────── -->
   <div id="lbModal">
     <div class="lb-card">
@@ -776,6 +818,7 @@
       <button id="simBtn" class="primary">Start mock match</button>
       <button id="resetBtn" class="danger">Reset XI</button>
       <button id="lbBtn" style="display:none" title="Leaderboard">🏆 Leaderboard</button>
+      <button id="rulesBtn" style="display:none" title="Rules">📖 Rules</button>
       <button id="adminBtn" title="Tournament setup, players, schedule" style="display:none">Admin</button>
       <span id="userPill" class="user-pill" style="display:none">
         <span id="userAvatar" class="avatar">?</span>
@@ -1063,7 +1106,7 @@
               <th class="col-team">Team</th>
               <th class="col-role">Role</th>
               <th class="col-credits">Credits</th>
-              <th class="col-overseas">OS</th>
+              <th class="col-overseas">✈️</th>
               <th class="col-actions"></th>
             </tr>
           </thead>
@@ -1239,7 +1282,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=110';
+    import { createDb, NotConfiguredError } from './db.js?v=111';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -2228,6 +2271,7 @@ p31,Sample Player,MI,bat,9.0,false
       const signOut  = $('#signOutBtn');
       const adminBtn = $('#adminBtn');
       const lbBtn    = $('#lbBtn');
+      const rulesBtn = $('#rulesBtn');
 
       if (user) {
         const displayName   = user.user_metadata?.full_name || user.email || 'User';
@@ -2236,12 +2280,14 @@ p31,Sample Player,MI,bat,9.0,false
         name.textContent    = displayName;
         pill.style.display    = '';
         signOut.style.display = '';
-        lbBtn.style.display   = '';
+        lbBtn.style.display    = '';
+        rulesBtn.style.display = '';
         adminBtn.style.display = user.email === ADMIN_EMAIL ? '' : 'none';
       } else {
-        pill.style.display    = 'none';
-        signOut.style.display = 'none';
-        lbBtn.style.display   = 'none';
+        pill.style.display     = 'none';
+        signOut.style.display  = 'none';
+        lbBtn.style.display    = 'none';
+        rulesBtn.style.display = 'none';
         // If auth is bypassed, still show admin button so the app is usable
         adminBtn.style.display = !REQUIRE_AUTH ? '' : 'none';
       }
@@ -2327,9 +2373,24 @@ p31,Sample Player,MI,bat,9.0,false
           || state.matches
               .filter(m => m.status !== 'completed')
               .sort((a, b) => (a.match_number || 0) - (b.match_number || 0))[0];
-        const bootTeam =
+        let bootTeam =
           (nextMatch && dailyTeamsForBoot.find(t => t.matchId === nextMatch.id && t.playerIds?.length === 11))
-          || dailyTeamsForBoot[0];
+          || dailyTeamsForBoot[0]
+          || null;
+
+        // Fallback: check user_match_xi (saved by the mobile app) if no web team found
+        if (!bootTeam && nextMatch && db) {
+          try {
+            const mobileXI = await db.getUserMatchXI(nextMatch.id);
+            if (mobileXI && mobileXI.playerIds?.length === 11) {
+              bootTeam = mobileXI;
+              console.log('[boot] Falling back to mobile-saved XI from user_match_xi');
+            }
+          } catch (e) {
+            console.warn('[boot] getUserMatchXI fallback failed:', e);
+          }
+        }
+
         if (bootTeam && bootTeam.playerIds?.length === 11) {
           const validIds = bootTeam.playerIds.filter(pid => PLAYERS.some(p => p.id === pid));
           if (validIds.length === 11) {
@@ -2337,11 +2398,15 @@ p31,Sample Player,MI,bat,9.0,false
             state.captain           = bootTeam.captainId;
             state.viceCaptain       = bootTeam.viceCaptainId;
             state.activeSavedTeamId = bootTeam.id;
-            state.format            = bootTeam.format;
-            state.rulesEditing      = bootTeam.format;
+            if (bootTeam.format) {
+              state.format       = bootTeam.format;
+              state.rulesEditing = bootTeam.format;
+              const fmtPill = $('#formatPill'); if (fmtPill) fmtPill.textContent = bootTeam.format;
+            }
             if (bootTeam.matchId)   state.activeMatchId = bootTeam.matchId;
-            const fmtPill = $('#formatPill'); if (fmtPill) fmtPill.textContent = bootTeam.format;
-            const reason = (nextMatch && bootTeam.matchId === nextMatch.id) ? 'next match' : 'last saved';
+            const reason = bootTeam._source === 'user_match_xi'
+              ? 'mobile XI'
+              : (nextMatch && bootTeam.matchId === nextMatch.id) ? 'next match' : 'last saved';
             console.log(`[boot] Auto-loaded XI (${reason}): ${bootTeam.name}`);
           } else {
             console.warn('Boot XI references players not in current pool — skipping auto-load.');
@@ -2765,7 +2830,7 @@ p31,Sample Player,MI,bat,9.0,false
 
             // Build player options for dropdown
             const playerOpts = tPlayers.map(p =>
-              `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${p.role}${p.overseas ? ', OS' : ''})</option>`
+              `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${p.role}${p.overseas ? ', ✈️' : ''})</option>`
             ).join('');
 
             // Build team options
@@ -2848,7 +2913,7 @@ p31,Sample Player,MI,bat,9.0,false
                                    placeholder="Credits" value="8"
                                    style="width:70px; font-size:11px; padding:3px 6px;" />
                             <label style="display:flex; align-items:center; gap:3px; font-size:10px; color:var(--muted);">
-                              <input class="ua-new-os" type="checkbox" /> OS
+                              <input class="ua-new-os" type="checkbox" /> ✈️ Overseas
                             </label>
                           </div>
                           <div style="margin-top:4px; display:flex; gap:4px;">
@@ -3513,7 +3578,7 @@ p31,Sample Player,MI,bat,9.0,false
             : '<em>no events yet</em>';
           return `<div class="squad-row${isNew ? ' xfer-in' : ''}" data-slid="${id}">
             <div>
-              <div class="name">${p.name}${badge}${multBadge}${p.overseas ? ' <span class="os-tag">OS</span>' : ''}</div>
+              <div class="name">${p.name}${badge}${multBadge}${p.overseas ? ' <span class="os-tag">✈️</span>' : ''}</div>
               <div class="meta"><span class="role-tag role-${p.role}">${roleLabel[p.role]}</span> ${p.team} · ${p.credits.toFixed(1)} cr</div>
             </div>
             <button class="cap-btn ${isCap ? 'captain' : ''}" data-slcap2="${id}" title="Captain (2×)">C</button>
@@ -4430,7 +4495,7 @@ p31,Sample Player,MI,bat,9.0,false
           : '<em>no events yet</em>';
         return `<div class="squad-row" data-liveid="${id}" style="cursor:pointer;">
           <div>
-            <div class="name">${p.name}${badge}${p.overseas ? ' <span class="os-tag">OS</span>' : ''}</div>
+            <div class="name">${p.name}${badge}${p.overseas ? ' <span class="os-tag">✈️</span>' : ''}</div>
             <div class="meta"><span class="role-tag role-${p.role}">${roleLabel[p.role]}</span> ${p.team} · ${p.credits.toFixed(1)} cr</div>
           </div>
           <span class="pts">${pts}</span>
@@ -4521,7 +4586,7 @@ p31,Sample Player,MI,bat,9.0,false
           : '<em>no events yet</em>';
         return `<div class="squad-row" data-liveid="${id}" style="cursor:pointer;">
           <div>
-            <div class="name">${p.name}${badge}${multBadge}${p.overseas ? ' <span class="os-tag">OS</span>' : ''}</div>
+            <div class="name">${p.name}${badge}${multBadge}${p.overseas ? ' <span class="os-tag">✈️</span>' : ''}</div>
             <div class="meta"><span class="role-tag role-${p.role}">${roleLabel[p.role]}</span> ${p.team} · ${p.credits.toFixed(1)} cr</div>
           </div>
           <span class="pts">${pts}</span>
@@ -4884,11 +4949,15 @@ p31,Sample Player,MI,bat,9.0,false
 
       state.autoConnected.add(m.id);
 
-      // Try to load the saved XI for this match
+      // Try to load the saved XI for this match (web table first, then mobile fallback)
       if (!state.db) return;
       let xi = null;
-      try { xi = await state.db.getUserTeamForMatch(m.id); }
-      catch (e) { console.warn('auto-connect: could not load saved XI', e); return; }
+      try {
+        xi = await state.db.getUserTeamForMatch(m.id);
+        if (!xi || xi.playerIds.length !== 11) {
+          xi = await state.db.getUserMatchXI(m.id);
+        }
+      } catch (e) { console.warn('auto-connect: could not load saved XI', e); return; }
       if (!xi || xi.playerIds.length !== 11) {
         console.log(`[auto-connect] skipping M${m.match_number}: no saved XI`);
         return;
@@ -4972,7 +5041,7 @@ p31,Sample Player,MI,bat,9.0,false
               <div class="meta">
                 <span class="role-tag role-${p.role}">${roleLabel[p.role]}</span>
                 ${p.team}
-                ${p.overseas ? '<span class="os-tag" title="Overseas player">OS</span>' : ''}
+                ${p.overseas ? '<span class="os-tag" title="Overseas player">✈️</span>' : ''}
               </div>
               ${capVcBtns}
             </div>
@@ -5061,7 +5130,7 @@ p31,Sample Player,MI,bat,9.0,false
           <div class="squad-row" data-id="${id}">
             <div>
               <div class="name">${p.name}</div>
-              <div class="meta"><span class="role-tag role-${p.role}">${roleLabel[p.role]}</span> ${p.team} · ${p.credits.toFixed(1)} cr${p.overseas?' <span class="os-tag">OS</span>':''}</div>
+              <div class="meta"><span class="role-tag role-${p.role}">${roleLabel[p.role]}</span> ${p.team} · ${p.credits.toFixed(1)} cr${p.overseas?' <span class="os-tag">✈️</span>':''}</div>
             </div>
             <button class="cap-btn ${cap?'captain':''}" data-act="cap"  title="Captain (2×)">C</button>
             <button class="cap-btn ${vc?'vc':''}"      data-act="vc"   title="Vice-Captain (1.5×)">V</button>
@@ -8603,14 +8672,14 @@ p31,Sample Player,MI,bat,9.0,false
           <td>${escapeHtml(r.team)}</td>
           <td>${escapeHtml(r.role)}</td>
           <td>${Number.isFinite(r.credits) ? r.credits : ''}</td>
-          <td>${r.overseas ? 'OS' : ''}</td>
+          <td>${r.overseas ? '✈️' : ''}</td>
         </tr>`;
       }).join('');
 
       preview.style.display = 'block';
       preview.innerHTML = `
         <table>
-          <thead><tr><th></th><th>ID</th><th>Name</th><th>Team</th><th>Role</th><th>Credits</th><th>OS</th></tr></thead>
+          <thead><tr><th></th><th>ID</th><th>Name</th><th>Team</th><th>Role</th><th>Credits</th><th>✈️</th></tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>
       `;
@@ -8837,6 +8906,235 @@ p31,Sample Player,MI,bat,9.0,false
     $('#saveXiBtn').addEventListener('click', saveCurrentXI);
     $('#saveMatchBtn').addEventListener('click', saveCurrentMatch);
     $('#adminBtn').addEventListener('click', () => { if (isAdmin()) openAdmin(); });
+    // ─── Rules modal ─────────────────────────────────────────────────────────
+
+    const BOOSTER_META_WEB = {
+      triple_captain: { icon:'⚡', name:'Triple Captain',  desc:"Your Captain scores 3× their base points for one match. Use once per season." },
+      dual_captain:   { icon:'👥', name:'Dual Captain',    desc:"Both Captain and Vice-Captain score 2× their base points for one match. Use once per season." },
+      team_double:    { icon:'🚀', name:'Team Double',      desc:"All 11 players score double points this matchweek. Use once per season." },
+      free_hit:       { icon:'🔄', name:'Free Hit',         desc:"One extra free transfer this matchweek at no points cost. Use once per season." },
+      wildcard:       { icon:'♾️', name:'Wildcard',         desc:"Unlimited transfers this matchweek, no points deduction. Use once per season." },
+      indian_double:  { icon:'🇺🇸', name:'US Double',      desc:"All US domestic (non-overseas) players in your XI score 2× this matchweek. Use once per season." },
+      os_double:      { icon:'✈️', name:'OS Double',        desc:"All overseas players in your XI score 2× their base points. Use once per season." },
+    };
+
+    const RULES_BATTING = [
+      { label:'Run scored',         key:'run',            unit:'per run' },
+      { label:'Boundary (4)',       key:'boundary4',      unit:'bonus' },
+      { label:'Six (6)',            key:'boundary6',      unit:'bonus' },
+      { label:'Half-century (50)',  key:'half_century',   unit:'bonus' },
+      { label:'Century (100)',      key:'century',        unit:'bonus' },
+      { label:'Duck (dismissed 0)', key:'duck',           unit:'pts' },
+      { label:'SR > 170',          key:'sr_above_170',   unit:'bonus' },
+      { label:'SR 140–170',        key:'sr_140_to_170',  unit:'bonus' },
+      { label:'SR 70–100',         key:'sr_70_to_100',   unit:'pts' },
+      { label:'SR < 70',           key:'sr_below_70',    unit:'pts' },
+    ];
+    const RULES_BOWLING = [
+      { label:'Wicket',             key:'wicket',           unit:'per wkt' },
+      { label:'4-wicket haul',      key:'four_wicket_haul', unit:'bonus' },
+      { label:'5-wicket haul',      key:'five_wicket_haul', unit:'bonus' },
+      { label:'Maiden over',        key:'maiden_over',      unit:'bonus' },
+      { label:'Dot ball',           key:'dot_ball',         unit:'per dot' },
+      { label:'Economy < 5',        key:'economy_below_5',  unit:'bonus' },
+      { label:'Economy 5–6',        key:'economy_5_to_6',   unit:'bonus' },
+      { label:'Economy 10–11',      key:'economy_10_to_11', unit:'pts' },
+      { label:'Economy > 11',       key:'economy_above_11', unit:'pts' },
+    ];
+    const RULES_FIELDING = [
+      { label:'Catch',              key:'catch',            unit:'pts' },
+      { label:'Stumping',           key:'stumping',         unit:'pts' },
+      { label:'Run-out (direct)',   key:'run_out_direct',   unit:'pts' },
+      { label:'Run-out (indirect)', key:'run_out_indirect', unit:'pts' },
+    ];
+
+    const DEFAULT_T20_RULES_WEB = {
+      run:1, boundary4:1, boundary6:2, half_century:8, century:16, duck:-2,
+      sr_above_170:6, sr_140_to_170:4, sr_below_70:-6, sr_70_to_100:-4,
+      wicket:25, maiden_over:8, dot_ball:0, four_wicket_haul:8, five_wicket_haul:16,
+      economy_below_5:6, economy_5_to_6:4, economy_10_to_11:-4, economy_above_11:-6,
+      catch:8, stumping:12, run_out_direct:12, run_out_indirect:6,
+    };
+
+    function ruleTableHtml(title, rows, rules) {
+      const visible = rows.filter(r => rules[r.key] !== undefined && rules[r.key] !== 0);
+      if (!visible.length) return '';
+      const rowsHtml = visible.map((r, i) => {
+        const v = rules[r.key];
+        const neg = v < 0;
+        return `<div style="display:flex; justify-content:space-between; align-items:center;
+                            padding:6px 12px; background:${i%2===0?'var(--panel)':'var(--bg)'};">
+          <span style="font-size:12px; color:var(--text);">${r.label}</span>
+          <span style="font-size:12px; font-weight:700; color:${neg?'var(--bad)':'var(--good)'};">
+            ${neg?'':'+'}${v} ${r.unit}
+          </span>
+        </div>`;
+      }).join('');
+      return `
+        <div style="border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:10px;">
+          <div style="padding:7px 12px; font-size:11px; font-weight:700; text-transform:uppercase;
+                      letter-spacing:0.8px; color:var(--muted); background:rgba(201,168,76,0.08);
+                      border-bottom:1px solid var(--border);">${title}</div>
+          ${rowsHtml}
+        </div>`;
+    }
+
+    let rulesData = null;  // cache per modal open
+
+    async function loadRulesData() {
+      if (rulesData) return rulesData;
+      const result = { rules: null, boosters: [], fmt: 'T20', isDefault: true };
+
+      try {
+        const tid = state.activeTournamentId;
+        const fmt = (state.tournaments?.find(t=>t.id===tid)?.format ?? 'T20').toUpperCase();
+        result.fmt = fmt === 'ODI' ? 'ODI' : 'T20';
+
+        if (tid && state.db) {
+          // Scoring rules — getScoringRules returns the full scoring_rules JSONB object
+          const allRules = await state.db.getScoringRules(tid);
+          const fmtRules = allRules?.[result.fmt] ?? null;
+          if (fmtRules) { result.rules = fmtRules; result.isDefault = false; }
+
+          // Boosters from first active contest
+          const contests = await state.db.getContests(tid);
+          const contest = (contests ?? []).find(c =>
+            c.contest_type === 'sl' || c.contest_type === 'season_long' || c.contest_type === 'daily'
+          ) ?? (contests ?? [])[0];
+          if (contest?.available_boosters) {
+            result.boosters = Array.isArray(contest.available_boosters)
+              ? contest.available_boosters : [];
+          }
+        }
+      } catch(e) { console.warn('[rules] load failed', e); }
+
+      rulesData = result;
+      return result;
+    }
+
+    let rulesActiveTab = 'scoring';
+
+    function renderRulesTab(tab, data) {
+      const el = $('#rulesModalContent');
+      rulesActiveTab = tab;
+
+      // Update tab button styles
+      document.querySelectorAll('.rules-inner-tab').forEach(btn => {
+        const active = btn.dataset.rtab === tab;
+        btn.style.color = active ? 'var(--text)' : 'var(--muted)';
+        btn.style.borderBottom = active ? '2px solid var(--accent)' : '2px solid transparent';
+        btn.style.fontWeight = active ? '700' : '600';
+      });
+
+      const displayRules = data.rules ?? DEFAULT_T20_RULES_WEB;
+
+      if (tab === 'scoring') {
+        el.innerHTML = `
+          ${data.isDefault ? `
+            <div style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3);
+                        border-radius:8px; padding:8px 12px; margin-bottom:12px; font-size:11px;
+                        color:var(--muted); text-align:center;">
+              Showing default ${data.fmt} scoring — admin can customise per tournament
+            </div>` : ''}
+          <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px;
+                      padding:10px 12px; margin-bottom:12px; font-size:12px; color:var(--muted); line-height:1.6;">
+            Each player earns points based on their in-match performance. Your XI total
+            is the sum of all 11 players, with <strong style="color:var(--accent)">Captain earning 2×</strong> and
+            <strong style="color:var(--accent)">Vice-Captain 1.5×</strong> their base points.
+          </div>
+          ${ruleTableHtml('Batting', RULES_BATTING, displayRules)}
+          ${ruleTableHtml('Bowling', RULES_BOWLING, displayRules)}
+          ${ruleTableHtml('Fielding', RULES_FIELDING, displayRules)}
+        `;
+
+      } else if (tab === 'boosters') {
+        if (!data.boosters.length) {
+          el.innerHTML = `<div style="padding:40px 16px; text-align:center; color:var(--muted); font-size:13px;">
+            No boosters configured for this tournament's contest.</div>`;
+          return;
+        }
+        el.innerHTML = `
+          <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px;
+                      padding:10px 12px; margin-bottom:12px; font-size:12px; color:var(--muted); line-height:1.6;">
+            Boosters are one-time power-ups for Season Long and private leagues.
+            Only <strong style="color:var(--accent)">one booster</strong> can be active per match.
+            Once used it cannot be reapplied.
+          </div>
+          ${data.boosters.map(id => {
+            const m = BOOSTER_META_WEB[id] ?? { icon:'🎯', name:id, desc:'Special booster — use once per season.' };
+            return `
+              <div style="display:flex; gap:12px; padding:12px; margin-bottom:8px;
+                          border:1px solid var(--border); border-radius:8px; background:var(--panel);">
+                <span style="font-size:26px; flex-shrink:0;">${m.icon}</span>
+                <div>
+                  <div style="font-size:13px; font-weight:700; color:var(--text); margin-bottom:3px;">${m.name}</div>
+                  <div style="font-size:12px; color:var(--muted); line-height:1.5;">${m.desc}</div>
+                </div>
+              </div>`;
+          }).join('')}
+        `;
+
+      } else {
+        el.innerHTML = `
+          <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px;
+                      padding:10px 12px; margin-bottom:12px; font-size:12px; color:var(--muted); line-height:1.6;">
+            Private leagues let you compete against a specific group using a shared player pool from this tournament.
+          </div>
+          ${[
+            { icon:'👥', h:'Same XI, different contest',
+              b:'Your XI is shared across the season-long contest and all private leagues you join — pick once, compete everywhere.' },
+            { icon:'📋', h:'Custom base rules',
+              b:'Each private league can have its own scoring ruleset configured by the league admin — different from the public contest.' },
+            { icon:'⚡', h:'Configurable boosters',
+              b:'The league admin chooses which boosters are available. A private league may offer a different booster set than the main contest.' },
+            { icon:'🔑', h:'Joining',
+              b:'Ask the league creator for the invite code. Go to Season Long → Leagues → Join with invite code.' },
+          ].map(item => `
+            <div style="display:flex; gap:12px; padding:12px; margin-bottom:8px;
+                        border:1px solid var(--border); border-radius:8px; background:var(--panel);">
+              <span style="font-size:22px; flex-shrink:0; margin-top:2px;">${item.icon}</span>
+              <div>
+                <div style="font-size:13px; font-weight:700; color:var(--text); margin-bottom:3px;">${item.h}</div>
+                <div style="font-size:12px; color:var(--muted); line-height:1.5;">${item.b}</div>
+              </div>
+            </div>`).join('')}
+        `;
+      }
+    }
+
+    async function openRules() {
+      rulesData = null; // always refresh on open
+      const modal = $('#rulesModal');
+      modal.style.display = 'flex';
+
+      const sub = $('#rulesModalSub');
+      const t = state.tournaments?.find(t => t.id === state.activeTournamentId);
+      if (sub && t) sub.textContent = `${t.name} · ${t.format ?? 'T20'}`;
+
+      const el = $('#rulesModalContent');
+      el.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:40px 0;">Loading…</div>';
+
+      const data = await loadRulesData();
+      renderRulesTab(rulesActiveTab, data);
+    }
+
+    function closeRules() {
+      $('#rulesModal').style.display = 'none';
+    }
+
+    // Inner tab clicks
+    document.querySelectorAll('.rules-inner-tab').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const data = await loadRulesData();
+        renderRulesTab(btn.dataset.rtab, data);
+      });
+    });
+
+    $('#rulesBtn').addEventListener('click', openRules);
+    $('#rulesCloseBtn').addEventListener('click', closeRules);
+    $('#rulesModal').addEventListener('click', e => { if (e.target.id === 'rulesModal') closeRules(); });
+
+    // ─── Leaderboard ─────────────────────────────────────────────────────────
     $('#lbBtn').addEventListener('click', openLeaderboard);
     $('#lbCloseBtn').addEventListener('click', closeLeaderboard);
     $('#lbModal').addEventListener('click', e => { if (e.target.id === 'lbModal') closeLeaderboard(); });
@@ -8965,16 +9263,21 @@ p31,Sample Player,MI,bat,9.0,false
         state.rulesEditing = m.format;
         renderRulesEditor();
         // Try to load this match's saved XI; if found, populate the squad list
+        // Web table (user_teams) is checked first; mobile table (user_match_xi) is the fallback.
         if (state.db) {
           try {
-            const xi = await state.db.getUserTeamForMatch(m.id);
+            let xi = await state.db.getUserTeamForMatch(m.id);
+            if (!xi || xi.playerIds.length !== 11) {
+              xi = await state.db.getUserMatchXI(m.id);
+            }
             if (xi && xi.playerIds.length === 11) {
               state.selected      = xi.playerIds.filter(pid => playerById(pid));
               state.captain       = xi.captainId;
               state.viceCaptain   = xi.viceCaptainId;
               state.activeSavedTeamId = xi.id;
               state.stats         = {};
-              toast(`Loaded XI for Match ${m.match_number ?? '?'}.`);
+              const src = xi._source === 'user_match_xi' ? ' (from mobile)' : '';
+              toast(`Loaded XI for Match ${m.match_number ?? '?'}${src}.`);
             } else {
               // No saved XI for this match — start fresh
               state.selected = []; state.captain = null; state.viceCaptain = null; state.stats = {};

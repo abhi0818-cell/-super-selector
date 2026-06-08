@@ -500,6 +500,60 @@ export function createDb(cfg = {}) {
     },
 
     /**
+     * Read a mobile-saved XI from user_match_xi (the table the React Native app
+     * writes to via teamStore.saveXI).  Returns a lightweight object matching the
+     * shape of getUserTeamForMatch() so callers can treat both identically.
+     *
+     * Strategy:
+     *   1. Find the user's squad(s) for any contest tied to this match's tournament.
+     *   2. Read user_match_xi rows for the given matchId across those squads.
+     *   3. Return the first / most-recently-saved set, or null if none.
+     *
+     * @param {string} matchId  - matches.id UUID
+     * @returns {Promise<{playerIds, captainId, viceCaptainId, matchId, name} | null>}
+     */
+    async getUserMatchXI(matchId) {
+      if (!matchId) return null;
+      const sb = await getClient();
+      const { data: { user } } = await sb.auth.getUser();
+      if (!user) return null;
+
+      // 1. Get all squads belonging to this user (across any contest)
+      const { data: squads } = await sb
+        .from('user_squads')
+        .select('id')
+        .eq('user_id', user.id);
+
+      if (!squads || squads.length === 0) return null;
+      const squadIds = squads.map(s => s.id);
+
+      // 2. Read XI rows for this match across all the user's squads
+      const { data: rows, error } = await sb
+        .from('user_match_xi')
+        .select('player_id, is_captain, is_vc, role, squad_id')
+        .eq('match_id', matchId)
+        .in('squad_id', squadIds);
+
+      if (error) throw error;
+      if (!rows || rows.length === 0) return null;
+
+      // 3. Map to the same shape as getUserTeamForMatch
+      const captainRow = rows.find(r => r.is_captain);
+      const vcRow      = rows.find(r => r.is_vc);
+      return {
+        id           : null,                              // no user_teams row
+        name         : 'My XI (mobile)',
+        format       : null,
+        captainId    : captainRow?.player_id ?? null,
+        viceCaptainId: vcRow?.player_id      ?? null,
+        matchId,
+        createdAt    : null,
+        playerIds    : rows.map(r => r.player_id),
+        _source      : 'user_match_xi',                  // internal tag
+      };
+    },
+
+    /**
      * Returns ALL daily teams (squad_id IS NULL) saved for a specific match,
      * across every user. Used by the scoring pipeline so admin recalculation
      * covers every participant's team, not just the currently signed-in user's.
