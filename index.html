@@ -2361,7 +2361,10 @@ p31,Sample Player,MI,bat,9.0,false
         // Auto-restore saved XI on boot — runs after PLAYERS and savedTeams are loaded.
         // Priority: (1) saved XI for the next upcoming match, (2) most recently saved XI.
         // Only consider daily teams (squadId === null) — SL teams live in the Season Long panel.
-        const dailyTeamsForBoot = state.savedTeams.filter(t => !t.squadId);
+        // Restrict to the active tournament's matches so we don't load a stale cross-tournament XI.
+        const activeTournamentMatchIds = new Set(state.matches.map(m => m.id));
+        const dailyTeamsForBoot = state.savedTeams
+          .filter(t => !t.squadId && activeTournamentMatchIds.has(t.matchId));
         const nextMatch = state.matches
           .filter(m => m.status !== 'completed' && m.start_time)
           .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))[0]
