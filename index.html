@@ -8795,8 +8795,9 @@ p31,Sample Player,MI,bat,9.0,false
         overseas: header.indexOf('overseas'),
       };
 
-      const existingIds = new Set(PLAYERS.map(p => p.id));
-      const usedNewIds  = new Set();
+      const existingIds  = new Set(PLAYERS.map(p => p.id));
+      const existingById = Object.fromEntries(PLAYERS.map(p => [p.id, p]));
+      const usedNewIds   = new Set();
       const rolePresets = { wicketkeeper:'wk', wk:'wk', keeper:'wk',
                             batter:'bat', batsman:'bat', bat:'bat',
                             'all-rounder':'ar', allrounder:'ar', ar:'ar',
@@ -8828,7 +8829,12 @@ p31,Sample Player,MI,bat,9.0,false
             if (!used.has(candidate)) { row.id = candidate; usedNewIds.add(candidate); break; }
           }
         } else {
-          if (usedNewIds.has(row.id)) row.errors.push(`duplicate id "${row.id}" in this CSV`);
+          if (usedNewIds.has(row.id)) {
+            row.errors.push(`duplicate id "${row.id}" in this CSV`);
+          } else if (existingById[row.id] && existingById[row.id].name !== row.name) {
+            // ID already belongs to a different player in the DB — would silently overwrite them
+            row.errors.push(`id "${row.id}" already used by "${existingById[row.id].name}" — choose a different id or leave blank to auto-assign`);
+          }
           usedNewIds.add(row.id);
         }
         out.push(row);
