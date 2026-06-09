@@ -1271,7 +1271,7 @@ export function createDb(cfg = {}) {
       const sb = await getClient();
       const { data, error } = await sb
         .from('player_match_stats')
-        .select('player_id, raw_points')
+        .select('player_id, raw_points, source')
         .eq('match_id', matchId);
       if (error) throw error;
       return data || [];

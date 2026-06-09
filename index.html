@@ -1278,7 +1278,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=113';
+    import { createDb, NotConfiguredError } from './db.js?v=114';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -5291,8 +5291,12 @@ p31,Sample Player,MI,bat,9.0,false
 
     function renderSavedTeams() {
       const wrap = $('#savedTeams');
-      // SL teams (squadId set) live in the Season Long section — exclude from daily panel
-      const dailyTeams = state.savedTeams.filter(t => !t.squadId);
+      // SL teams (squadId set) live in the Season Long section — exclude from daily panel.
+      // Also scope to the active tournament's matches so cross-tournament teams don't appear.
+      const activeTournamentMatchIds = new Set(state.matches.map(m => m.id));
+      const dailyTeams = state.savedTeams.filter(
+        t => !t.squadId && activeTournamentMatchIds.has(t.matchId)
+      );
       $('#savedCount').textContent = dailyTeams.length ? `(${dailyTeams.length})` : '';
       if (!dailyTeams.length) {
         wrap.innerHTML = '<div class="empty" style="padding:10px;">No saved teams yet.</div>';
@@ -5326,8 +5330,11 @@ p31,Sample Player,MI,bat,9.0,false
         return;
       }
       try {
-        // Daily history only — exclude SL teams (squadId is set on SL teams)
-        const teamIds = state.savedTeams.filter(t => !t.squadId).map(t => t.id);
+        // Daily history only — exclude SL teams and teams from other tournaments
+        const activeTournamentMatchIds = new Set(state.matches.map(m => m.id));
+        const teamIds = state.savedTeams
+          .filter(t => !t.squadId && activeTournamentMatchIds.has(t.matchId))
+          .map(t => t.id);
 
         const rawMatches = teamIds.length
           ? await state.db.getMatchHistoryDetailed(teamIds)
@@ -7245,27 +7252,36 @@ p31,Sample Player,MI,bat,9.0,false
           </td>
           <td><input data-f="lock_time" type="datetime-local" value="${isoToLocalInput(m.lock_time)}" /></td>
           <td class="col-actions">
-            ${(m.status === 'completed' || m.status === 'live') && m.external_id
-              ? `<button class="row-finalize" data-act="finalize" title="Fetch scorecard &amp; save fantasy points">Finalize</button>
-                 <button class="row-recalc" data-act="recalc" title="Re-parse cached scorecard &amp; overwrite player stats">Recalc</button>`
-              : ''}
-            ${m.status === 'delayed'
-              ? `<button class="row-revert-lock" data-act="revert-lock"
-                   style="font-size:11px;padding:2px 7px;border-radius:4px;
-                          background:rgba(80,160,255,0.10);border:1px solid rgba(80,160,255,0.4);
-                          color:rgba(80,160,255,0.9);cursor:pointer;"
-                   title="Delete locked XIs so users can re-pick after the delay">🔓 Revert Lock</button>`
-              : ''}
-            ${(m.status === 'live' || m.status === 'in_progress')
-              ? `<button class="row-scrape" data-act="scrape"
-                   style="font-size:11px;padding:2px 7px;border-radius:4px;
-                          background:rgba(120,200,80,0.10);border:1px solid rgba(120,200,80,0.4);
-                          color:rgba(100,180,60,0.95);cursor:pointer;"
-                   title="Fetch scorecard now from scraper sources">🕷 Scrape</button>
-                 ${m.scorecard_url
-                   ? `<span style="font-size:9px;color:var(--muted);display:block;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(m.scorecard_url ?? '')}">↳ ${escapeHtml((m.scorecard_url??'').replace('https://','').split('/')[0])}</span>`
-                   : '<span style="font-size:9px;color:var(--muted);">↳ URL pending</span>'}`
-              : ''}
+            ${(() => {
+              // A match is "in play" when start_time has passed and it's not completed/delayed.
+              // Admin does NOT need to manually set status to live/in_progress.
+              const isPastStart = m.start_time && new Date(m.start_time) <= new Date();
+              const isInPlay    = isPastStart && m.status !== 'completed' && m.status !== 'delayed';
+              const isFinished  = m.status === 'completed';
+              return `
+                ${(isFinished || isInPlay) && m.external_id
+                  ? `<button class="row-finalize" data-act="finalize" title="Fetch scorecard &amp; save fantasy points">Finalize</button>
+                     <button class="row-recalc" data-act="recalc" title="Re-parse cached scorecard &amp; overwrite player stats">Recalc</button>`
+                  : ''}
+                ${m.status === 'delayed'
+                  ? `<button class="row-revert-lock" data-act="revert-lock"
+                       style="font-size:11px;padding:2px 7px;border-radius:4px;
+                              background:rgba(80,160,255,0.10);border:1px solid rgba(80,160,255,0.4);
+                              color:rgba(80,160,255,0.9);cursor:pointer;"
+                       title="Delete locked XIs so users can re-pick after the delay">🔓 Revert Lock</button>`
+                  : ''}
+                ${isInPlay
+                  ? `<button class="row-scrape" data-act="scrape"
+                       style="font-size:11px;padding:2px 7px;border-radius:4px;
+                              background:rgba(120,200,80,0.10);border:1px solid rgba(120,200,80,0.4);
+                              color:rgba(100,180,60,0.95);cursor:pointer;"
+                       title="Fetch scorecard now from scraper sources">🕷 Scrape</button>
+                     ${m.scorecard_url
+                       ? `<span style="font-size:9px;color:var(--muted);display:block;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(m.scorecard_url ?? '')}">↳ ${escapeHtml((m.scorecard_url??'').replace('https://','').split('/')[0])}</span>`
+                       : '<span style="font-size:9px;color:var(--muted);">↳ URL pending</span>'}`
+                  : ''}
+              `;
+            })()}
             <button class="row-del" data-act="del" title="Delete">×</button>
           </td>
         </tr>
@@ -7692,7 +7708,48 @@ p31,Sample Player,MI,bat,9.0,false
         toast(`Finalized ${result.match}.`);
       } catch (e) {
         const kind = classifyFinalizeError(e.message);
-        statusEl.textContent = `✗ Finalize failed [${kind}]: ${e.message}`;
+        statusEl.textContent = `✗ CricAPI finalize failed [${kind}]: ${e.message}`;
+
+        // ── Scraper fallback ─────────────────────────────────────────────────
+        // If the scraper has already written player_match_stats for this match,
+        // offer the admin the option to finalise using that data instead.
+        try {
+          const existingStats = await state.db.getPlayerStatsForMatch(matchId);
+          if (existingStats?.length) {
+            const scraperRows = existingStats.filter(s => s.source === 'scraper');
+            const anyRows     = existingStats.length;
+            const label       = scraperRows.length
+              ? `${scraperRows.length} player${scraperRows.length !== 1 ? 's' : ''} from scraper (CricketAddictor)`
+              : `${anyRows} player${anyRows !== 1 ? 's' : ''} from a previous partial run`;
+            const confirmed = window.confirm(
+              `CricAPI scorecard not available.\n\n` +
+              `Scraper data found: ${label}.\n\n` +
+              `Note: scraper data does NOT include fielding points (catches, run-outs, stumpings).\n\n` +
+              `Use this data to finalise M${state.matches.find(x => x.id === matchId)?.match_number ?? '?'}?`
+            );
+            if (confirmed) {
+              statusEl.textContent = `Using scraper data (${anyRows} players)…`;
+              // Mark completed first so the scoring pipeline treats it correctly
+              const matchObj = state.matches.find(x => x.id === matchId);
+              if (matchObj && matchObj.status !== 'completed') {
+                const upd = await state.db.updateMatch(matchId, { status: 'completed' });
+                const idx = state.matches.findIndex(x => x.id === matchId);
+                if (idx >= 0) state.matches[idx] = upd;
+              }
+              const xiSaved = await computeAndSaveXIScoresForMatch(matchId);
+              await computeAndSaveSLScoresForMatch(matchId);
+              renderMatchesAdmin();
+              renderHistory();
+              statusEl.textContent = `✓ Finalised from scraper data — ${anyRows} players, ${xiSaved} XI totals updated. Fielding points not included.`;
+              toast(`Finalised M${matchObj?.match_number ?? ''} from scraper data.`, 4000);
+              if (btn) { btn.disabled = false; btn.textContent = 'Finalize'; }
+              return;
+            }
+          }
+        } catch (fallbackErr) {
+          console.warn('[finalizeMatchById] scraper fallback check failed:', fallbackErr);
+        }
+
         toast('Finalize failed: ' + e.message, 5000);
         if (btn) { btn.disabled = false; btn.textContent = 'Finalize'; }
       }
