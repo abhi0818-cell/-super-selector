@@ -1213,6 +1213,7 @@
         <div style="display:flex; gap:8px; align-items:center; padding:0 6px 10px; flex-wrap:wrap;">
           <button id="syncMatchesBtn" class="primary">Sync from CricAPI</button>
           <button id="finalizeMatchesBtn">Finalize completed</button>
+          <button id="fixTeamCodesBtn" title="Apply saved CricAPI→DB team aliases to all matches in this tournament">⚡ Fix team codes</button>
           <input id="syncSeriesId" type="text" placeholder="Series ID (recommended)" style="font-size:12px; padding:6px 10px; width:280px;" />
           <select id="syncFilter" style="font-size:12px; padding:6px 10px;">
             <option value="remaining">Remaining only (not completed)</option>
@@ -8912,7 +8913,7 @@ p31,Sample Player,MI,bat,9.0,false
             state.matches = await state.db.listMatches(state.activeTournamentId);
             toast(`Applied ${mapping.length} alias${mapping.length !== 1 ? 'es' : ''} to existing matches.`, 4000);
             if (statusEl) statusEl.textContent = `✓ Done ${new Date().toLocaleTimeString()}`;
-            renderMatchesAdmin(); renderMatchSelector(); renderTeamsAdmin();
+            await afterTeamCodeFix();
           } catch (e) {
             toast('Failed: ' + e.message, 6000);
             if (statusEl) statusEl.textContent = '✗ ' + e.message;
@@ -8958,7 +8959,7 @@ p31,Sample Player,MI,bat,9.0,false
         state.matches = await state.db.listMatches(state.activeTournamentId);
         toast(`Fixed ${mapping.length} team code${mapping.length !== 1 ? 's' : ''}. Aliases saved for future syncs.`, 5000);
         statusEl.textContent = `✓ Applied ${new Date().toLocaleTimeString()}`;
-        renderMatchesAdmin(); renderMatchSelector(); renderTeamsAdmin();
+        await afterTeamCodeFix();
       } catch (e) {
         toast('Fix failed: ' + e.message, 6000);
         statusEl.textContent = '✗ ' + e.message;
@@ -9794,7 +9795,53 @@ p31,Sample Player,MI,bat,9.0,false
     $('#csvFile').addEventListener('change', csvFileHandler);
     $('#csvImportBtn').addEventListener('click', csvImportHandler);
     $('#csvTemplateBtn').addEventListener('click', downloadCSVTemplate);
+    /** Refresh everything on the main page after a team-code remap. */
+    async function afterTeamCodeFix() {
+      renderMatchesAdmin(); renderMatchSelector(); renderTeamsAdmin();
+      renderPool(); render();
+      // If a match is already selected, reload its saved XI now that team codes align
+      const m = activeMatch();
+      if (m && state.db) {
+        try {
+          let xi = await state.db.getUserTeamForMatch(m.id);
+          if (!xi || xi.playerIds.length !== 11) xi = await state.db.getUserMatchXI(m.id);
+          if (xi && xi.playerIds.length === 11) {
+            state.selected    = xi.playerIds.filter(pid => playerById(pid));
+            state.captain     = xi.captainId;
+            state.viceCaptain = xi.viceCaptainId;
+            state.activeSavedTeamId = xi.id;
+            state.stats       = {};
+            toast(`Loaded saved XI for Match ${m.match_number ?? '?'}.`, 3000);
+          }
+        } catch (e) { console.warn('afterTeamCodeFix: XI reload failed', e); }
+        renderPool(); render();
+      }
+    }
+
     $('#syncMatchesBtn').addEventListener('click', syncMatchesFromCricAPI);
+    $('#fixTeamCodesBtn').addEventListener('click', async () => {
+      if (!state.db) { toast('Connect to the database first.', 4000); return; }
+      if (!state.activeTournamentId) { toast('Select a tournament first.', 4000); return; }
+      const mapping = Object.entries(CRIC_TEAM_CODE_MAP)
+        .filter(([from, to]) => from !== to)
+        .map(([from, to]) => ({ from, to }));
+      if (!mapping.length) {
+        toast('No aliases defined. Go to Admin → Teams → edit aliases first.', 4000);
+        return;
+      }
+      const btn = $('#fixTeamCodesBtn');
+      btn.disabled = true; btn.textContent = 'Fixing…';
+      try {
+        await state.db.remapMatchTeams(state.activeTournamentId, mapping);
+        state.matches = await state.db.listMatches(state.activeTournamentId);
+        toast(`✓ Fixed team codes in matches (${mapping.map(r=>r.from+'→'+r.to).join(', ')}).`, 5000);
+        await afterTeamCodeFix();
+      } catch (e) {
+        toast('Fix failed: ' + e.message, 6000);
+      } finally {
+        btn.disabled = false; btn.textContent = '⚡ Fix team codes';
+      }
+    });
     $('#finalizeMatchesBtn').addEventListener('click', finalizeCompletedMatches);
     $('#saveFantasyScorecardBtn').addEventListener('click', saveFantasyScorecard);
     $('#rescoreBtn').addEventListener('click', rescoreCurrentMatch);
