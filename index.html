@@ -1132,6 +1132,23 @@
             <span id="teamsMismatchStatus" style="color:var(--muted); font-size:11px;"></span>
           </div>
         </div>
+        <!-- CricAPI team code alias editor -->
+        <div id="teamAliasPanel" style="margin:0 8px 10px; padding:10px 14px; background:var(--panel-2); border:1px solid var(--border); border-radius:8px; font-size:12px;">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+            <span style="font-weight:700; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; flex:1;">CricAPI → Internal code aliases</span>
+            <button id="toggleAliasPanel" style="font-size:11px; color:var(--muted); background:none; border:none; cursor:pointer; padding:0;">▾ show</button>
+          </div>
+          <div id="aliasPanelBody" style="display:none;">
+            <div style="color:var(--muted); font-size:11px; margin-bottom:8px;">Aliases are applied at sync time so CricAPI codes are translated before being written to the DB. Saved in browser storage.</div>
+            <div id="aliasList" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              <input id="aliasFrom" type="text" placeholder="CricAPI code (e.g. IND-W)" style="font-size:12px; padding:4px 8px; width:140px; text-transform:uppercase;" />
+              <span style="color:var(--muted);">→</span>
+              <input id="aliasTo" type="text" placeholder="Internal code (e.g. INDW)" style="font-size:12px; padding:4px 8px; width:140px; text-transform:uppercase;" />
+              <button id="addAliasBtn" class="ctrl-btn ctrl-btn-admin" style="font-size:12px;">+ Add</button>
+            </div>
+          </div>
+        </div>
         <table class="admin-table" id="adminTeamsTable">
           <thead>
             <tr>
@@ -7544,8 +7561,35 @@ p31,Sample Player,MI,bat,9.0,false
     const CRIC_TEAM_CODE_MAP = {
       'RCBW': 'RCB',   // Royal Challengers Bengaluru (men's franchise)
     };
+    // Load any aliases previously saved via "Fix Match Teams" or the alias editor.
+    // This ensures future CricAPI syncs translate codes correctly at ingest time.
+    const CRIC_ALIAS_LS = 'cricTeamAliases';
+    try {
+      const saved = JSON.parse(localStorage.getItem(CRIC_ALIAS_LS) || '{}');
+      Object.assign(CRIC_TEAM_CODE_MAP, saved);
+    } catch (e) {}
+
     function aliasCricTeamCode(code) {
       return code ? (CRIC_TEAM_CODE_MAP[code] ?? code) : code;
+    }
+
+    /** Persist one or more aliases and apply them to the live map immediately. */
+    function saveAliases(newEntries) {
+      Object.assign(CRIC_TEAM_CODE_MAP, newEntries);
+      try {
+        const existing = JSON.parse(localStorage.getItem(CRIC_ALIAS_LS) || '{}');
+        localStorage.setItem(CRIC_ALIAS_LS, JSON.stringify({ ...existing, ...newEntries }));
+      } catch (e) {}
+    }
+
+    /** Remove an alias from the live map and from localStorage. */
+    function removeAlias(key) {
+      delete CRIC_TEAM_CODE_MAP[key];
+      try {
+        const existing = JSON.parse(localStorage.getItem(CRIC_ALIAS_LS) || '{}');
+        delete existing[key];
+        localStorage.setItem(CRIC_ALIAS_LS, JSON.stringify(existing));
+      } catch (e) {}
     }
 
     function cricStatusToOurs(item) {
@@ -8758,6 +8802,9 @@ p31,Sample Player,MI,bat,9.0,false
       });
       $('#adminCount').textContent = `${teams.length} team${teams.length !== 1 ? 's' : ''} · ${activeTournament?.name ?? 'all'}`;
 
+      // ── Alias panel ──────────────────────────────────────────────────────
+      renderAliasPanel();
+
       // ── Mismatch detection ────────────────────────────────────────────────
       // Teams that appear in match schedule but have 0 players are likely
       // freshly synced from CricAPI with a different code format (e.g. "IND-W"
@@ -8783,6 +8830,65 @@ p31,Sample Player,MI,bat,9.0,false
         newBtn.addEventListener('click', () => fixMatchTeamsHandler(suggested));
       } else {
         banner.style.display = 'none';
+      }
+    }
+
+    function renderAliasPanel() {
+      // Read current aliases from the live map (minus the hardcoded default key)
+      const savedRaw = {};
+      try { Object.assign(savedRaw, JSON.parse(localStorage.getItem(CRIC_ALIAS_LS) || '{}')); } catch (e) {}
+      // Also include hardcoded defaults that aren't in localStorage
+      const allAliases = { ...CRIC_TEAM_CODE_MAP };
+
+      const listEl = $('#aliasList');
+      if (!listEl) return;
+      listEl.innerHTML = Object.keys(allAliases).length === 0
+        ? `<span style="color:var(--muted); font-size:11px;">No aliases saved yet.</span>`
+        : Object.entries(allAliases).map(([from, to]) =>
+            `<span style="display:inline-flex; align-items:center; gap:4px; background:var(--panel); border:1px solid var(--border); border-radius:20px; padding:3px 8px; font-size:11px;">
+              <span style="color:var(--muted);">${escapeHtml(from)}</span>
+              <span style="color:var(--accent);">→</span>
+              <span style="color:var(--text); font-weight:600;">${escapeHtml(to)}</span>
+              <button data-alias-del="${escapeHtml(from)}" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:13px;padding:0 0 0 2px;line-height:1;" title="Remove alias">×</button>
+            </span>`
+          ).join('');
+
+      // Wire delete buttons (clone to avoid duplicate listeners)
+      listEl.querySelectorAll('[data-alias-del]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          removeAlias(btn.dataset.aliasDel);
+          renderAliasPanel();
+          toast(`Alias "${btn.dataset.aliasDel}" removed.`, 2500);
+        });
+      });
+
+      // Toggle show/hide
+      const toggleBtn = $('#toggleAliasPanel');
+      const body = $('#aliasPanelBody');
+      if (toggleBtn && body) {
+        const newToggle = toggleBtn.cloneNode(true);
+        toggleBtn.parentNode.replaceChild(newToggle, toggleBtn);
+        newToggle.addEventListener('click', () => {
+          const open = body.style.display !== 'none';
+          body.style.display = open ? 'none' : 'block';
+          newToggle.textContent = open ? '▾ show' : '▴ hide';
+        });
+      }
+
+      // Add alias button
+      const addBtn = $('#addAliasBtn');
+      if (addBtn) {
+        const newAdd = addBtn.cloneNode(true);
+        addBtn.parentNode.replaceChild(newAdd, addBtn);
+        newAdd.addEventListener('click', () => {
+          const fromVal = ($('#aliasFrom').value || '').trim().toUpperCase();
+          const toVal   = ($('#aliasTo').value || '').trim().toUpperCase();
+          if (!fromVal || !toVal) { toast('Both codes are required.'); return; }
+          saveAliases({ [fromVal]: toVal });
+          $('#aliasFrom').value = ''; $('#aliasTo').value = '';
+          renderAliasPanel();
+          toast(`Alias ${fromVal} → ${toVal} saved.`, 2500);
+        });
       }
     }
 
@@ -8813,9 +8919,12 @@ p31,Sample Player,MI,bat,9.0,false
       btn.disabled = true; btn.textContent = 'Fixing…'; statusEl.textContent = '';
       try {
         await state.db.remapMatchTeams(state.activeTournamentId, mapping);
+        // Persist aliases so future CricAPI syncs translate codes correctly at ingest time
+        const newEntries = Object.fromEntries(mapping.map(r => [r.from, r.to]));
+        saveAliases(newEntries);
         // Refresh local match data so home/away IDs are updated
         state.matches = await state.db.listMatches(state.activeTournamentId);
-        toast(`Fixed ${mapping.length} team code${mapping.length !== 1 ? 's' : ''} in matches.`, 4000);
+        toast(`Fixed ${mapping.length} team code${mapping.length !== 1 ? 's' : ''}. Aliases saved for future syncs.`, 5000);
         statusEl.textContent = `✓ Applied ${new Date().toLocaleTimeString()}`;
         renderMatchesAdmin(); renderMatchSelector(); renderTeamsAdmin();
       } catch (e) {
