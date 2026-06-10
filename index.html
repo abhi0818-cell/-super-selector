@@ -37,7 +37,15 @@
     .brand .api-pill { font-size: 10px; padding: 2px 8px; border-radius: 12px; background: var(--panel-2); color: var(--muted); margin-left: 6px; font-weight: 500; letter-spacing: 0.3px; cursor: default; }
     .brand .api-pill.warn { background: rgba(166,124,0,0.15); color: var(--accent-2); }
     .brand .api-pill.danger { background: rgba(192,57,43,0.12); color: var(--bad); }
-    .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    /* Uniform header action buttons */
+    .ctrl-btn { font-size: 12px !important; padding: 5px 11px !important; height: 28px; box-sizing: border-box; display: inline-flex; align-items: center; gap: 4px; }
+    .ctrl-btn-admin { background: rgba(201,168,76,0.1) !important; border-color: rgba(201,168,76,0.4) !important; color: var(--accent-2) !important; }
+    .ctrl-btn-admin:hover { background: rgba(201,168,76,0.18) !important; }
+    .ctrl-btn-ghost { border-color: transparent !important; color: var(--muted) !important; background: transparent !important; }
+    .ctrl-btn-ghost:hover { border-color: var(--border) !important; color: var(--text) !important; background: var(--panel-2) !important; }
+    /* Thin vertical divider between header groups */
+    .hdr-divider { display: inline-block; width: 1px; height: 18px; background: var(--border); margin: 0 2px; }
     select, input, button {
       background: var(--panel); color: var(--text); border: 1px solid var(--border);
       border-radius: 8px; padding: 8px 12px; font-size: 14px; font-family: inherit;
@@ -552,7 +560,7 @@
       color: #1C1F26; font-weight: 700; font-size: 11px;
       display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
-    #signOutBtn { font-size: 11px; padding: 4px 10px; }
+    /* signOutBtn sizing handled by .ctrl-btn-ghost */
 
     /* ═══════════════════════════════════════════════════════════════
        MOBILE — user-facing only (admin is desktop-only)
@@ -565,8 +573,8 @@
       /* ── Header ─────────────────────────────────────────────────── */
       header { padding: 10px 14px; gap: 8px; flex-wrap: wrap; }
       .brand { font-size: 15px; gap: 7px; }
-      /* Hide dev/internal pills and admin button entirely */
-      #dbPill, #apiPill, #simBtn, #adminBtn { display: none !important; }
+      /* Hide dev/internal pills, dividers and admin button on small screens */
+      #dbPill, #apiPill, #simBtn, #adminBtn, .hdr-divider { display: none !important; }
       .controls { gap: 6px; flex-wrap: wrap; }
       /* Make the tournament picker readable */
       #headerTournamentWrap select { max-width: 160px; font-size: 13px; }
@@ -803,29 +811,31 @@
   <header>
     <div class="brand">
       <span class="dot"></span> Super Selector
-      <span id="dbPill" class="db-pill">local mode</span>
-      <span id="apiPill" class="api-pill" title="CricAPI calls made today (2 keys × 10)">API 0 / 20</span>
     </div>
     <div class="controls">
-      <span id="formatPill" class="db-pill" title="Scoring format — set by the active tournament">T20</span>
       <!-- Tournament switcher — shown when ≥1 tournament is loaded -->
       <div id="headerTournamentWrap" style="display:none; align-items:center; gap:6px;">
-        <span style="font-size:11px; color:var(--muted);">🏆</span>
         <select id="headerTournamentPicker"
           style="font-size:12px; padding:4px 8px; background:var(--panel-2);
                  border:1px solid var(--border); border-radius:8px; color:var(--text);
-                 cursor:pointer; max-width:200px;">
+                 cursor:pointer; max-width:200px; height:28px; box-sizing:border-box;">
         </select>
       </div>
+      <span id="formatPill" class="db-pill" title="Scoring format — set by the active tournament">T20</span>
+      <!-- Admin-only status pills — hidden for regular users -->
+      <span id="dbPill" class="db-pill" style="display:none;">local mode</span>
+      <span id="apiPill" class="api-pill" style="display:none;" title="CricAPI calls made today (2 keys × 10)">API 0 / 20</span>
+      <span class="hdr-divider"></span>
       <button id="simBtn" class="primary" style="display:none;">Start mock match</button>
-      <button id="lbBtn" style="display:none" title="Leaderboard">🏆 Leaderboard</button>
-      <button id="rulesBtn" style="display:none" title="Rules">📖 Rules</button>
-      <button id="adminBtn" title="Tournament setup, players, schedule" style="display:none">Admin</button>
+      <button id="lbBtn" class="ctrl-btn" style="display:none;" title="Leaderboard">🏆 Leaderboard</button>
+      <button id="rulesBtn" class="ctrl-btn" style="display:none;" title="Rules">📖 Rules</button>
+      <button id="adminBtn" class="ctrl-btn ctrl-btn-admin" title="Tournament setup, players, schedule" style="display:none;">⚙️ Admin</button>
+      <span class="hdr-divider"></span>
       <span id="userPill" class="user-pill" style="display:none">
         <span id="userAvatar" class="avatar">?</span>
         <span id="userName">…</span>
       </span>
-      <button id="signOutBtn" style="display:none">Sign out</button>
+      <button id="signOutBtn" class="ctrl-btn ctrl-btn-ghost" style="display:none;">Sign out</button>
     </div>
   </header>
 
@@ -2274,6 +2284,9 @@ p31,Sample Player,MI,bat,9.0,false
       const lbBtn    = $('#lbBtn');
       const rulesBtn = $('#rulesBtn');
 
+      const isAdmin = user?.email === ADMIN_EMAIL;
+      const dbPillEl  = $('#dbPill');
+      const apiPillEl = $('#apiPill');
       if (user) {
         const displayName   = user.user_metadata?.full_name || user.email || 'User';
         const initials      = displayName.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('');
@@ -2283,7 +2296,10 @@ p31,Sample Player,MI,bat,9.0,false
         signOut.style.display = '';
         lbBtn.style.display    = '';
         rulesBtn.style.display = '';
-        adminBtn.style.display = user.email === ADMIN_EMAIL ? '' : 'none';
+        adminBtn.style.display = isAdmin ? '' : 'none';
+        // DB & API pills — admin only
+        if (dbPillEl)  dbPillEl.style.display  = isAdmin ? '' : 'none';
+        if (apiPillEl) apiPillEl.style.display  = isAdmin ? '' : 'none';
       } else {
         pill.style.display     = 'none';
         signOut.style.display  = 'none';
@@ -2291,6 +2307,9 @@ p31,Sample Player,MI,bat,9.0,false
         rulesBtn.style.display = 'none';
         // If auth is bypassed, still show admin button so the app is usable
         adminBtn.style.display = !REQUIRE_AUTH ? '' : 'none';
+        // Without auth the app is in dev/local mode — show status pills
+        if (dbPillEl)  dbPillEl.style.display  = !REQUIRE_AUTH ? '' : 'none';
+        if (apiPillEl) apiPillEl.style.display  = !REQUIRE_AUTH ? '' : 'none';
       }
     }
 
