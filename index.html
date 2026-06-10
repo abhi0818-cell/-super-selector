@@ -57,8 +57,36 @@
     button.danger { background: transparent; border-color: var(--bad); color: var(--bad); }
     button:disabled { opacity: 0.45; cursor: not-allowed; }
 
-    main { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; padding: 16px 24px 32px; max-width: 1400px; margin: 0 auto; }
-    @media (max-width: 1024px) { main { grid-template-columns: 1fr; } }
+    main { display: grid; grid-template-columns: 1fr; gap: 16px; padding: 16px 24px 32px; max-width: 1400px; margin: 0 auto; }
+    main.pool-open { grid-template-columns: 1.4fr 1fr; }
+    @media (max-width: 1024px) { main { grid-template-columns: 1fr !important; } }
+
+    /* ── Page-level tabs (Contest / My Team / Season) ── */
+    .page-tabs { display: flex; border-bottom: 1px solid var(--border); background: var(--panel); padding: 0 24px; position: sticky; top: 0; z-index: 10; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+    .p-tab { padding: 11px 22px; font-size: 13px; color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; transition: color 0.15s; user-select: none; }
+    .p-tab:hover { color: var(--text); }
+    .p-tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
+
+    /* Contest tab panel */
+    #pageTabContest { max-width: 1400px; margin: 0 auto; padding: 20px 24px 32px; }
+    .contest-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .contest-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; }
+    .contest-card:hover { border-color: var(--accent); }
+    .contest-card.active { border: 2px solid var(--accent); background: rgba(201,168,76,0.07); }
+    .contest-card-name { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+    .contest-card-meta { font-size: 12px; color: var(--muted); }
+
+    /* Season tab panel */
+    #pageTabSeason { max-width: 1400px; margin: 0 auto; padding: 20px 24px 32px; }
+    .season-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+    @media (max-width: 800px) { .season-metrics { grid-template-columns: 1fr 1fr; } }
+    .season-metric { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+    .season-metric-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .season-metric-value { font-size: 24px; font-weight: 600; color: var(--text); line-height: 1; }
+    .season-metric-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+    /* Pool toggle button */
+    #editTeamBtn { font-size: 12px; padding: 5px 12px; border-radius: 8px; }
 
     .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); }
     .panel h2 { margin: 0; padding: 14px 16px; border-bottom: 1px solid var(--border); font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
@@ -836,9 +864,36 @@
     </div>
   </header>
 
-  <main>
+  <!-- ══ Page-level tabs ══ -->
+  <nav class="page-tabs" id="pageTabs" style="display:none;">
+    <span class="p-tab" data-ptab="contest">🏆 Contest</span>
+    <span class="p-tab active" data-ptab="team">My Team</span>
+    <span class="p-tab" data-ptab="season">Season</span>
+  </nav>
+
+  <!-- ══ Contest tab panel ══ -->
+  <div id="pageTabContest" style="display:none;">
+    <div style="font-size:12px; color:var(--muted); margin-bottom:12px;">Select a contest to view its leaderboard</div>
+    <div class="contest-cards" id="contestCardGrid">
+      <div class="contest-card" style="opacity:0.5; cursor:default;">
+        <div class="contest-card-name">No contests loaded</div>
+        <div class="contest-card-meta">Select a tournament first</div>
+      </div>
+    </div>
+    <!-- Leaderboard section (reuses existing lb modal content inline) -->
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+      <div style="font-size:13px; font-weight:600; color:var(--text);" id="inlineContestName">—</div>
+      <button class="ctrl-btn" id="openFullLbBtn" style="font-size:11px; padding:4px 10px;">⬆ Full view</button>
+    </div>
+    <div id="inlineLbPlaceholder" style="font-size:13px; color:var(--muted); padding:20px 0;">
+      Pick a contest above to see its leaderboard.
+    </div>
+    <div id="inlineLbContent" style="display:none;"></div>
+  </div>
+
+  <main id="pageTabTeam">
     <!-- LEFT: Player picker -->
-    <section class="panel">
+    <section class="panel" id="poolPanel" style="display:none;">
       <h2>Player Pool</h2>
       <div class="filters">
         <input id="search" type="text" placeholder="Search players or teams…" />
@@ -865,6 +920,7 @@
           <span class="dot"></span>
           <span id="countdownText">—</span>
         </span>
+        <button id="editTeamBtn" class="ctrl-btn" title="Show player pool to edit your team" style="display:none; margin-right:14px;">✏️ Edit team</button>
       </h2>
 
       <!-- ═══ DAILY PANEL (existing) ═══ -->
@@ -1005,7 +1061,38 @@
       </div><!-- end slPanel -->
 
     </section>
-  </main>
+  </main><!-- end #pageTabTeam -->
+
+  <!-- ══ Season tab panel ══ -->
+  <div id="pageTabSeason" style="display:none;">
+    <div class="season-metrics" id="seasonMetrics">
+      <div class="season-metric">
+        <div class="season-metric-label">Total points</div>
+        <div class="season-metric-value" id="seasonTotalPts">—</div>
+        <div class="season-metric-sub" id="seasonMatchCount"></div>
+      </div>
+      <div class="season-metric">
+        <div class="season-metric-label">Current rank</div>
+        <div class="season-metric-value" id="seasonRank">—</div>
+        <div class="season-metric-sub" id="seasonRankOf"></div>
+      </div>
+      <div class="season-metric">
+        <div class="season-metric-label">Transfers used</div>
+        <div class="season-metric-value" id="seasonXfers">—</div>
+        <div class="season-metric-sub" id="seasonXferPenalty"></div>
+      </div>
+      <div class="season-metric">
+        <div class="season-metric-label">Best match</div>
+        <div class="season-metric-value" id="seasonBestPts">—</div>
+        <div class="season-metric-sub" id="seasonBestMatch"></div>
+      </div>
+    </div>
+    <!-- Match history (reuses existing SL season view) -->
+    <div style="font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px;">Match history</div>
+    <div id="seasonMatchHistory">
+      <div style="font-size:13px; color:var(--muted); padding:20px 0;">No match history yet.</div>
+    </div>
+  </div>
 
   <!-- Player admin modal -->
   <div id="adminModal" class="modal-backdrop">
@@ -2312,6 +2399,8 @@ p31,Sample Player,MI,bat,9.0,false
       const adminBtn = $('#adminBtn');
       const lbBtn    = $('#lbBtn');
       const rulesBtn = $('#rulesBtn');
+      const pageTabs = $('#pageTabs');
+      const editTeamBtn = $('#editTeamBtn');
 
       const isAdmin = user?.email === ADMIN_EMAIL;
       if (user) {
@@ -2324,12 +2413,16 @@ p31,Sample Player,MI,bat,9.0,false
         lbBtn.style.display    = '';
         rulesBtn.style.display = '';
         adminBtn.style.display = isAdmin ? '' : 'none';
+        pageTabs.style.display = 'flex';
+        editTeamBtn.style.display = '';
       } else {
         pill.style.display     = 'none';
         signOut.style.display  = 'none';
         lbBtn.style.display    = 'none';
         rulesBtn.style.display = 'none';
         adminBtn.style.display = !REQUIRE_AUTH ? '' : 'none';
+        pageTabs.style.display = !REQUIRE_AUTH ? 'flex' : 'none';
+        editTeamBtn.style.display = !REQUIRE_AUTH ? '' : 'none';
       }
     }
 
@@ -9634,6 +9727,187 @@ p31,Sample Player,MI,bat,9.0,false
       lbState.matchId = e.target.value;
       renderLeaderboard();
     });
+
+    // ─── Page-level tabs (Contest / My Team / Season) ────────────────────────
+    let activePageTab = 'team'; // default
+
+    function switchPageTab(ptab) {
+      activePageTab = ptab;
+      document.querySelectorAll('.p-tab').forEach(t =>
+        t.classList.toggle('active', t.dataset.ptab === ptab));
+      $('#pageTabContest').style.display = ptab === 'contest' ? '' : 'none';
+      $('#pageTabTeam').style.display    = ptab === 'team'    ? 'grid' : 'none';
+      $('#pageTabSeason').style.display  = ptab === 'season'  ? '' : 'none';
+      if (ptab === 'contest') renderPageContestTab();
+      if (ptab === 'season')  renderPageSeasonTab();
+    }
+
+    document.querySelectorAll('.p-tab').forEach(t => {
+      t.addEventListener('click', () => switchPageTab(t.dataset.ptab));
+    });
+
+    // ─── Pool toggle (Edit team button) ──────────────────────────────────────
+    function setPoolOpen(open) {
+      const pool = $('#poolPanel');
+      const btn  = $('#editTeamBtn');
+      const main = $('#pageTabTeam');
+      pool.style.display = open ? '' : 'none';
+      main.classList.toggle('pool-open', open);
+      btn.textContent = open ? '✕ Hide pool' : '✏️ Edit team';
+    }
+
+    $('#editTeamBtn').addEventListener('click', () => {
+      const isOpen = $('#poolPanel').style.display !== 'none';
+      setPoolOpen(!isOpen);
+    });
+
+    // "Full view" button in Contest tab → opens the existing leaderboard modal
+    $('#openFullLbBtn').addEventListener('click', openLeaderboard);
+
+    // ─── Contest tab renderer ─────────────────────────────────────────────────
+    function renderPageContestTab() {
+      const contests = state.sl?.contests || [];
+      const grid = $('#contestCardGrid');
+      if (!contests.length) {
+        grid.innerHTML = `<div class="contest-card" style="opacity:0.5; cursor:default;">
+          <div class="contest-card-name">No contests yet</div>
+          <div class="contest-card-meta">No contests are set up for this tournament</div>
+        </div>`;
+        $('#inlineLbPlaceholder').style.display = '';
+        $('#inlineLbContent').style.display = 'none';
+        return;
+      }
+      grid.innerHTML = contests.map(c => {
+        const type = c.contest_type === 'daily' ? 'Daily XI' : (c.is_private ? `🔒 ${escapeHtml(c.name)}` : escapeHtml(c.name || 'Season Long'));
+        const isActive = lbState.tab === c.id || (lbState.tab === 'daily' && c.contest_type === 'daily');
+        return `<div class="contest-card${isActive ? ' active' : ''}" data-contestid="${c.id}" data-contesttype="${c.contest_type}">
+          <div class="contest-card-name">${type}</div>
+          <div class="contest-card-meta">${c.contest_type === 'daily' ? 'Per-match fresh pick' : 'Season-long squad'}</div>
+        </div>`;
+      }).join('');
+
+      grid.querySelectorAll('.contest-card').forEach(card => {
+        card.addEventListener('click', () => {
+          grid.querySelectorAll('.contest-card').forEach(c => c.classList.remove('active'));
+          card.classList.add('active');
+          const cid = card.dataset.contestid;
+          const ctype = card.dataset.contesttype;
+          lbState.tab = ctype === 'daily' ? 'daily' : cid;
+          $('#inlineContestName').textContent = card.querySelector('.contest-card-name').textContent;
+          renderInlineLeaderboard(cid, ctype);
+        });
+      });
+
+      // Auto-select first if none active
+      const firstCard = grid.querySelector('.contest-card');
+      if (firstCard && !grid.querySelector('.contest-card.active')) firstCard.click();
+    }
+
+    async function renderInlineLeaderboard(contestId, contestType) {
+      const placeholder = $('#inlineLbPlaceholder');
+      const content = $('#inlineLbContent');
+      placeholder.style.display = 'none';
+      content.style.display = '';
+      content.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:16px 0;">Loading leaderboard…</div>';
+      try {
+        if (!state.db) throw new Error('Not connected');
+        let rows;
+        if (contestType === 'season_long') {
+          rows = await state.db.getLeaderboardSL(contestId);
+        } else {
+          // Daily leaderboard — reuse existing lb rendering
+          content.innerHTML = '<div style="color:var(--muted);font-size:13px;">Use the full leaderboard view for daily contests.</div>';
+          return;
+        }
+        if (!rows?.length) {
+          content.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:16px 0;">No scores yet.</div>';
+          return;
+        }
+        content.innerHTML = `<div style="display:grid;grid-template-columns:32px 1fr 80px 60px;gap:0;background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+          <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">#</div>
+          <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">Squad</div>
+          <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Points</div>
+          <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Xfers</div>
+          ${rows.map((r, i) => {
+            const isMe = r.squad_id === state.sl?.squad?.id;
+            const bg = isMe ? 'background:rgba(201,168,76,0.12);' : '';
+            return `<div style="padding:8px 10px;font-size:12px;${bg}border-bottom:1px solid var(--border);">${i+1}</div>
+              <div style="padding:8px 10px;font-size:12px;font-weight:${isMe?'600':'400'};${bg}border-bottom:1px solid var(--border);">${escapeHtml(r.name || 'Squad')}</div>
+              <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${r.total_points ?? '—'}</div>
+              <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${r.transfer_count ?? 0}</div>`;
+          }).join('')}
+        </div>`;
+      } catch(e) {
+        content.innerHTML = `<div style="color:var(--muted);font-size:13px;">${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    // ─── Season tab renderer ──────────────────────────────────────────────────
+    async function renderPageSeasonTab() {
+      const historyEl = $('#seasonMatchHistory');
+      historyEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:16px 0;">Loading…</div>';
+
+      // Ensure season data is loaded
+      if (!state.sl?.seasonData && state.db && state.sl?.squad?.id) {
+        try {
+          state.sl.seasonData = await state.db.getSquadSeason(state.sl.squad.id);
+        } catch(e) {
+          historyEl.innerHTML = `<div style="color:var(--muted);font-size:13px;">Failed to load: ${escapeHtml(e.message)}</div>`;
+          return;
+        }
+      }
+
+      const data = state.sl?.seasonData;
+      if (!data) {
+        historyEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:16px 0;">No season data yet. Join a Season Long contest to see history here.</div>';
+        return;
+      }
+
+      // Populate metrics
+      $('#seasonTotalPts').textContent = (data.seasonTotal ?? 0) + ' pts';
+      $('#seasonMatchCount').textContent = `across ${data.matches?.length ?? 0} match${data.matches?.length !== 1 ? 'es' : ''}`;
+      const totalXfers = (data.transfers || []).length;
+      const totalPenalty = (data.transfers || []).reduce((s, t) => s + Number(t.points_deducted ?? 0), 0);
+      $('#seasonXfers').textContent = totalXfers;
+      $('#seasonXferPenalty').textContent = totalPenalty ? `−${totalPenalty} pts penalty` : 'no penalties';
+
+      if (!data.matches?.length) {
+        historyEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:16px 0;">No matches scored yet.</div>';
+        return;
+      }
+
+      // Find best match
+      const penMap = {};
+      (data.transfers || []).forEach(t => {
+        penMap[t.match_id] = (penMap[t.match_id] || 0) + Number(t.points_deducted ?? 0);
+      });
+      let bestPts = 0, bestMatchLabel = '';
+      let running = 0;
+      const rows = data.matches.map((m, i) => {
+        const pen = penMap[m.match_id] || 0;
+        const net = +(((m.xi_total ?? 0) - pen).toFixed(1));
+        running = +(running + net).toFixed(1);
+        const matchNum = m.match_number ?? (i + 1);
+        const matchLabel = m.home_team_id && m.away_team_id
+          ? `${m.home_team_id} vs ${m.away_team_id}` : `Match ${matchNum}`;
+        if (net > bestPts) { bestPts = net; bestMatchLabel = `M${matchNum}`; }
+        const xferCount = (data.transfers || []).filter(t => t.match_id === m.match_id).length;
+        const xferHtml = xferCount ? `<span style="font-size:10px;color:var(--muted);"> ×${xferCount}</span>` : '';
+        const penHtml = pen > 0 ? `<span style="font-size:10px;color:var(--bad);"> −${pen}</span>` : '';
+        return `<div style="display:grid;grid-template-columns:40px 1fr 80px 60px;align-items:center;
+            padding:10px 14px;background:var(--panel);border:1px solid var(--border);
+            border-radius:8px;margin-bottom:6px;font-size:12px;gap:4px;">
+          <div style="color:var(--muted);font-size:11px;">M${matchNum}</div>
+          <div style="color:var(--text);">${escapeHtml(matchLabel)}</div>
+          <div style="text-align:right;font-weight:600;color:var(--text);">${net} pts${penHtml}${xferHtml}</div>
+          <div style="text-align:right;color:var(--muted);font-size:11px;">${running} tot</div>
+        </div>`;
+      });
+
+      $('#seasonBestPts').textContent = bestPts + ' pts';
+      $('#seasonBestMatch').textContent = bestMatchLabel;
+      historyEl.innerHTML = rows.join('');
+    }
     // ── Login tab switcher ────────────────────────────────────────────────
     $('#tabSignIn').addEventListener('click', () => switchLoginTab('signin'));
     $('#tabSignUp').addEventListener('click', () => switchLoginTab('signup'));
