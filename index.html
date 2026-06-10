@@ -574,7 +574,7 @@
       header { padding: 10px 14px; gap: 8px; flex-wrap: wrap; }
       .brand { font-size: 15px; gap: 7px; }
       /* Hide dev/internal pills, dividers and admin button on small screens */
-      #dbPill, #apiPill, #simBtn, #adminBtn, .hdr-divider { display: none !important; }
+      #simBtn, #adminBtn, .hdr-divider { display: none !important; }
       .controls { gap: 6px; flex-wrap: wrap; }
       /* Make the tournament picker readable */
       #headerTournamentWrap select { max-width: 160px; font-size: 13px; }
@@ -822,9 +822,6 @@
         </select>
       </div>
       <span id="formatPill" class="db-pill" title="Scoring format — set by the active tournament">T20</span>
-      <!-- Admin-only status pills — hidden for regular users -->
-      <span id="dbPill" class="db-pill" style="display:none;">local mode</span>
-      <span id="apiPill" class="api-pill" style="display:none;" title="CricAPI calls made today (2 keys × 10)">API 0 / 20</span>
       <span class="hdr-divider"></span>
       <button id="simBtn" class="primary" style="display:none;">Start mock match</button>
       <button id="lbBtn" class="ctrl-btn" style="display:none;" title="Leaderboard">🏆 Leaderboard</button>
@@ -1015,6 +1012,10 @@
     <div class="modal">
       <header>
         <h2 id="adminTitle">Manage Players</h2>
+        <div style="display:flex; align-items:center; gap:8px; margin-left:auto; margin-right:12px;">
+          <span id="dbPill" class="db-pill">local mode</span>
+          <span id="apiPill" class="api-pill" title="CricAPI calls made today (2 keys × 10)">API 0 / 20</span>
+        </div>
         <button class="modal-close" id="adminCloseBtn" title="Close">×</button>
       </header>
       <div class="admin-tabs">
@@ -2313,8 +2314,6 @@ p31,Sample Player,MI,bat,9.0,false
       const rulesBtn = $('#rulesBtn');
 
       const isAdmin = user?.email === ADMIN_EMAIL;
-      const dbPillEl  = $('#dbPill');
-      const apiPillEl = $('#apiPill');
       if (user) {
         const displayName   = user.user_metadata?.full_name || user.email || 'User';
         const initials      = displayName.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('');
@@ -2325,19 +2324,12 @@ p31,Sample Player,MI,bat,9.0,false
         lbBtn.style.display    = '';
         rulesBtn.style.display = '';
         adminBtn.style.display = isAdmin ? '' : 'none';
-        // DB & API pills — admin only
-        if (dbPillEl)  dbPillEl.style.display  = isAdmin ? '' : 'none';
-        if (apiPillEl) apiPillEl.style.display  = isAdmin ? '' : 'none';
       } else {
         pill.style.display     = 'none';
         signOut.style.display  = 'none';
         lbBtn.style.display    = 'none';
         rulesBtn.style.display = 'none';
-        // If auth is bypassed, still show admin button so the app is usable
         adminBtn.style.display = !REQUIRE_AUTH ? '' : 'none';
-        // Without auth the app is in dev/local mode — show status pills
-        if (dbPillEl)  dbPillEl.style.display  = !REQUIRE_AUTH ? '' : 'none';
-        if (apiPillEl) apiPillEl.style.display  = !REQUIRE_AUTH ? '' : 'none';
       }
     }
 
