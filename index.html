@@ -3582,8 +3582,13 @@ p31,Sample Player,MI,bat,9.0,false
       $('#slXiStatBudget').className = 'stat ' + (budgetLeft < 0 ? 'bad' : xi.length === 11 ? 'ok' : '');
       $('#slXiStatCap .value').textContent   = capName;
       $('#slXiStatVc .value').textContent    = vcName;
-      $('#slXiStatOS .value').textContent = osCount + ' / ' + osCap;
-      $('#slXiStatOS').className = 'stat ' + (osCount > osCap ? 'bad' : '');
+      const showSlOsStat = osCap > 0 && osCap < 11;
+      const slOsEl = $('#slXiStatOS');
+      if (slOsEl) slOsEl.style.display = showSlOsStat ? '' : 'none';
+      if (showSlOsStat) {
+        $('#slXiStatOS .value').textContent = osCount + ' / ' + osCap;
+        $('#slXiStatOS').className = 'stat ' + (osCount > osCap ? 'bad' : '');
+      }
 
       // ── Transfers stat box — phase-aware ─────────────────────────────────
       $('#slXiStatXfers .label').textContent = isPlayoff ? 'Playoff Xfers' : 'Transfers';
@@ -5239,8 +5244,13 @@ p31,Sample Player,MI,bat,9.0,false
 
       const overseasCount = sel.filter(p => p.overseas).length;
       const overseasCap = getOverseasCap();
-      $('#statOverseas .value').textContent = `${overseasCount}/${overseasCap}`;
-      $('#statOverseas').classList.toggle('bad', overseasCount > overseasCap);
+      const showOsStat = overseasCap > 0 && overseasCap < 11;
+      const overseasEl = $('#statOverseas');
+      if (overseasEl) overseasEl.style.display = showOsStat ? '' : 'none';
+      if (showOsStat) {
+        $('#statOverseas .value').textContent = `${overseasCount}/${overseasCap}`;
+        $('#statOverseas').classList.toggle('bad', overseasCount > overseasCap);
+      }
 
       renderMessages(sel, counts, used, maxTeam, overseasCount, overseasCap);
     }
