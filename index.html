@@ -8893,13 +8893,15 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     /** Fuzzy match an orphan match team code to the nearest player team code.
-     *  Strategy: normalise both sides by stripping "-W" / "-M" suffixes and
-     *  non-alphanumeric chars, then look for an exact or prefix match.
+     *  Strategy: normalise both sides by stripping optional hyphen/underscore
+     *  followed by a W or M gender suffix (handles both "IND-W" and "INDW"),
+     *  then look for an exact or prefix match.
      */
     function suggestTeamRemap(orphanId, playerTeamIds) {
-      const norm = s => s.replace(/[-_](w|m)$/i, '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+      // Strip optional separator + W/M gender suffix, then strip all non-alphanumeric
+      const norm = s => s.replace(/[-_]?(w|m)$/i, '').replace(/[^a-z0-9]/gi, '').toLowerCase();
       const normO = norm(orphanId);
-      // 1) Exact match after normalisation
+      // 1) Exact match after normalisation (e.g. "INDW" and "IND-W" both → "ind")
       for (const pid of playerTeamIds) {
         if (norm(pid) === normO) return pid;
       }
