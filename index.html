@@ -1134,22 +1134,20 @@
         </div>
         <!-- CricAPI team code alias editor -->
         <div id="teamAliasPanel" style="margin:0 8px 10px; padding:10px 14px; background:var(--panel-2); border:1px solid var(--border); border-radius:8px; font-size:12px;">
-          <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
             <span style="font-weight:700; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; flex:1;">CricAPI → Internal code aliases</span>
-            <button id="toggleAliasPanel" style="font-size:11px; color:var(--muted); background:none; border:none; cursor:pointer; padding:0;">▾ show</button>
+            <button id="applyAliasesToMatchesBtn" class="ctrl-btn ctrl-btn-admin" style="font-size:12px;">⚡ Fix existing matches</button>
+            <span id="applyAliasStatus" style="color:var(--muted); font-size:11px;"></span>
+            <button id="toggleAliasPanel" style="font-size:11px; color:var(--muted); background:none; border:none; cursor:pointer; padding:0;">▾ edit</button>
           </div>
           <div id="aliasPanelBody" style="display:none;">
-            <div style="color:var(--muted); font-size:11px; margin-bottom:8px;">Aliases are applied at sync time so CricAPI codes are translated before being written to the DB. Use <strong>Fix existing matches</strong> to also remap data already in the DB. Saved in browser storage.</div>
+            <div style="color:var(--muted); font-size:11px; margin-bottom:8px;">Aliases translate CricAPI codes to your DB team IDs at sync time. <strong>Fix existing matches</strong> also applies them to data already in the DB.</div>
             <div id="aliasList" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
-            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
               <input id="aliasFrom" type="text" placeholder="CricAPI code (e.g. INDW)" style="font-size:12px; padding:4px 8px; width:140px; text-transform:uppercase;" />
               <span style="color:var(--muted);">→</span>
               <input id="aliasTo" type="text" placeholder="Internal code (e.g. IND-W)" style="font-size:12px; padding:4px 8px; width:140px; text-transform:uppercase;" />
               <button id="addAliasBtn" class="ctrl-btn ctrl-btn-admin" style="font-size:12px;">+ Add</button>
-            </div>
-            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; border-top:1px solid var(--border); padding-top:8px;">
-              <button id="applyAliasesToMatchesBtn" class="ctrl-btn ctrl-btn-admin" style="font-size:12px;">⚡ Fix existing matches</button>
-              <span id="applyAliasStatus" style="color:var(--muted); font-size:11px;"></span>
             </div>
           </div>
         </div>
