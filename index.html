@@ -67,6 +67,33 @@
     .p-tab:hover { color: var(--text); }
     .p-tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 500; }
 
+    /* Home tab panel */
+    #pageTabHome { max-width: 1400px; margin: 0 auto; padding: 24px 24px 40px; }
+    .home-greeting { font-size: 20px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+    .home-sub { font-size: 13px; color: var(--muted); margin-bottom: 24px; }
+    .home-section-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin-bottom: 10px; }
+    .tournament-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; margin-bottom: 32px; }
+    .t-card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+      padding: 16px 18px; cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .t-card:hover { border-color: var(--accent); box-shadow: 0 2px 12px rgba(201,168,76,0.12); }
+    .t-card.active-tournament { border: 2px solid var(--accent); background: rgba(201,168,76,0.06); }
+    .t-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+    .t-card-name { font-size: 15px; font-weight: 600; color: var(--text); line-height: 1.3; }
+    .t-card-badges { display: flex; gap: 5px; flex-shrink: 0; }
+    .t-badge { font-size: 10px; padding: 2px 7px; border-radius: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
+    .t-badge-fmt { background: rgba(201,168,76,0.18); color: var(--accent-2); }
+    .t-badge-active { background: rgba(45,106,53,0.15); color: var(--good); }
+    .t-badge-inactive { background: var(--panel-2); color: var(--muted); }
+    .t-card-meta { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+    .t-card-meta-row { display: flex; align-items: center; gap: 6px; }
+    .t-card-footer { display: flex; align-items: center; justify-content: space-between; padding-top: 6px; border-top: 1px solid var(--border); }
+    .t-card-rank { font-size: 12px; color: var(--muted); }
+    .t-card-rank strong { color: var(--text); }
+    .t-card-btn { font-size: 11px; padding: 5px 14px; border-radius: 8px; }
+
     /* Contest tab panel */
     #pageTabContest { max-width: 1400px; margin: 0 auto; padding: 20px 24px 32px; }
     .contest-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-bottom: 20px; }
@@ -866,10 +893,23 @@
 
   <!-- ══ Page-level tabs ══ -->
   <nav class="page-tabs" id="pageTabs" style="display:none;">
+    <span class="p-tab active" data-ptab="home">Home</span>
     <span class="p-tab" data-ptab="contest">🏆 Contest</span>
-    <span class="p-tab active" data-ptab="team">My Team</span>
+    <span class="p-tab" data-ptab="team">My Team</span>
     <span class="p-tab" data-ptab="season">Season</span>
   </nav>
+
+  <!-- ══ Home tab panel ══ -->
+  <div id="pageTabHome" style="">
+    <div class="home-greeting" id="homeGreeting">Welcome back</div>
+    <div class="home-sub">Select a tournament to get started</div>
+    <div class="home-section-label" id="homeActiveLabel">Active tournaments</div>
+    <div class="tournament-cards" id="homeTournamentCards">
+      <div class="t-card" style="opacity:0.5;cursor:default;">
+        <div class="t-card-name">Loading tournaments…</div>
+      </div>
+    </div>
+  </div>
 
   <!-- ══ Contest tab panel ══ -->
   <div id="pageTabContest" style="display:none;">
@@ -2480,6 +2520,7 @@ p31,Sample Player,MI,bat,9.0,false
           try {
             state.sl.contests = await db.getContests(state.activeTournamentId);
             syncModeTabs(state.sl.contests);
+            renderPageContestTab();
           } catch (e) { console.warn('Contests pre-load failed.', e); }
         }
         try {
@@ -2721,6 +2762,7 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     function renderTournamentSelector() {
+      renderPageHomeTab(); // keep Home tab in sync whenever tournament list changes
       const sel = $('#tournamentPicker');
       if (!sel) return;
       const cur = state.activeTournamentId;
@@ -3246,6 +3288,8 @@ p31,Sample Player,MI,bat,9.0,false
       try {
         state.sl.contests = await state.db.getContests(id);
         syncModeTabs(state.sl.contests);
+        // Always refresh Contest tab DOM so it's ready whenever user switches to it
+        renderPageContestTab();
       } catch (e) { console.warn('Contests reload failed on tournament switch', e); }
       // ── Clear + restore Daily XI for the new tournament ───────────────────
       state.selected    = [];
@@ -9729,15 +9773,17 @@ p31,Sample Player,MI,bat,9.0,false
     });
 
     // ─── Page-level tabs (Contest / My Team / Season) ────────────────────────
-    let activePageTab = 'team'; // default
+    let activePageTab = 'home'; // default — Home on login
 
     function switchPageTab(ptab) {
       activePageTab = ptab;
       document.querySelectorAll('.p-tab').forEach(t =>
         t.classList.toggle('active', t.dataset.ptab === ptab));
+      $('#pageTabHome').style.display    = ptab === 'home'    ? '' : 'none';
       $('#pageTabContest').style.display = ptab === 'contest' ? '' : 'none';
       $('#pageTabTeam').style.display    = ptab === 'team'    ? 'grid' : 'none';
       $('#pageTabSeason').style.display  = ptab === 'season'  ? '' : 'none';
+      if (ptab === 'home')    renderPageHomeTab();
       if (ptab === 'contest') renderPageContestTab();
       if (ptab === 'season')  renderPageSeasonTab();
     }
@@ -9763,6 +9809,119 @@ p31,Sample Player,MI,bat,9.0,false
 
     // "Full view" button in Contest tab → opens the existing leaderboard modal
     $('#openFullLbBtn').addEventListener('click', openLeaderboard);
+
+    // ─── Home tab renderer ───────────────────────────────────────────────────
+    function renderPageHomeTab() {
+      const tournaments = state.tournaments || [];
+      const grid = $('#homeTournamentCards');
+      if (!grid) return;
+
+      // Update greeting with user's name
+      const user = state.currentUser;
+      if (user) {
+        const name = user.user_metadata?.full_name?.split(' ')[0] || user.email?.split('@')[0] || '';
+        $('#homeGreeting').textContent = name ? `Welcome back, ${name}` : 'Welcome back';
+      }
+
+      if (!tournaments.length) {
+        grid.innerHTML = `<div class="t-card" style="opacity:0.5;cursor:default;">
+          <div class="t-card-name">No tournaments yet</div>
+          <div class="t-card-meta">Ask your admin to set one up</div>
+        </div>`;
+        return;
+      }
+
+      // Sort: active first, then by start_date desc
+      const sorted = [...tournaments].sort((a, b) => {
+        if (a.is_active && !b.is_active) return -1;
+        if (!a.is_active && b.is_active) return 1;
+        return 0;
+      });
+
+      // Build next-match info for the currently active tournament
+      const nextMatchMap = {};
+      if (state.activeTournamentId && state.matches?.length) {
+        const next = state.matches
+          .filter(m => m.status !== 'completed' && m.start_time)
+          .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))[0];
+        if (next) {
+          const d = new Date(next.start_time);
+          const label = next.home_team_id && next.away_team_id
+            ? `${next.home_team_id} vs ${next.away_team_id}` : `Match ${next.match_number ?? ''}`;
+          const dateStr = d.toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+          nextMatchMap[state.activeTournamentId] = `${label} · ${dateStr}`;
+        }
+      }
+
+      // Build contest info for the current tournament
+      const contestInfoMap = {};
+      if (state.activeTournamentId && state.sl?.contests?.length) {
+        const contestNames = state.sl.contests.map(c =>
+          c.is_private ? `🔒 ${c.name}` : (c.name || (c.contest_type === 'daily' ? 'Daily XI' : 'Season Long'))
+        );
+        contestInfoMap[state.activeTournamentId] = contestNames.join(' · ');
+      }
+
+      grid.innerHTML = sorted.map(t => {
+        const isActive = t.id === state.activeTournamentId;
+        const fmt = (t.format || 'T20').toUpperCase();
+        const nextMatch = nextMatchMap[t.id];
+        const contestInfo = contestInfoMap[t.id];
+        const statusBadge = t.is_active
+          ? `<span class="t-badge t-badge-active">Active</span>`
+          : `<span class="t-badge t-badge-inactive">Inactive</span>`;
+
+        return `<div class="t-card${isActive ? ' active-tournament' : ''}" data-tid="${t.id}">
+          <div class="t-card-top">
+            <div class="t-card-name">${escapeHtml(t.name)}</div>
+            <div class="t-card-badges">
+              <span class="t-badge t-badge-fmt">${fmt}</span>
+              ${statusBadge}
+            </div>
+          </div>
+          <div class="t-card-meta">
+            ${nextMatch ? `<div class="t-card-meta-row">🗓 Next: ${escapeHtml(nextMatch)}</div>` : ''}
+            ${contestInfo ? `<div class="t-card-meta-row">🏆 ${escapeHtml(contestInfo)}</div>` : ''}
+            ${!nextMatch && !contestInfo ? `<div class="t-card-meta-row" style="color:var(--muted);">No upcoming matches</div>` : ''}
+          </div>
+          <div class="t-card-footer">
+            <span class="t-card-rank">${isActive ? '<strong>Currently selected</strong>' : ''}</span>
+            <button class="ctrl-btn t-card-btn primary" data-tid="${t.id}">
+              ${isActive ? 'View Contest →' : 'Select'}
+            </button>
+          </div>
+        </div>`;
+      }).join('');
+
+      // Wire card + button clicks
+      grid.querySelectorAll('.t-card-btn').forEach(btn => {
+        btn.addEventListener('click', async e => {
+          e.stopPropagation();
+          const tid = btn.dataset.tid;
+          if (tid !== state.activeTournamentId) {
+            await switchTournament(tid);
+            // Update the picker to match
+            const picker = $('#headerTournamentPicker');
+            if (picker) picker.value = tid;
+          }
+          switchPageTab('contest');
+        });
+      });
+
+      // Clicking anywhere on the card also works
+      grid.querySelectorAll('.t-card').forEach(card => {
+        card.addEventListener('click', async e => {
+          if (e.target.classList.contains('t-card-btn')) return; // already handled
+          const tid = card.dataset.tid;
+          if (tid !== state.activeTournamentId) {
+            await switchTournament(tid);
+            const picker = $('#headerTournamentPicker');
+            if (picker) picker.value = tid;
+          }
+          switchPageTab('contest');
+        });
+      });
+    }
 
     // ─── Contest tab renderer ─────────────────────────────────────────────────
     function renderPageContestTab() {
