@@ -1139,13 +1139,17 @@
             <button id="toggleAliasPanel" style="font-size:11px; color:var(--muted); background:none; border:none; cursor:pointer; padding:0;">▾ show</button>
           </div>
           <div id="aliasPanelBody" style="display:none;">
-            <div style="color:var(--muted); font-size:11px; margin-bottom:8px;">Aliases are applied at sync time so CricAPI codes are translated before being written to the DB. Saved in browser storage.</div>
+            <div style="color:var(--muted); font-size:11px; margin-bottom:8px;">Aliases are applied at sync time so CricAPI codes are translated before being written to the DB. Use <strong>Fix existing matches</strong> to also remap data already in the DB. Saved in browser storage.</div>
             <div id="aliasList" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
-            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-              <input id="aliasFrom" type="text" placeholder="CricAPI code (e.g. IND-W)" style="font-size:12px; padding:4px 8px; width:140px; text-transform:uppercase;" />
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">
+              <input id="aliasFrom" type="text" placeholder="CricAPI code (e.g. INDW)" style="font-size:12px; padding:4px 8px; width:140px; text-transform:uppercase;" />
               <span style="color:var(--muted);">→</span>
-              <input id="aliasTo" type="text" placeholder="Internal code (e.g. INDW)" style="font-size:12px; padding:4px 8px; width:140px; text-transform:uppercase;" />
+              <input id="aliasTo" type="text" placeholder="Internal code (e.g. IND-W)" style="font-size:12px; padding:4px 8px; width:140px; text-transform:uppercase;" />
               <button id="addAliasBtn" class="ctrl-btn ctrl-btn-admin" style="font-size:12px;">+ Add</button>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; border-top:1px solid var(--border); padding-top:8px;">
+              <button id="applyAliasesToMatchesBtn" class="ctrl-btn ctrl-btn-admin" style="font-size:12px;">⚡ Fix existing matches</button>
+              <span id="applyAliasStatus" style="color:var(--muted); font-size:11px;"></span>
             </div>
           </div>
         </div>
@@ -8888,6 +8892,34 @@ p31,Sample Player,MI,bat,9.0,false
           $('#aliasFrom').value = ''; $('#aliasTo').value = '';
           renderAliasPanel();
           toast(`Alias ${fromVal} → ${toVal} saved.`, 2500);
+        });
+      }
+
+      // Fix existing matches button — applies all current aliases to DB matches now
+      const applyBtn = $('#applyAliasesToMatchesBtn');
+      if (applyBtn) {
+        const newApply = applyBtn.cloneNode(true);
+        applyBtn.parentNode.replaceChild(newApply, applyBtn);
+        newApply.addEventListener('click', async () => {
+          if (!state.db) { toast('Connect to the database first.', 4000); return; }
+          if (!state.activeTournamentId) { toast('Select a tournament first.', 4000); return; }
+          const mapping = Object.entries(CRIC_TEAM_CODE_MAP)
+            .filter(([from, to]) => from !== to)
+            .map(([from, to]) => ({ from, to }));
+          if (!mapping.length) { toast('No aliases defined — add some first.', 3000); return; }
+          const statusEl = $('#applyAliasStatus');
+          newApply.disabled = true; newApply.textContent = 'Fixing…'; if (statusEl) statusEl.textContent = '';
+          try {
+            await state.db.remapMatchTeams(state.activeTournamentId, mapping);
+            state.matches = await state.db.listMatches(state.activeTournamentId);
+            toast(`Applied ${mapping.length} alias${mapping.length !== 1 ? 'es' : ''} to existing matches.`, 4000);
+            if (statusEl) statusEl.textContent = `✓ Done ${new Date().toLocaleTimeString()}`;
+            renderMatchesAdmin(); renderMatchSelector(); renderTeamsAdmin();
+          } catch (e) {
+            toast('Failed: ' + e.message, 6000);
+            if (statusEl) statusEl.textContent = '✗ ' + e.message;
+            newApply.disabled = false; newApply.textContent = '⚡ Fix existing matches';
+          }
         });
       }
     }
