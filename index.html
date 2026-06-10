@@ -5680,18 +5680,17 @@ p31,Sample Player,MI,bat,9.0,false
       if (state.selected.length !== 11) { toast('Pick 11 players first.'); return; }
       if (!state.captain || !state.viceCaptain) { toast('Pick Captain and Vice-Captain.'); return; }
       const m = saveTargetMatch();
+      if (!m) { toast('Select a match first — XI must be tied to a match.'); return; }
       const name = autoXIName();
       try {
         // One XI per match — if one already exists, replace it.
-        if (m) {
-          const existing = await state.db.getUserTeamForMatch(m.id);
-          if (existing) await state.db.deleteUserTeam(existing.id);
-        }
+        const existing = await state.db.getUserTeamForMatch(m.id);
+        if (existing) await state.db.deleteUserTeam(existing.id);
         const id = await state.db.saveUserTeam({
           name, format: state.format,
           playerIds: [...state.selected],
           captainId: state.captain, viceCaptainId: state.viceCaptain,
-          matchId: m?.id ?? null,
+          matchId: m.id,
         });
         state.activeSavedTeamId = id;
         state.savedTeams = await state.db.listUserTeams();
