@@ -815,8 +815,7 @@
                  cursor:pointer; max-width:200px;">
         </select>
       </div>
-      <button id="simBtn" class="primary">Start mock match</button>
-      <button id="resetBtn" class="danger">Reset XI</button>
+      <button id="simBtn" class="primary" style="display:none;">Start mock match</button>
       <button id="lbBtn" style="display:none" title="Leaderboard">🏆 Leaderboard</button>
       <button id="rulesBtn" style="display:none" title="Rules">📖 Rules</button>
       <button id="adminBtn" title="Tournament setup, players, schedule" style="display:none">Admin</button>
@@ -893,8 +892,9 @@
       <!-- Save XI bar -->
       <div class="save-bar">
         <span id="xiSaveLabel" style="flex:1; font-size:12px; color:var(--muted);">Pick a match — your XI will be tagged to it.</span>
-        <button id="saveXiBtn">Save XI</button>
-        <button id="saveMatchBtn" title="Persist current scores as a match result">Save match</button>
+        <button id="resetBtn" class="danger">Reset XI</button>
+        <button id="saveXiBtn" class="primary">Save XI</button>
+        <button id="saveMatchBtn" title="Persist current scores as a match result" style="display:none;">Save match</button>
       </div>
 
       <!-- Saved teams -->
@@ -964,6 +964,7 @@
             <div id="slXiList" style="margin-bottom:6px;"></div>
             <div class="save-bar">
               <span style="flex:1; font-size:12px; color:var(--muted);" id="slXiSaveLabel">Pick 11 from the pool.</span>
+              <button id="slRevertBtn" class="danger" style="display:none;">Revert to Saved</button>
               <button id="slSaveXiBtn" class="primary" disabled>Save XI</button>
             </div>
           </div>
@@ -3720,6 +3721,12 @@ p31,Sample Player,MI,bat,9.0,false
         // Update the XI total in the stat tile
         const totalEl = $('#slXiStatTotal .value');
         if (totalEl) totalEl.textContent = slTotal.toFixed(1);
+      }
+
+      // ── Revert button — show only when a locked XI exists to revert to ────
+      const revertBtn = $('#slRevertBtn');
+      if (revertBtn) {
+        revertBtn.style.display = state.sl.lastLockedXI?.playerIds?.length ? '' : 'none';
       }
 
       // ── Save button ───────────────────────────────────────────────────────
@@ -9586,6 +9593,26 @@ p31,Sample Player,MI,bat,9.0,false
     // Note: private league create/join listeners are wired inside renderSlLeaguesTab()
     // (dynamic because the tab is re-rendered on each visit).
     $('#slSaveXiBtn').addEventListener('click', saveSlXiHandler);
+
+    $('#slRevertBtn').addEventListener('click', async () => {
+      const lastLocked = state.sl.lastLockedXI;
+      if (!lastLocked?.playerIds?.length) return;
+      const matchNum = lastLocked.matchNumber ?? '?';
+      if (!confirm(`Revert to your last saved XI (M${matchNum})?\n\nThis will discard any pending changes for the next match.`)) return;
+      try {
+        const draft = { playerIds: lastLocked.playerIds, captainId: lastLocked.captainId, vcId: lastLocked.vcId };
+        if (state.sl.squad) await state.db.saveDraft(state.sl.squad.id, draft);
+        state.sl.draft     = draft;
+        state.sl.xiPlayers = [...draft.playerIds];
+        state.sl.xiCaptain = draft.captainId ?? null;
+        state.sl.xiVc      = draft.vcId      ?? null;
+        renderSlActiveScreen(); renderPool();
+        toast('Reverted to last saved XI.');
+      } catch (e) {
+        toast('Revert failed: ' + e.message, 4000);
+      }
+    });
+
     $('#slRefreshSeasonBtn').addEventListener('click', () => {
       state.sl.seasonData = null; loadAndRenderSeason();
     });
