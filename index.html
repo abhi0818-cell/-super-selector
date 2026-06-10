@@ -1124,6 +1124,14 @@
         </table>
       </div>
       <div class="modal-body" id="adminTeamsView" style="display:none;">
+        <div id="teamsMismatchBanner" style="display:none; margin:8px 8px 10px; padding:10px 14px; background:rgba(201,168,76,0.10); border:1px solid rgba(201,168,76,0.35); border-radius:8px; font-size:12px; color:var(--text);">
+          <div style="font-weight:700; color:var(--accent-2); margin-bottom:6px;">⚠️ Team code mismatch detected</div>
+          <div id="teamsMismatchDetails" style="color:var(--muted); line-height:1.7;"></div>
+          <div style="margin-top:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <button id="fixMatchTeamsBtn" class="ctrl-btn ctrl-btn-admin" style="font-size:12px;">✓ Apply Fix</button>
+            <span id="teamsMismatchStatus" style="color:var(--muted); font-size:11px;"></span>
+          </div>
+        </div>
         <table class="admin-table" id="adminTeamsTable">
           <thead>
             <tr>
@@ -1292,7 +1300,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=116';
+    import { createDb, NotConfiguredError } from './db.js?v=117';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -8749,6 +8757,72 @@ p31,Sample Player,MI,bat,9.0,false
         tr.querySelector('[data-act="del"]').addEventListener('click', () => deleteTeamHandler(id));
       });
       $('#adminCount').textContent = `${teams.length} team${teams.length !== 1 ? 's' : ''} · ${activeTournament?.name ?? 'all'}`;
+
+      // ── Mismatch detection ────────────────────────────────────────────────
+      // Teams that appear in match schedule but have 0 players are likely
+      // freshly synced from CricAPI with a different code format (e.g. "IND-W"
+      // when players were imported as "INDW"). Show a fix banner.
+      const playerTeamIds = Object.keys(playerCounts);
+      const orphanTeams = [...tournamentTeamIds].filter(id => !(playerCounts[id] > 0));
+      const suggested = orphanTeams.map(orphanId => {
+        const guess = suggestTeamRemap(orphanId, playerTeamIds);
+        return { from: orphanId, to: guess };
+      }).filter(r => r.to !== null && r.from !== r.to);
+
+      const banner = $('#teamsMismatchBanner');
+      if (suggested.length > 0 && tournamentTeamIds.size > 0) {
+        banner.style.display = 'block';
+        const details = $('#teamsMismatchDetails');
+        details.innerHTML = suggested.map(r =>
+          `Match schedule uses <strong>${escapeHtml(r.from)}</strong> → players use <strong>${escapeHtml(r.to)}</strong>`
+        ).join('<br>');
+        const fixBtn = $('#fixMatchTeamsBtn');
+        // Rebuild listener to avoid duplicate binds on re-render
+        const newBtn = fixBtn.cloneNode(true);
+        fixBtn.parentNode.replaceChild(newBtn, fixBtn);
+        newBtn.addEventListener('click', () => fixMatchTeamsHandler(suggested));
+      } else {
+        banner.style.display = 'none';
+      }
+    }
+
+    /** Fuzzy match an orphan match team code to the nearest player team code.
+     *  Strategy: normalise both sides by stripping "-W" / "-M" suffixes and
+     *  non-alphanumeric chars, then look for an exact or prefix match.
+     */
+    function suggestTeamRemap(orphanId, playerTeamIds) {
+      const norm = s => s.replace(/[-_](w|m)$/i, '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+      const normO = norm(orphanId);
+      // 1) Exact match after normalisation
+      for (const pid of playerTeamIds) {
+        if (norm(pid) === normO) return pid;
+      }
+      // 2) One is a prefix of the other
+      for (const pid of playerTeamIds) {
+        const normP = norm(pid);
+        if (normO.startsWith(normP) || normP.startsWith(normO)) return pid;
+      }
+      return null;
+    }
+
+    async function fixMatchTeamsHandler(mapping) {
+      const btn = $('#fixMatchTeamsBtn');
+      const statusEl = $('#teamsMismatchStatus');
+      if (!state.db) { toast('Connect to the database first.', 4000); return; }
+      if (!state.activeTournamentId) { toast('Select a tournament first.', 4000); return; }
+      btn.disabled = true; btn.textContent = 'Fixing…'; statusEl.textContent = '';
+      try {
+        await state.db.remapMatchTeams(state.activeTournamentId, mapping);
+        // Refresh local match data so home/away IDs are updated
+        state.matches = await state.db.listMatches(state.activeTournamentId);
+        toast(`Fixed ${mapping.length} team code${mapping.length !== 1 ? 's' : ''} in matches.`, 4000);
+        statusEl.textContent = `✓ Applied ${new Date().toLocaleTimeString()}`;
+        renderMatchesAdmin(); renderMatchSelector(); renderTeamsAdmin();
+      } catch (e) {
+        toast('Fix failed: ' + e.message, 6000);
+        statusEl.textContent = '✗ ' + e.message;
+        btn.disabled = false; btn.textContent = '✓ Apply Fix';
+      }
     }
 
     async function addTeamHandler() {

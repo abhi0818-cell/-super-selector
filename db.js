@@ -1261,6 +1261,33 @@ export function createDb(cfg = {}) {
       return { written, skipped };
     },
 
+    /**
+     * Remap team codes on all matches for a tournament.
+     * Useful after a CricAPI sync creates new team IDs that don't match
+     * the codes already used for players (e.g. "IND-W" vs "INDW").
+     *
+     * @param {string} tournamentId
+     * @param {Array<{from: string, to: string}>} mapping  e.g. [{from:'IND-W', to:'INDW'}]
+     */
+    async remapMatchTeams(tournamentId, mapping) {
+      if (!mapping.length) return;
+      const sb = await getClient();
+      for (const { from, to } of mapping) {
+        const { error: e1 } = await sb
+          .from('matches')
+          .update({ home_team_id: to })
+          .eq('tournament_id', tournamentId)
+          .eq('home_team_id', from);
+        if (e1) throw new Error(`remapMatchTeams home ${from}→${to}: ${e1.message}`);
+        const { error: e2 } = await sb
+          .from('matches')
+          .update({ away_team_id: to })
+          .eq('tournament_id', tournamentId)
+          .eq('away_team_id', from);
+        if (e2) throw new Error(`remapMatchTeams away ${from}→${to}: ${e2.message}`);
+      }
+    },
+
     // ─── Match results ────────────────────────────────────────────────────
 
     /**
