@@ -73,7 +73,9 @@
       cursor: pointer; transition: all 0.15s;
     }
     .player-card:hover { border-color: var(--accent); transform: translateY(-1px); }
-    .player-card.selected { border-color: var(--accent); background: rgba(201,168,76,0.09); }
+    .player-card.selected { border: 1.5px solid var(--accent); background: rgba(201,168,76,0.18); }
+    .player-card .sel-tick { display:none; }
+    .player-card.selected .sel-tick { display:flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; background:var(--accent); color:#1C1F26; font-size:11px; font-weight:700; flex-shrink:0; }
     .player-card.disabled { opacity: 0.4; cursor: not-allowed; }
     .player-card .name { font-weight: 600; font-size: 14px; line-height: 1.2; }
     .player-card .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
@@ -1279,7 +1281,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=114';
+    import { createDb, NotConfiguredError } from './db.js?v=116';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -4773,6 +4775,10 @@ p31,Sample Player,MI,bat,9.0,false
         const counts = { wk: 0, bat: 0, ar: 0, bowl: 0 };
         xiPlayers.forEach(x => { if (counts[x.role] !== undefined) counts[x.role]++; });
         if ((counts[p.role] || 0) >= roleLimits[1]) return false;
+        // Role-deficit blocking: if remaining slots must all go to minimum-deficient roles, block others
+        const slotsLeft = RULES.total - xi.length;
+        const totalDeficit = ['wk','bat','ar','bowl'].reduce((s,r) => s + Math.max(0, RULES.role[r][0] - counts[r]), 0);
+        if (totalDeficit >= slotsLeft && Math.max(0, RULES.role[p.role][0] - counts[p.role]) === 0) return false;
       }
       // Max per real team
       const teamCount = xiPlayers.filter(x => x.team === p.team).length;
@@ -5190,7 +5196,10 @@ p31,Sample Player,MI,bat,9.0,false
               </div>
               ${capVcBtns}
             </div>
-            <div class="credit">${p.credits.toFixed(1)}</div>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+              <span class="sel-tick">✓</span>
+              <div class="credit">${p.credits.toFixed(1)}</div>
+            </div>
           </div>
         `;
       }).join('');
@@ -5529,6 +5538,10 @@ p31,Sample Player,MI,bat,9.0,false
       const counts = { wk:0,bat:0,ar:0,bowl:0 };
       state.selected.forEach(id => { const x = playerById(id); if (x) counts[x.role]++; });
       if (counts[p.role] >= RULES.role[p.role][1]) return false;
+      // Role-deficit blocking: if remaining slots must all go to minimum-deficient roles, block others
+      const slotsLeft = RULES.total - state.selected.length;
+      const totalDeficit = ['wk','bat','ar','bowl'].reduce((s,r) => s + Math.max(0, RULES.role[r][0] - counts[r]), 0);
+      if (totalDeficit >= slotsLeft && Math.max(0, RULES.role[p.role][0] - counts[p.role]) === 0) return false;
       const teamCount = state.selected.filter(id => playerById(id)?.team === p.team).length;
       if (teamCount >= RULES.maxPerTeam) return false;
       // Overseas cap (T20 only)

@@ -410,18 +410,22 @@ export function createDb(cfg = {}) {
         throw new Error('saveUserTeam: need exactly 11 playerIds');
       }
       const sb = await getClient();
+      const { data: { user } } = await sb.auth.getUser();
+      const uid = user?.id ?? null;
 
       // Always clear any existing daily team for this match before inserting.
       // This makes the method idempotent and avoids the unique constraint on
       // (match_id) for squad_id IS NULL rows, even if the caller skipped the
       // pre-delete step (e.g. after an SL save placed a row for the same match).
       if (matchId) {
-        await sb.from('user_teams').delete().eq('match_id', matchId).is('squad_id', null);
+        const delQ = sb.from('user_teams').delete().eq('match_id', matchId).is('squad_id', null);
+        if (uid) delQ.eq('user_id', uid);
+        await delQ;
       }
 
       const { data: ut, error: e1 } = await sb
         .from('user_teams')
-        .insert({ name, format, captain_id: captainId, vice_captain_id: viceCaptainId, match_id: matchId, squad_id: null })
+        .insert({ name, format, captain_id: captainId, vice_captain_id: viceCaptainId, match_id: matchId, squad_id: null, user_id: uid })
         .select('id')
         .single();
       if (e1) throw e1;
@@ -433,6 +437,86 @@ export function createDb(cfg = {}) {
         await sb.from('user_teams').delete().eq('id', ut.id);
         throw e2;
       }
+
+      // ── Mirror XI into user_match_xi so mobile apps can read it ────────────
+      // Mobile reads from user_squads + user_match_xi (not user_teams).
+      // When we have a matchId and a signed-in user, find (or create) the user's
+      // squad for the daily contest of this match's tournament, then upsert the
+      // XI rows so the mobile app sees the same selection.
+      if (matchId && uid) {
+        try {
+          // 1. Get the tournament_id for this match
+          const { data: matchRow } = await sb
+            .from('matches')
+            .select('tournament_id')
+            .eq('id', matchId)
+            .maybeSingle();
+          const tournamentId = matchRow?.tournament_id;
+
+          if (tournamentId) {
+            // 2. Find the public daily contest for this tournament
+            const { data: contestRow } = await sb
+              .from('contests')
+              .select('id')
+              .eq('tournament_id', tournamentId)
+              .eq('contest_type', 'daily')
+              .eq('is_private', false)
+              .maybeSingle();
+            const contestId = contestRow?.id;
+
+            if (contestId) {
+              // 3. Get or create a user_squad for this contest
+              let squadId = null;
+              const { data: existingSquad } = await sb
+                .from('user_squads')
+                .select('id')
+                .eq('contest_id', contestId)
+                .eq('user_id', uid)
+                .maybeSingle();
+
+              if (existingSquad?.id) {
+                squadId = existingSquad.id;
+              } else {
+                const { data: newSquad } = await sb
+                  .from('user_squads')
+                  .insert({
+                    contest_id: contestId,
+                    user_id: uid,
+                    name: 'My Squad',
+                    budget_remaining: 100,
+                    free_transfers_available: 1,
+                  })
+                  .select('id')
+                  .single();
+                squadId = newSquad?.id ?? null;
+              }
+
+              if (squadId) {
+                // 4. Delete existing user_match_xi rows for this squad+match, then insert fresh
+                await sb.from('user_match_xi').delete()
+                  .eq('squad_id', squadId)
+                  .eq('match_id', matchId);
+
+                const xiRows = playerIds.map(pid => ({
+                  squad_id:   squadId,
+                  match_id:   matchId,
+                  player_id:  pid,
+                  is_captain: pid === captainId,
+                  is_vc:      pid === viceCaptainId,
+                  role:       null,   // role not tracked in daily web save
+                  user_id:    uid,
+                }));
+                await sb.from('user_match_xi').insert(xiRows);
+                console.log(`[saveUserTeam] Mirrored ${xiRows.length} rows to user_match_xi for mobile sync.`);
+              }
+            }
+          }
+        } catch (mirrorErr) {
+          // Mirror failure is non-fatal — the primary user_teams save already succeeded
+          console.warn('[saveUserTeam] user_match_xi mirror failed (non-fatal):', mirrorErr);
+        }
+      }
+
       return ut.id;
     },
 
