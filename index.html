@@ -3250,11 +3250,17 @@ p31,Sample Player,MI,bat,9.0,false
      */
     function syncModeTabs(contests) {
       const hasDailyContest = (contests || []).some(c => c.contest_type === 'daily');
+      const hasSlContest    = (contests || []).some(c => c.contest_type === 'season_long' && !c.is_private);
       const dailyTab = document.querySelector('.m-tab[data-mode="daily"]');
+      const slTab    = document.querySelector('.m-tab[data-mode="season_long"]');
       if (dailyTab) dailyTab.style.display = hasDailyContest ? '' : 'none';
-      // If we're on the daily tab but no daily contest exists, switch to SL
+      if (slTab)    slTab.style.display    = hasSlContest    ? '' : 'none';
+      // Auto-switch away from a tab whose contest no longer exists
       if (!hasDailyContest && state.mode === 'daily') {
-        switchMode('season_long');
+        if (hasSlContest) switchMode('season_long');
+      }
+      if (!hasSlContest && state.mode === 'season_long') {
+        if (hasDailyContest) switchMode('daily');
       }
     }
 
