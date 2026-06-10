@@ -68,12 +68,12 @@
 
     .player-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; padding: 14px 16px; max-height: 540px; overflow-y: auto; }
     .player-card {
-      background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
+      background: rgba(255,255,255,0.72); border: 1px solid rgba(201,168,76,0.15); border-radius: 10px;
       padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px;
       cursor: pointer; transition: all 0.15s;
     }
     .player-card:hover { border-color: var(--accent); transform: translateY(-1px); }
-    .player-card.selected { border: 1.5px solid var(--accent); background: rgba(201,168,76,0.18); }
+    .player-card.selected { border: 2px solid var(--accent); background: rgba(201,168,76,0.22); box-shadow: 0 1px 6px rgba(201,168,76,0.18); }
     .player-card .sel-tick { display:none; }
     .player-card.selected .sel-tick { display:flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; background:var(--accent); color:#1C1F26; font-size:11px; font-weight:700; flex-shrink:0; }
     .player-card.disabled { opacity: 0.4; cursor: not-allowed; }
@@ -840,6 +840,7 @@
         <span class="chip" data-role="bat">BAT</span>
         <span class="chip" data-role="ar">AR</span>
         <span class="chip" data-role="bowl">BOWL</span>
+        <span class="chip" id="osFilterChip" style="display:none;" title="Show overseas players only">✈️ OS</span>
         <select id="matchFilter" style="font-size:12px; padding:6px 10px;" title="Filter pool to a match's two squads"></select>
         <select id="teamFilter" style="font-size:12px; padding:6px 10px;"></select>
       </div>
@@ -1685,6 +1686,7 @@ p31,Sample Player,MI,bat,9.0,false
     const state = {
       format: 'T20',
       filterRole: 'ALL',
+      filterOS: false,
       search: '',
       selected: [],
       captain: null,
@@ -2521,10 +2523,23 @@ p31,Sample Player,MI,bat,9.0,false
       const sel = $('#teamFilter');
       if (!sel) return;
       const cur = state.filterTeam;
+      // Derive teams from the current tournament player pool (not all DB teams)
+      const tournamentTeamIds = [...new Set(PLAYERS.map(p => p.team))].sort();
       const opts = ['<option value="ALL">All teams</option>']
-        .concat([...TEAMS_DATA].sort((a,b)=>a.id.localeCompare(b.id))
-          .map(t => `<option value="${t.id}" ${cur===t.id?'selected':''}>${t.id} — ${escapeHtml(t.name)}</option>`));
+        .concat(tournamentTeamIds.map(id => {
+          const meta = TEAMS_DATA.find(t => t.id === id);
+          const label = meta ? `${id} — ${escapeHtml(meta.name)}` : escapeHtml(id);
+          return `<option value="${id}" ${cur===id?'selected':''}>${label}</option>`;
+        }));
       sel.innerHTML = opts.join('');
+
+      // Show / hide the ✈️ OS filter chip based on tournament overseas cap
+      const osChip = $('#osFilterChip');
+      if (osChip) {
+        const hasCap = getOverseasCap() > 0 && getOverseasCap() < 11;
+        osChip.style.display = hasCap ? '' : 'none';
+        osChip.classList.toggle('active', state.filterOS);
+      }
     }
 
     // ─── TOURNAMENT SELECTOR ────────────────────────────────────────────────
@@ -3070,6 +3085,9 @@ p31,Sample Player,MI,bat,9.0,false
       state.activeTournamentId = id;
       state.matches       = [];
       state.activeMatchId = null;
+      // Reset pool filters on tournament change
+      state.filterTeam = 'ALL';
+      state.filterOS   = false;
       const tournament = state.tournaments.find(t => t.id === id);
       applyTournamentFormat(tournament);
       // Auto-fill Schedule sync field with this tournament's saved series ID
@@ -5163,6 +5181,7 @@ p31,Sample Player,MI,bat,9.0,false
       const list = PLAYERS.filter(p => {
         if (state.filterRole !== 'ALL' && p.role !== state.filterRole) return false;
         if (state.filterTeam !== 'ALL' && p.team !== state.filterTeam) return false;
+        if (state.filterOS && !p.overseas) return false;
         if (matchTeams && !matchTeams.has(p.team)) return false;
         if (term && !(p.name.toLowerCase().includes(term) || p.team.toLowerCase().includes(term))) return false;
         return true;
@@ -9132,10 +9151,18 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     // ─── EVENT WIRING ────────────────────────────────────────────────────────
-    document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => {
-      document.querySelectorAll('.chip').forEach(x => x.classList.remove('active'));
+    // Role filter chips (All / WK / BAT / AR / BOWL)
+    document.querySelectorAll('.chip[data-role]').forEach(c => c.addEventListener('click', () => {
+      document.querySelectorAll('.chip[data-role]').forEach(x => x.classList.remove('active'));
       c.classList.add('active'); state.filterRole = c.dataset.role; renderPool();
     }));
+    // OS filter chip (toggle — independent of role chips)
+    const _osChip = $('#osFilterChip');
+    if (_osChip) _osChip.addEventListener('click', () => {
+      state.filterOS = !state.filterOS;
+      _osChip.classList.toggle('active', state.filterOS);
+      renderPool();
+    });
     $('#search').addEventListener('input', e => { state.search = e.target.value; renderPool(); });
     $('#simBtn').addEventListener('click', () => state.simRunning ? stopSim() : startSim());
     $('#resetBtn').addEventListener('click', resetXI);
