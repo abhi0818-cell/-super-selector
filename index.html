@@ -5211,8 +5211,9 @@ p31,Sample Player,MI,bat,9.0,false
       const chips = $('#matchFilterChips');
       if (!chips) return;
 
-      // Only upcoming (not completed, not locked) matches
-      const upcoming = state.matches.filter(m => m.status !== 'completed' && !m.locked);
+      // Only upcoming matches — hide completed, live, and in-progress matches
+      const HIDE_STATUS = new Set(['completed', 'live', 'in_progress']);
+      const upcoming = state.matches.filter(m => !HIDE_STATUS.has(m.status) && !m.locked);
 
       // Sort: known numeric match numbers first, then '?' / null matches at end
       const hasNumber = m => m.match_number != null && String(m.match_number).trim() !== '?' && !isNaN(Number(m.match_number));
