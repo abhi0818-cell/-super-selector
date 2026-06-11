@@ -58,7 +58,9 @@
     button:disabled { opacity: 0.45; cursor: not-allowed; }
 
     main { display: grid; grid-template-columns: 1fr; gap: 16px; padding: 16px 24px 32px; max-width: 1400px; margin: 0 auto; }
-    main.pool-open { grid-template-columns: 1.4fr 1fr; }
+    main.pool-open { grid-template-columns: 2fr 1fr; }
+    /* 4-column player grid when pool is open alongside XI panel */
+    main.pool-open .player-grid { grid-template-columns: repeat(4, 1fr); }
     @media (max-width: 1024px) { main { grid-template-columns: 1fr !important; } }
 
     /* ── Page-level tabs (Contest / My Team / Season) ── */
@@ -118,8 +120,7 @@
     .season-metric-value { font-size: 24px; font-weight: 600; color: var(--text); line-height: 1; }
     .season-metric-sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
 
-    /* Pool toggle button */
-    #editTeamBtn { font-size: 12px; padding: 5px 12px; border-radius: 8px; }
+    /* Pool toggle button — inherits .primary styles, no override needed */
 
     /* ── Pool filter bar ── */
     .pool-filters { display: flex; flex-direction: column; gap: 7px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel-2); }
@@ -129,10 +130,12 @@
     .pf-row { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
     .pf-label { font-size: 10px; color: var(--muted); white-space: nowrap; letter-spacing: .04em; flex-shrink: 0; }
     .pf-sep { width: 1px; height: 14px; background: var(--border); flex-shrink: 0; align-self: center; margin: 0 2px; }
-    .pf-match-row-wrap { position: relative; }
-    .pf-match-row-wrap::after { content:''; position:absolute; right:0; top:0; bottom:0; width:28px; background:linear-gradient(to right, transparent, var(--panel-2)); pointer-events:none; }
-    .pf-match-row { display: flex; gap: 5px; overflow-x: auto; flex-wrap: nowrap; padding: 6px 14px; scrollbar-width: none; align-items: center; }
-    .pf-match-row::-webkit-scrollbar { display: none; }
+    /* Match chip row — paginated, no scroll */
+    .pf-match-row-wrap { display: flex; align-items: center; gap: 5px; padding: 6px 14px; flex-wrap: nowrap; overflow: hidden; }
+    .pf-match-chips { display: flex; gap: 4px; flex-wrap: wrap; flex: 1; }
+    .match-page-btn { font-size: 11px; padding: 3px 7px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--muted); cursor: pointer; line-height: 1; }
+    .match-page-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+    .match-page-btn:disabled { opacity: 0.3; cursor: default; }
     .pf-chip { padding: 4px 9px; border-radius: 99px; font-size: 11px; cursor: pointer; user-select: none; background: var(--panel); border: 1px solid var(--border); color: var(--muted); white-space: nowrap; transition: background .12s, color .12s, border-color .12s; }
     .pf-chip:hover { border-color: var(--accent); color: var(--text); }
     .pf-chip.active { background: var(--accent); color: #1C1F26; border-color: var(--accent); font-weight: 600; }
@@ -1171,11 +1174,11 @@
             <div id="slBoosterBar" style="display:none; padding:6px 0 8px;"></div>
             <!-- Selected XI list -->
             <div id="slXiList" style="margin-bottom:10px;"></div>
-            <!-- Pick / Edit Team button — opens player pool -->
-            <button id="editTeamBtn" class="ctrl-btn" style="width:100%; margin-bottom:10px; padding:9px; font-size:13px; display:none;">✏️ Pick / Edit Team</button>
             <div class="save-bar">
               <span style="flex:1; font-size:12px; color:var(--muted);" id="slXiSaveLabel">Pick 11 from the pool.</span>
               <button id="slRevertBtn" class="danger" style="display:none;">Revert to Saved</button>
+              <!-- Pick / Edit Team button — same style as Save XI, sits to its left -->
+              <button id="editTeamBtn" class="primary" style="display:none;">✏️ Edit Team</button>
               <button id="slSaveXiBtn" class="primary" disabled>Save XI</button>
             </div>
           </div>
@@ -1959,6 +1962,7 @@ p31,Sample Player,MI,bat,9.0,false
       filterRole: 'ALL',
       filterOS: false,
       selectedMatchIds: new Set(), // multi-select match filter; empty = show all
+      matchChipPage: 0,            // pagination for match chip bar (15 per page)
       search: '',
       selected: [],
       captain: null,
@@ -3407,6 +3411,7 @@ p31,Sample Player,MI,bat,9.0,false
       state.filterTeam = 'ALL';
       state.filterOS   = false;
       state.selectedMatchIds = new Set();
+      state.matchChipPage = 0;
       const tournament = state.tournaments.find(t => t.id === id);
       applyTournamentFormat(tournament);
       // Auto-fill Schedule sync field with this tournament's saved series ID
@@ -5208,8 +5213,9 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     function renderMatchSelector() {
-      const chips = $('#matchFilterChips');
-      if (!chips) return;
+      const wrap = $('#matchFilterChips')?.parentElement;
+      const container = $('#matchFilterChips');
+      if (!container || !wrap) return;
 
       // Only upcoming matches — hide completed, live, and in-progress matches
       const HIDE_STATUS = new Set(['completed', 'live', 'in_progress']);
@@ -5220,31 +5226,48 @@ p31,Sample Player,MI,bat,9.0,false
       const sorted = [...upcoming].sort((a, b) => {
         const aN = hasNumber(a), bN = hasNumber(b);
         if (aN && bN) return Number(a.match_number) - Number(b.match_number);
-        if (aN) return -1;  // a has number, b is '?'  → a first
-        if (bN) return 1;   // b has number, a is '?'  → b first
-        return 0;           // both '?' → preserve order
+        if (aN) return -1;
+        if (bN) return 1;
+        return 0;
       });
+
+      // ── Pagination: 15 chips per page ────────────────────────────────────────
+      const PAGE_SIZE = 15;
+      const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+      // Clamp page in case matches were removed
+      if (state.matchChipPage >= totalPages) state.matchChipPage = Math.max(0, totalPages - 1);
+      const page  = state.matchChipPage;
+      const slice = sorted.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
       const sel = state.selectedMatchIds;
       const allActive = sel.size === 0;
 
-      let html = `<span class="pf-label" style="margin-right:2px;">Match</span>`;
-      html += `<span class="match-chip all-chip ${allActive ? 'active' : ''}" data-match-id="__all__">All</span>`;
-
-      sorted.forEach(m => {
+      // Build chips for this page
+      let chipsHtml = `<span class="match-chip all-chip ${allActive ? 'active' : ''}" data-match-id="__all__">All</span>`;
+      slice.forEach(m => {
         const home = m.home_team_id || '—';
         const away = m.away_team_id || '—';
         const num  = m.match_number != null ? m.match_number : '?';
-        const label = `M${num}`;
-        const tooltip = `${home} vs ${away}`;
         const active = sel.has(m.id);
-        html += `<span class="match-chip ${active ? 'active' : ''}" data-match-id="${m.id}" title="${escapeHtml(tooltip)}">${escapeHtml(label)}</span>`;
+        chipsHtml += `<span class="match-chip ${active ? 'active' : ''}" data-match-id="${m.id}" title="${escapeHtml(home + ' vs ' + away)}">M${escapeHtml(String(num))}</span>`;
       });
 
-      chips.innerHTML = html;
+      // Replace the wrapper content with: label | ◄ | chips | ►
+      const prevDisabled = page === 0 ? 'disabled' : '';
+      const nextDisabled = page >= totalPages - 1 ? 'disabled' : '';
+      const pageLabel = totalPages > 1
+        ? `<span class="pf-label" style="white-space:nowrap;">M${(page*PAGE_SIZE)+1}–${Math.min((page+1)*PAGE_SIZE, sorted.length)}</span>`
+        : `<span class="pf-label">Match</span>`;
 
-      // Wire click handlers
-      chips.querySelectorAll('.match-chip').forEach(chip => {
+      wrap.innerHTML = `
+        ${pageLabel}
+        <button class="match-page-btn" id="matchPagePrev" ${prevDisabled} title="Previous matches" style="flex-shrink:0;">◀</button>
+        <div id="matchFilterChips" class="pf-match-chips">${chipsHtml}</div>
+        <button class="match-page-btn" id="matchPageNext" ${nextDisabled} title="Next matches" style="flex-shrink:0;">▶</button>
+      `;
+
+      // Wire chip clicks
+      wrap.querySelectorAll('.match-chip').forEach(chip => {
         chip.addEventListener('click', () => {
           const mid = chip.dataset.matchId;
           if (mid === '__all__') {
@@ -5259,6 +5282,12 @@ p31,Sample Player,MI,bat,9.0,false
           renderPool();
         });
       });
+
+      // Wire page navigation
+      const prevBtn = $('#matchPagePrev');
+      const nextBtn = $('#matchPageNext');
+      if (prevBtn) prevBtn.addEventListener('click', () => { state.matchChipPage--; renderMatchSelector(); });
+      if (nextBtn) nextBtn.addEventListener('click', () => { state.matchChipPage++; renderMatchSelector(); });
 
       // Settings match dropdown also depends on state.matches
       renderMatchIdDropdown();
@@ -10036,7 +10065,7 @@ p31,Sample Player,MI,bat,9.0,false
       const main = $('#pageTabTeam');
       pool.style.display = open ? '' : 'none';
       main.classList.toggle('pool-open', open);
-      if (btn) btn.textContent = open ? '✕ Close Pool' : '✏️ Pick / Edit Team';
+      if (btn) btn.textContent = open ? '✕ Close' : '✏️ Edit Team';
     }
 
     $('#editTeamBtn').addEventListener('click', () => {
