@@ -1103,6 +1103,7 @@
       <div class="save-bar">
         <span id="xiSaveLabel" style="flex:1; font-size:12px; color:var(--muted);">Pick a match — your XI will be tagged to it.</span>
         <button id="resetBtn" class="danger">Reset XI</button>
+        <button id="editTeamBtnDaily" class="primary" style="display:none;">✏️ Edit Team</button>
         <button id="saveXiBtn" class="primary">Save XI</button>
         <button id="saveMatchBtn" title="Persist current scores as a match result" style="display:none;">Save match</button>
       </div>
@@ -3619,6 +3620,7 @@ p31,Sample Player,MI,bat,9.0,false
         t.classList.toggle('active', t.dataset.mode === mode));
       $('#dailyPanel').style.display = mode === 'daily' ? '' : 'none';
       $('#slPanel').style.display    = mode === 'season_long' ? '' : 'none';
+      ensureEditTeamBtnVisible(); // show correct Edit Team button for active mode
 
       if (mode === 'season_long') {
         if (!state.sl.initialized) {
@@ -10060,24 +10062,32 @@ p31,Sample Player,MI,bat,9.0,false
 
     // ─── Pool toggle (Edit team button) ──────────────────────────────────────
     function setPoolOpen(open) {
-      const pool = $('#poolPanel');
-      const btn  = $('#editTeamBtn');
-      const main = $('#pageTabTeam');
+      const pool  = $('#poolPanel');
+      const main  = $('#pageTabTeam');
+      const btnSL = $('#editTeamBtn');
+      const btnDy = $('#editTeamBtnDaily');
       pool.style.display = open ? '' : 'none';
       main.classList.toggle('pool-open', open);
-      if (btn) btn.textContent = open ? '✕ Close' : '✏️ Edit Team';
+      const label = open ? '✕ Close' : '✏️ Edit Team';
+      if (btnSL) btnSL.textContent = label;
+      if (btnDy) btnDy.textContent = label;
     }
 
     $('#editTeamBtn').addEventListener('click', () => {
-      const isOpen = $('#poolPanel').style.display !== 'none';
-      setPoolOpen(!isOpen);
+      setPoolOpen($('#poolPanel').style.display === 'none');
     });
 
-    // Show the editTeamBtn when My Team tab is active (it lives in the SL panel)
-    // It starts hidden in HTML; reveal it once the panel is shown
+    $('#editTeamBtnDaily').addEventListener('click', () => {
+      setPoolOpen($('#poolPanel').style.display === 'none');
+    });
+
+    // Show the correct edit button depending on active mode when My Team tab opens
     function ensureEditTeamBtnVisible() {
-      const btn = $('#editTeamBtn');
-      if (btn) btn.style.display = '';
+      const isSL = state.mode === 'season_long';
+      const btnSL = $('#editTeamBtn');
+      const btnDy = $('#editTeamBtnDaily');
+      if (btnSL) btnSL.style.display = isSL ? '' : 'none';
+      if (btnDy) btnDy.style.display = isSL ? 'none' : '';
     }
 
     // "Full view" button in Contest tab → opens the existing leaderboard modal
