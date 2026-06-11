@@ -129,9 +129,10 @@
     .pf-row { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
     .pf-label { font-size: 10px; color: var(--muted); white-space: nowrap; letter-spacing: .04em; flex-shrink: 0; }
     .pf-sep { width: 1px; height: 14px; background: var(--border); flex-shrink: 0; align-self: center; margin: 0 2px; }
-    .pf-match-row { display: flex; gap: 5px; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; align-items: center; }
-    .pf-match-row::-webkit-scrollbar { height: 3px; }
-    .pf-match-row::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+    .pf-match-row-wrap { position: relative; }
+    .pf-match-row-wrap::after { content:''; position:absolute; right:0; top:0; bottom:0; width:28px; background:linear-gradient(to right, transparent, var(--panel-2)); pointer-events:none; }
+    .pf-match-row { display: flex; gap: 5px; overflow-x: auto; flex-wrap: nowrap; padding: 6px 14px; scrollbar-width: none; align-items: center; }
+    .pf-match-row::-webkit-scrollbar { display: none; }
     .pf-chip { padding: 4px 9px; border-radius: 99px; font-size: 11px; cursor: pointer; user-select: none; background: var(--panel); border: 1px solid var(--border); color: var(--muted); white-space: nowrap; transition: background .12s, color .12s, border-color .12s; }
     .pf-chip:hover { border-color: var(--accent); color: var(--text); }
     .pf-chip.active { background: var(--accent); color: #1C1F26; border-color: var(--accent); font-weight: 600; }
@@ -156,7 +157,29 @@
     }
     .filters .chip.active { background: var(--accent); color: #1C1F26; border-color: var(--accent); font-weight: 600; }
 
-    .player-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; padding: 14px 16px; max-height: 540px; overflow-y: auto; }
+    /* 4-column pool grid */
+    .player-grid { display: grid; grid-template-columns: repeat(4, 1fr); overflow-y: auto; max-height: 420px; }
+    /* When role filter is active, collapse to card list */
+    .player-grid.role-filtered { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; padding: 10px 14px; }
+    /* Column headers row */
+    .pool-col-headers { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .pool-col-headers.hidden { display: none; }
+    .pool-col-h { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; padding: 6px 4px; background: var(--panel-2); text-align: center; }
+    .pool-col-h:not(:last-child) { border-right: 1px solid var(--border); }
+    /* Compact player cell (4-col mode) */
+    .player-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 7px 4px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); cursor: pointer; text-align: center; transition: background .1s; }
+    .player-cell:nth-child(4n) { border-right: none; }
+    .player-cell:hover { background: var(--panel-2); }
+    .player-cell.selected { background: rgba(201,168,76,0.15); }
+    .player-cell.selected:hover { background: rgba(201,168,76,0.25); }
+    .player-cell.disabled { opacity: .38; cursor: not-allowed; }
+    .player-cell .pc-avatar { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; flex-shrink: 0; position: relative; }
+    .player-cell.selected .pc-avatar::after { content:''; position:absolute; inset:-2px; border-radius:50%; border:2px solid var(--accent); }
+    .player-cell .pc-name { font-size: 11px; font-weight: 600; color: var(--text); line-height: 1.2; word-break: break-word; }
+    .player-cell .pc-team { font-size: 9px; color: var(--muted); }
+    .player-cell .pc-cr { font-size: 10px; font-weight: 700; color: var(--accent-2); }
+    .player-cell-empty { border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); min-height: 68px; }
+    .player-cell-empty:nth-child(4n) { border-right: none; }
     .player-card {
       background: rgba(255,255,255,0.72); border: 1px solid rgba(201,168,76,0.15); border-radius: 10px;
       padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px;
@@ -192,7 +215,19 @@
     .stat.ok .value { color: var(--good); }
     .stat.bad .value { color: var(--bad); }
 
-    .squad-list { padding: 8px 16px; max-height: 380px; overflow-y: auto; }
+    .squad-list { max-height: 380px; overflow-y: auto; }
+    /* Compact XI slot rows */
+    .xi-slot { display: flex; align-items: center; gap: 7px; padding: 6px 12px; border-bottom: 1px solid var(--border); }
+    .xi-slot.xi-empty { opacity: .4; }
+    .xi-slot .xi-num { font-size: 10px; color: var(--muted); width: 14px; text-align: right; flex-shrink: 0; }
+    .xi-slot .xi-av { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; flex-shrink: 0; }
+    .xi-slot .xi-info { flex: 1; min-width: 0; }
+    .xi-slot .xi-nm { font-size: 12px; font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 4px; }
+    .xi-slot .xi-mt { font-size: 10px; color: var(--muted); }
+    .xi-badge-c  { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 99px; background: var(--accent); color: #1C1F26; flex-shrink: 0; }
+    .xi-badge-vc { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 99px; background: rgba(201,168,76,0.25); color: var(--accent); border: 1px solid var(--accent); flex-shrink: 0; }
+    .xi-slot .xi-pts { font-size: 11px; font-weight: 700; color: var(--muted); flex-shrink: 0; min-width: 28px; text-align: right; }
+    /* Keep old squad-row for any remaining uses */
     .squad-row {
       display: grid; grid-template-columns: 1fr auto auto auto auto; gap: 8px; align-items: center;
       padding: 8px 6px; border-bottom: 1px dashed var(--border);
@@ -857,7 +892,7 @@
       <p>Fantasy cricket</p>
 
       <!-- Tabs -->
-      <div style="display:flex;gap:0;margin-bottom:24px;border-bottom:1px solid var(--border);">
+      <div id="loginTabs" style="display:flex;gap:0;margin-bottom:24px;border-bottom:1px solid var(--border);">
         <button id="tabSignIn"
           style="flex:1;background:none;border:none;border-bottom:2px solid var(--accent);
                  color:var(--text);font-weight:600;padding:8px;cursor:pointer;font-size:14px;">Sign in</button>
@@ -874,10 +909,51 @@
                       background:var(--panel-2);color:var(--text);border:1px solid var(--border);
                       margin-bottom:10px;outline:none;" />
         <button id="signInBtn" class="primary" style="width:100%;padding:12px;font-size:15px;font-weight:600;">Sign in</button>
+        <div style="text-align:right;margin-top:8px;">
+          <button id="forgotPasswordLink" style="background:none;border:none;color:var(--muted);font-size:13px;cursor:pointer;padding:0;text-decoration:underline;">Forgot password?</button>
+        </div>
+      </div>
+
+      <!-- Forgot password form -->
+      <div id="loginFormForgot" style="display:none">
+        <div id="forgotSentMsg" style="display:none;text-align:center;padding:8px 0 16px;">
+          <div style="font-size:30px;margin-bottom:8px;">📬</div>
+          <div style="font-weight:600;color:var(--text);margin-bottom:6px;">Check your email</div>
+          <div style="font-size:13px;color:var(--muted);">Reset link sent to <span id="forgotEmailSent" style="color:var(--text);font-weight:600;"></span></div>
+        </div>
+        <div id="forgotInputArea">
+          <p style="font-size:13px;color:var(--muted);margin:0 0 14px;">Enter your email and we'll send you a reset link.</p>
+          <input id="forgotEmailInput" type="email" placeholder="Email" autocomplete="email"
+                 style="width:100%;padding:11px 14px;border-radius:8px;font-size:15px;
+                        background:var(--panel-2);color:var(--text);border:1px solid var(--border);
+                        margin-bottom:10px;outline:none;" />
+          <button id="forgotSendBtn" class="primary" style="width:100%;padding:12px;font-size:15px;font-weight:600;">Send reset link</button>
+        </div>
+        <div style="text-align:center;margin-top:14px;">
+          <button id="backToSignInBtn" style="background:none;border:none;color:var(--muted);font-size:13px;cursor:pointer;padding:0;">← Back to sign in</button>
+        </div>
+      </div>
+
+      <!-- Set new password form (shown after PASSWORD_RECOVERY redirect) -->
+      <div id="loginFormReset" style="display:none">
+        <p style="font-size:13px;color:var(--muted);margin:0 0 14px;">Enter a new password for your account.</p>
+        <input id="resetPasswordInput" type="password" placeholder="New password (min 6 characters)" autocomplete="new-password"
+               style="width:100%;padding:11px 14px;border-radius:8px;font-size:15px;
+                      background:var(--panel-2);color:var(--text);border:1px solid var(--border);
+                      margin-bottom:10px;outline:none;" />
+        <input id="resetConfirmInput" type="password" placeholder="Confirm new password" autocomplete="new-password"
+               style="width:100%;padding:11px 14px;border-radius:8px;font-size:15px;
+                      background:var(--panel-2);color:var(--text);border:1px solid var(--border);
+                      margin-bottom:10px;outline:none;" />
+        <button id="resetPasswordBtn" class="primary" style="width:100%;padding:12px;font-size:15px;font-weight:600;">Set new password</button>
       </div>
 
       <!-- Create account form -->
       <div id="loginFormSignUp" style="display:none">
+        <input id="signupNameInput" type="text" placeholder="Preferred name (shown on leaderboards)" autocomplete="name"
+               style="width:100%;padding:11px 14px;border-radius:8px;font-size:15px;
+                      background:var(--panel-2);color:var(--text);border:1px solid var(--border);
+                      margin-bottom:10px;outline:none;" />
         <input id="signupEmailInput" type="email" placeholder="Email" autocomplete="email"
                style="width:100%;padding:11px 14px;border-radius:8px;font-size:15px;
                       background:var(--panel-2);color:var(--text);border:1px solid var(--border);
@@ -989,7 +1065,16 @@
           <span id="teamFilterChips" style="display:contents;"></span>
         </div>
         <!-- Row 3: Match chips (scrollable, upcoming only) -->
-        <div class="pf-match-row" id="matchFilterChips"></div>
+        <div class="pf-match-row-wrap">
+          <div class="pf-match-row" id="matchFilterChips"></div>
+        </div>
+      </div>
+      <!-- Fixed column headers: hidden when a role filter is active -->
+      <div class="pool-col-headers" id="poolColHeaders">
+        <div class="pool-col-h">WK</div>
+        <div class="pool-col-h">BAT</div>
+        <div class="pool-col-h">AR</div>
+        <div class="pool-col-h">BOWL</div>
       </div>
       <div id="playerGrid" class="player-grid"></div>
     </section>
@@ -1094,7 +1179,7 @@
                 🏏 Pick your 11 players and save to start your season.
               </div>
               <div style="display:flex; gap:8px; align-items:center;">
-                <input id="slTeamName" type="text" placeholder="Squad name — optional (e.g. Super XI 2026)" style="flex:1; font-size:12px;" />
+                <input id="slTeamName" type="text" placeholder="Squad name — required (e.g. Super XI 2026)" style="flex:1; font-size:12px;" />
               </div>
             </div>
             <div class="squad-stats">
@@ -2409,6 +2494,12 @@ p31,Sample Player,MI,bat,9.0,false
           // Resolve as soon as SDK fires a SIGNED_IN event
           sharedDb.onAuthStateChange(async (event, session) => {
             console.log('[initAuth] onAuthStateChange event:', event, '| user:', session?.user?.email);
+            if (event === 'PASSWORD_RECOVERY') {
+              showLoginScreen();
+              switchLoginTab('reset');
+              finish();
+              return;
+            }
             if (session) {
               appShown = true;
               state.currentUser = session.user;
@@ -2432,6 +2523,11 @@ p31,Sample Player,MI,bat,9.0,false
       try {
         await sharedDb.onAuthStateChange(async (event, session) => {
           console.log('[initAuth] auth event:', event, '| user:', session?.user?.email);
+          if (event === 'PASSWORD_RECOVERY') {
+            showLoginScreen();
+            switchLoginTab('reset');
+            return;
+          }
           if (session) {
             appShown = true;
             state.currentUser = session.user;
@@ -4208,7 +4304,14 @@ p31,Sample Player,MI,bat,9.0,false
       // Auto-join on first save (no gate screen — mirrors mobile behaviour)
       if (!state.sl.squad) {
         if (!state.sl.seasonContest) { toast('No season-long contest found for this tournament.'); btn.disabled = false; btn.textContent = 'Save XI'; return; }
-        const squadName = $('#slTeamName')?.value.trim() || 'My Squad';
+        const squadName = $('#slTeamName')?.value.trim();
+        if (!squadName) {
+          toast('Enter a squad name before saving.');
+          btn.disabled = false; btn.textContent = 'Save XI';
+          const nameInput = $('#slTeamName');
+          if (nameInput) { nameInput.focus(); nameInput.style.borderColor = 'var(--bad)'; setTimeout(() => { nameInput.style.borderColor = ''; }, 2000); }
+          return;
+        }
         try {
           state.sl.squad = await state.db.joinSeason(state.sl.seasonContest.id, squadName);
           state.sl.seasonXferCount = 0;
@@ -5141,9 +5244,10 @@ p31,Sample Player,MI,bat,9.0,false
         const home = m.home_team_id || '—';
         const away = m.away_team_id || '—';
         const num  = m.match_number != null ? m.match_number : '?';
-        const label = `M${num}: ${home} vs ${away}`;
+        const label = `M${num}`;
+        const tooltip = `${home} vs ${away}`;
         const active = sel.has(m.id);
-        html += `<span class="match-chip ${active ? 'active' : ''}" data-match-id="${m.id}">${escapeHtml(label)}</span>`;
+        html += `<span class="match-chip ${active ? 'active' : ''}" data-match-id="${m.id}" title="${escapeHtml(tooltip)}">${escapeHtml(label)}</span>`;
       });
 
       chips.innerHTML = html;
@@ -5506,47 +5610,78 @@ p31,Sample Player,MI,bat,9.0,false
       const isSL    = state.mode === 'season_long';
       const slXiSet = new Set(isSL ? state.sl.xiPlayers : []);
 
-      grid.innerHTML = list.map(p => {
-        let sel, disabled, badge = '';
-        if (isSL) {
-          sel      = slXiSet.has(p.id);
-          disabled = !sel && !canAddToSlXi(p);
-          badge    = '';
-        } else {
-          sel      = state.selected.includes(p.id);
-          disabled = !sel && !canAdd(p);
-        }
-        // SL: show C/V buttons inline when player is in the XI
-        const isCap = isSL && p.id === state.sl.xiCaptain;
-        const isVc  = isSL && p.id === state.sl.xiVc;
-        const capVcBtns = isSL && sel ? `
-          <div class="cap-vc-btns" style="display:flex;gap:3px;margin-top:3px;">
-            <button class="cap-btn ${isCap?'captain':''}" data-slcap="${p.id}" title="Captain">C</button>
-            <button class="cap-btn ${isVc?'vc':''}"       data-slvc="${p.id}"  title="Vice-C">V</button>
-          </div>` : '';
-        const nameSuffix = isCap ? ' <span class="cap-badge">C</span>' : isVc ? ' <span class="vc-badge">VC</span>' : '';
-        return `
-          <div class="player-card ${sel?'selected':''} ${disabled?'disabled':''}" data-id="${p.id}">
+      // Role colour map for avatars
+      const roleBg = { wk:'#FAC775', bat:'#B5D4F4', ar:'#9FE1CB', bowl:'#F5C4B3' };
+      const roleTc = { wk:'#633806', bat:'#0C447C', ar:'#085041', bowl:'#712B13' };
+      function playerInitials(n) { return n.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
+
+      const isRoleFiltered = state.filterRole !== 'ALL';
+      const colHeaders = $('#poolColHeaders');
+      if (colHeaders) colHeaders.classList.toggle('hidden', isRoleFiltered);
+
+      if (isRoleFiltered) {
+        // Filtered to one role — flat card list (original style)
+        grid.classList.add('role-filtered');
+        grid.innerHTML = list.map(p => {
+          let sel, disabled;
+          if (isSL) { sel = slXiSet.has(p.id); disabled = !sel && !canAddToSlXi(p); }
+          else       { sel = state.selected.includes(p.id); disabled = !sel && !canAdd(p); }
+          const isCap = isSL && p.id === state.sl.xiCaptain;
+          const isVc  = isSL && p.id === state.sl.xiVc;
+          const capVcBtns = isSL && sel ? `
+            <div class="cap-vc-btns" style="display:flex;gap:3px;margin-top:3px;">
+              <button class="cap-btn ${isCap?'captain':''}" data-slcap="${p.id}" title="Captain">C</button>
+              <button class="cap-btn ${isVc?'vc':''}"       data-slvc="${p.id}"  title="Vice-C">V</button>
+            </div>` : '';
+          const nameSuffix = isCap ? ' <span class="cap-badge">C</span>' : isVc ? ' <span class="vc-badge">VC</span>' : '';
+          return `<div class="player-card ${sel?'selected':''} ${disabled?'disabled':''}" data-id="${p.id}">
             <div>
-              <div class="name">${p.name}${nameSuffix}${badge}</div>
-              <div class="meta">
-                <span class="role-tag role-${p.role}">${roleLabel[p.role]}</span>
-                ${p.team}
-                ${p.overseas ? '<span class="os-tag" title="Overseas player">✈️</span>' : ''}
-              </div>
+              <div class="name">${p.name}${nameSuffix}</div>
+              <div class="meta"><span class="role-tag role-${p.role}">${roleLabel[p.role]}</span>${p.team}${p.overseas?' <span class="os-tag">✈️</span>':''}</div>
               ${capVcBtns}
             </div>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
               <span class="sel-tick">✓</span>
               <div class="credit">${p.credits.toFixed(1)}</div>
             </div>
-          </div>
-        `;
-      }).join('');
-      grid.querySelectorAll('.player-card').forEach(card => {
-        card.addEventListener('click', () => togglePlayer(card.dataset.id));
-      });
-      // Wire C/V buttons in SL mode
+          </div>`;
+        }).join('');
+        grid.querySelectorAll('.player-card').forEach(card => {
+          card.addEventListener('click', () => togglePlayer(card.dataset.id));
+        });
+      } else {
+        // 4-column grid: WK | BAT | AR | BOWL
+        grid.classList.remove('role-filtered');
+        const ROLES = ['wk','bat','ar','bowl'];
+        const byRole = { wk:[], bat:[], ar:[], bowl:[] };
+        list.forEach(p => { if (byRole[p.role]) byRole[p.role].push(p); });
+        const maxRows = Math.max(0, ...ROLES.map(r => byRole[r].length));
+        let html = '';
+        for (let i = 0; i < maxRows; i++) {
+          ROLES.forEach(role => {
+            const p = byRole[role][i];
+            if (!p) { html += `<div class="player-cell-empty"></div>`; return; }
+            let sel, disabled;
+            if (isSL) { sel = slXiSet.has(p.id); disabled = !sel && !canAddToSlXi(p); }
+            else       { sel = state.selected.includes(p.id); disabled = !sel && !canAdd(p); }
+            const isCap = isSL && p.id === state.sl.xiCaptain;
+            const isVc  = isSL && p.id === state.sl.xiVc;
+            const capBadge = isCap ? '<span class="cap-badge" style="font-size:9px;">C</span>' : isVc ? '<span class="vc-badge" style="font-size:9px;">V</span>' : '';
+            const osMark = p.overseas ? '<span title="Overseas" style="font-size:8px;color:var(--accent);">✈</span>' : '';
+            html += `<div class="player-cell${sel?' selected':''}${disabled?' disabled':''}" data-id="${p.id}">
+              <div class="pc-avatar" style="background:${roleBg[p.role]};color:${roleTc[p.role]};">${playerInitials(p.name)}</div>
+              <div class="pc-name">${p.name.split(' ').pop()}${capBadge}${osMark}</div>
+              <div class="pc-team">${p.team}</div>
+              <div class="pc-cr">${p.credits.toFixed(1)}</div>
+            </div>`;
+          });
+        }
+        grid.innerHTML = html;
+        grid.querySelectorAll('.player-cell:not(.disabled)').forEach(cell => {
+          cell.addEventListener('click', () => togglePlayer(cell.dataset.id));
+        });
+      }
+      // Wire C/V buttons in SL mode (flat card view)
       if (isSL) {
         grid.querySelectorAll('[data-slcap]').forEach(btn =>
           btn.addEventListener('click', e => { e.stopPropagation(); slSetCaptain(btn.dataset.slcap); }));
@@ -5608,44 +5743,47 @@ p31,Sample Player,MI,bat,9.0,false
 
     function renderSquadList(){
       const list = $('#squadList');
-      if (state.selected.length === 0) {
-        list.innerHTML = '<div class="empty">Tap a player on the left to add them to your XI.</div>';
-        return;
-      }
-      const scored = scoreTeam(state.selected.map(buildPlayerForScoring), state.format);
+      const scored = state.selected.length
+        ? scoreTeam(state.selected.map(buildPlayerForScoring), state.format)
+        : [];
       const byName = Object.fromEntries(scored.map(s => [s.name, s]));
+      const ordered = sortByRole(state.selected);
+      const roleBg = { wk:'#FAC775', bat:'#B5D4F4', ar:'#9FE1CB', bowl:'#F5C4B3' };
+      const roleTc = { wk:'#633806', bat:'#0C447C', ar:'#085041', bowl:'#712B13' };
+      function initials(n) { return n.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
 
-      list.innerHTML = sortByRole(state.selected).map(id => {
+      list.innerHTML = Array.from({length:11}, (_,i) => {
+        const id = ordered[i];
+        if (!id) return `<div class="xi-slot xi-empty">
+          <span class="xi-num">${i+1}</span>
+          <div class="xi-av" style="background:var(--panel-2);"></div>
+          <div class="xi-info"><div class="xi-nm" style="color:var(--muted);font-weight:400;">Empty slot</div></div>
+        </div>`;
         const p = playerById(id); if (!p) return '';
         const score = byName[p.name];
-        const cap = state.captain === id, vc = state.viceCaptain === id;
-        const breakdown = score && Object.keys(score.breakdown).length
-          ? Object.entries(score.breakdown).map(([cat,vals]) => {
-              const items = Object.entries(vals).filter(([,v])=>v!==0).map(([k,v])=>`${k}: ${v>0?'+':''}${v}`).join(', ');
-              return items ? `<span class="b-cat">${cat}</span>${items}` : '';
-            }).filter(Boolean).join(' &nbsp;|&nbsp; ')
-          : '<em>no events yet</em>';
-        return `
-          <div class="squad-row" data-id="${id}">
-            <div>
-              <div class="name">${p.name}</div>
-              <div class="meta"><span class="role-tag role-${p.role}">${roleLabel[p.role]}</span> ${p.team} · ${p.credits.toFixed(1)} cr${p.overseas?' <span class="os-tag">✈️</span>':''}</div>
-            </div>
-            <button class="cap-btn ${cap?'captain':''}" data-act="cap"  title="Captain (2×)">C</button>
-            <button class="cap-btn ${vc?'vc':''}"      data-act="vc"   title="Vice-Captain (1.5×)">V</button>
-            <span class="pts">${score ? score.totalPoints.toFixed(1) : '0.0'}</span>
-            <button class="remove-btn" data-act="rm" title="Remove">×</button>
-            <div class="breakdown">${breakdown}</div>
+        const isCap = state.captain === id;
+        const isVc  = state.viceCaptain === id;
+        const badge = isCap ? '<span class="xi-badge-c">C</span>' : isVc ? '<span class="xi-badge-vc">VC</span>' : '';
+        const pts   = score ? score.totalPoints.toFixed(0) : '—';
+        return `<div class="xi-slot" data-id="${id}">
+          <span class="xi-num">${i+1}</span>
+          <div class="xi-av" style="background:${roleBg[p.role]};color:${roleTc[p.role]};">${initials(p.name)}</div>
+          <div class="xi-info">
+            <div class="xi-nm">${p.name.split(' ').pop()} ${badge}</div>
+            <div class="xi-mt">${roleLabel[p.role]} · ${p.team}</div>
           </div>
-        `;
+          <button class="cap-btn ${isCap?'captain':''}" data-act="cap" title="Captain (2×)">C</button>
+          <button class="cap-btn ${isVc?'vc':''}"      data-act="vc"  title="Vice-captain (1.5×)">V</button>
+          <span class="xi-pts">${pts}</span>
+          <button class="remove-btn" data-act="rm" title="Remove">×</button>
+        </div>`;
       }).join('');
 
-      list.querySelectorAll('.squad-row').forEach(row => {
+      list.querySelectorAll('.xi-slot[data-id]').forEach(row => {
         const id = row.dataset.id;
         row.querySelector('[data-act="cap"]').addEventListener('click', e => { e.stopPropagation(); setCaptain(id); });
         row.querySelector('[data-act="vc"]').addEventListener ('click', e => { e.stopPropagation(); setViceCaptain(id); });
         row.querySelector('[data-act="rm"]').addEventListener ('click', e => { e.stopPropagation(); togglePlayer(id); });
-        row.addEventListener('click', () => row.classList.toggle('expanded'));
       });
     }
 
@@ -10160,12 +10298,16 @@ p31,Sample Player,MI,bat,9.0,false
           <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Points</div>
           <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Xfers</div>
           ${rows.map((r, i) => {
-            const isMe = r.squad_id === state.sl?.squad?.id;
-            const bg = isMe ? 'background:rgba(201,168,76,0.12);' : '';
+            const isMe = r.squadId === state.sl?.squad?.id;
+            const bg   = isMe ? 'background:rgba(201,168,76,0.12);' : '';
+            const squadName = escapeHtml(r.squadName || 'Squad');
+            const sub = r.displayName ? `<div style="font-size:10px;color:var(--muted);margin-top:1px;">${escapeHtml(r.displayName)}</div>` : '';
             return `<div style="padding:8px 10px;font-size:12px;${bg}border-bottom:1px solid var(--border);">${i+1}</div>
-              <div style="padding:8px 10px;font-size:12px;font-weight:${isMe?'600':'400'};${bg}border-bottom:1px solid var(--border);">${escapeHtml(r.name || 'Squad')}</div>
-              <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${r.total_points ?? '—'}</div>
-              <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${r.transfer_count ?? 0}</div>`;
+              <div style="padding:8px 10px;font-size:12px;font-weight:${isMe?'600':'400'};${bg}border-bottom:1px solid var(--border);">
+                ${isMe ? `<span style="color:var(--accent);">★</span> ` : ''}${squadName}${sub}
+              </div>
+              <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${r.totalPoints ?? '—'}</div>
+              <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${r.transferCount ?? 0}</div>`;
           }).join('')}
         </div>`;
       } catch(e) {
@@ -10290,14 +10432,28 @@ p31,Sample Player,MI,bat,9.0,false
     $('#tabSignUp').addEventListener('click', () => switchLoginTab('signup'));
     function switchLoginTab(tab) {
       const isSignIn = tab === 'signin';
-      $('#loginFormSignIn').style.display  = isSignIn ? '' : 'none';
-      $('#loginFormSignUp').style.display  = isSignIn ? 'none' : '';
+      const isSignUp = tab === 'signup';
+      const isForgot = tab === 'forgot';
+      const isReset  = tab === 'reset';
+      // Show/hide forms
+      $('#loginFormSignIn').style.display = isSignIn ? '' : 'none';
+      $('#loginFormSignUp').style.display = isSignUp ? '' : 'none';
+      $('#loginFormForgot').style.display = isForgot ? '' : 'none';
+      $('#loginFormReset').style.display  = isReset  ? '' : 'none';
+      // Hide tabs for forgot/reset states (they don't apply)
+      $('#loginTabs').style.display = (isForgot || isReset) ? 'none' : '';
+      // Reset forgot form to input state when entering
+      if (isForgot) {
+        $('#forgotSentMsg').style.display  = 'none';
+        $('#forgotInputArea').style.display = '';
+      }
+      // Tab active styles
       $('#tabSignIn').style.borderBottomColor = isSignIn ? 'var(--accent)' : 'transparent';
       $('#tabSignIn').style.color          = isSignIn ? 'var(--text)' : 'var(--muted)';
       $('#tabSignIn').style.fontWeight     = isSignIn ? '600' : '500';
-      $('#tabSignUp').style.borderBottomColor = isSignIn ? 'transparent' : 'var(--accent)';
-      $('#tabSignUp').style.color          = isSignIn ? 'var(--muted)' : 'var(--text)';
-      $('#tabSignUp').style.fontWeight     = isSignIn ? '500' : '600';
+      $('#tabSignUp').style.borderBottomColor = isSignUp ? 'var(--accent)' : 'transparent';
+      $('#tabSignUp').style.color          = isSignUp ? 'var(--muted)' : 'var(--text)';
+      $('#tabSignUp').style.fontWeight     = isSignUp ? '500' : '600';
       $('#loginError').textContent = '';
     }
 
@@ -10334,9 +10490,11 @@ p31,Sample Player,MI,bat,9.0,false
     $('#signUpBtn').addEventListener('click', async () => {
       const url      = SB_URL  || localStorage.getItem(SB_LS_URL) || '';
       const key      = SB_ANON || localStorage.getItem(SB_LS_KEY) || '';
+      const name     = $('#signupNameInput').value.trim();
       const email    = $('#signupEmailInput').value.trim();
       const password = $('#signupPasswordInput').value;
       const confirm  = $('#signupConfirmInput').value;
+      if (!name)                { $('#loginError').textContent = 'Enter your preferred name.'; $('#signupNameInput').focus(); return; }
       if (!email)               { $('#loginError').textContent = 'Enter your email.'; return; }
       if (password.length < 6)  { $('#loginError').textContent = 'Password must be at least 6 characters.'; return; }
       if (password !== confirm)  { $('#loginError').textContent = 'Passwords don\'t match.'; return; }
@@ -10344,8 +10502,8 @@ p31,Sample Player,MI,bat,9.0,false
         $('#loginError').textContent = '';
         $('#signUpBtn').disabled = true;
         $('#signUpBtn').textContent = 'Creating…';
-        await getSharedDb(url, key).signUpWithPassword(email, password);
-        // onAuthStateChange fires → showApp()
+        await getSharedDb(url, key).signUpWithPassword(email, password, { full_name: name });
+        // onAuthStateChange fires → showApp() which calls upsertProfile with full_name
       } catch (e) {
         $('#signUpBtn').disabled = false;
         $('#signUpBtn').textContent = 'Create account';
@@ -10355,6 +10513,62 @@ p31,Sample Player,MI,bat,9.0,false
     $('#signupConfirmInput').addEventListener('keydown', e => {
       if (e.key === 'Enter') $('#signUpBtn').click();
     });
+
+    // ── Forgot password ───────────────────────────────────────────────────
+    $('#forgotPasswordLink').addEventListener('click', () => switchLoginTab('forgot'));
+    $('#backToSignInBtn').addEventListener('click', () => switchLoginTab('signin'));
+
+    $('#forgotSendBtn').addEventListener('click', async () => {
+      const url   = SB_URL  || localStorage.getItem(SB_LS_URL) || '';
+      const key   = SB_ANON || localStorage.getItem(SB_LS_KEY) || '';
+      const email = $('#forgotEmailInput').value.trim();
+      if (!email) { $('#loginError').textContent = 'Enter your email.'; return; }
+      try {
+        $('#loginError').textContent = '';
+        $('#forgotSendBtn').disabled = true;
+        $('#forgotSendBtn').textContent = 'Sending…';
+        const redirectTo = window.location.origin + window.location.pathname;
+        await getSharedDb(url, key).resetPasswordForEmail(email, redirectTo);
+        // Show success state
+        $('#forgotEmailSent').textContent = email;
+        $('#forgotInputArea').style.display = 'none';
+        $('#forgotSentMsg').style.display   = '';
+      } catch (e) {
+        $('#forgotSendBtn').disabled = false;
+        $('#forgotSendBtn').textContent = 'Send reset link';
+        $('#loginError').textContent = e.message || 'Could not send reset email.';
+      }
+    });
+    $('#forgotEmailInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') $('#forgotSendBtn').click();
+    });
+
+    // ── Set new password (after PASSWORD_RECOVERY redirect) ───────────────
+    $('#resetPasswordBtn').addEventListener('click', async () => {
+      const url      = SB_URL  || localStorage.getItem(SB_LS_URL) || '';
+      const key      = SB_ANON || localStorage.getItem(SB_LS_KEY) || '';
+      const password = $('#resetPasswordInput').value;
+      const confirm  = $('#resetConfirmInput').value;
+      if (password.length < 6) { $('#loginError').textContent = 'Password must be at least 6 characters.'; return; }
+      if (password !== confirm) { $('#loginError').textContent = 'Passwords don\'t match.'; return; }
+      try {
+        $('#loginError').textContent = '';
+        $('#resetPasswordBtn').disabled = true;
+        $('#resetPasswordBtn').textContent = 'Saving…';
+        await getSharedDb(url, key).updatePassword(password);
+        toast('Password updated — signing you in…', 3000);
+        // Supabase session is already active after updateUser; showApp will fire
+        // via the existing onAuthStateChange subscription.
+      } catch (e) {
+        $('#resetPasswordBtn').disabled = false;
+        $('#resetPasswordBtn').textContent = 'Set new password';
+        $('#loginError').textContent = e.message || 'Could not update password.';
+      }
+    });
+    $('#resetConfirmInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') $('#resetPasswordBtn').click();
+    });
+
     $('#signOutBtn').addEventListener('click', () => {
       // Bypass SDK (fetch hangs in Safari) — clear auth token directly from localStorage
       const PROJECT_REF = 'gepltclaeczgtruvekci';

@@ -80,10 +80,11 @@ export function createDb(cfg = {}) {
       if (error) throw error;
     },
 
-    /** Create a new account with email + password. */
-    async signUpWithPassword(email, password) {
+    /** Create a new account with email + password + optional metadata (e.g. { full_name }). */
+    async signUpWithPassword(email, password, metadata = {}) {
       const sb = await getClient();
-      const { data, error } = await sb.auth.signUp({ email, password });
+      const opts = Object.keys(metadata).length ? { data: metadata } : undefined;
+      const { data, error } = await sb.auth.signUp({ email, password, options: opts });
       if (error) throw error;
       return data;
     },
@@ -92,6 +93,20 @@ export function createDb(cfg = {}) {
     async signOut() {
       const sb = await getClient();
       const { error } = await sb.auth.signOut();
+      if (error) throw error;
+    },
+
+    /** Send a password-reset email. redirectTo should be the app's current URL. */
+    async resetPasswordForEmail(email, redirectTo) {
+      const sb = await getClient();
+      const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
+      if (error) throw error;
+    },
+
+    /** Update the signed-in user's password (called after PASSWORD_RECOVERY session). */
+    async updatePassword(newPassword) {
+      const sb = await getClient();
+      const { error } = await sb.auth.updateUser({ password: newPassword });
       if (error) throw error;
     },
 
@@ -1503,6 +1518,19 @@ export function createDb(cfg = {}) {
 
       const squadIds = squads.map(s => s.id);
 
+      // Fetch display names for all users in this contest
+      const userIds = [...new Set(squads.map(s => s.user_id).filter(Boolean))];
+      const profileMap = {};
+      if (userIds.length) {
+        const { data: profiles } = await sb
+          .from('profiles')
+          .select('id, display_name, email')
+          .in('id', userIds);
+        (profiles || []).forEach(p => {
+          profileMap[p.id] = p.display_name || p.email || p.id.slice(0, 8);
+        });
+      }
+
       // SL scores live in user_match_xi_scores (one row per player per squad per match).
       // user_team_match_scores is the daily pipeline and never receives SL data.
       const { data: scores, error: scErr } = await sb
@@ -1539,9 +1567,11 @@ export function createDb(cfg = {}) {
           userId      : s.user_id,
           squadId     : s.id,
           squadName   : s.name,
+          displayName : s.user_id ? (profileMap[s.user_id] ?? null) : null,
           // Net points = raw fantasy points minus transfer penalties
           totalPoints : (pointsBySquad[s.id] || 0) - (penaltyBySquad[s.id] || 0),
           matchCount  : matchesBySquad[s.id]?.size  || 0,
+          transferCount: (xferRows || []).filter(t => t.squad_id === s.id).length,
         }))
         .sort((a, b) => b.totalPoints - a.totalPoints);
     },
