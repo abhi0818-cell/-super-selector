@@ -2796,11 +2796,13 @@ p31,Sample Player,MI,bat,9.0,false
         // Wire change handler (replace node to avoid duplicate listeners)
         const fresh = headerPicker.cloneNode(true);
         headerPicker.parentNode.replaceChild(fresh, headerPicker);
-        fresh.addEventListener('change', e => {
-          switchTournament(e.target.value);
+        fresh.addEventListener('change', async e => {
+          await switchTournament(e.target.value);
           // Keep settings picker in sync
           const sp = $('#tournamentPicker');
           if (sp) sp.value = e.target.value;
+          // Jump to Contest tab so the user immediately sees the selected tournament's contests
+          switchPageTab('contest');
         });
       }
 
@@ -3357,6 +3359,8 @@ p31,Sample Player,MI,bat,9.0,false
       }
       const fmt = tournament?.format || 'T20';
       toast(`Switched to ${tournament?.name ?? 'tournament'} · ${fmt} scoring.`);
+      // Always refresh Home tab so "Currently selected" badge reflects the new tournament
+      renderPageHomeTab();
     }
 
     async function addTournamentHandler() {
