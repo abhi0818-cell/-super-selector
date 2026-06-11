@@ -102,6 +102,12 @@
     .contest-card.active { border: 2px solid var(--accent); background: rgba(201,168,76,0.07); }
     .contest-card-name { font-size: 14px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
     .contest-card-meta { font-size: 12px; color: var(--muted); }
+    .contest-card-status { margin-top: 8px; font-size: 11.5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .cc-joined-badge { background: var(--accent); color: #1C1F26; border-radius: 99px; padding: 2px 8px; font-weight: 700; font-size: 10px; letter-spacing: 0.03em; }
+    .cc-squad-name { color: var(--text); font-weight: 600; }
+    .cc-draft-status { color: var(--muted); }
+    .cc-join-pill { border: 1px solid var(--accent); color: var(--accent); border-radius: 99px; padding: 2px 10px; font-size: 11px; cursor: pointer; transition: background .12s, color .12s; }
+    .cc-join-pill:hover { background: var(--accent); color: #1C1F26; }
 
     /* Season tab panel */
     #pageTabSeason { max-width: 1400px; margin: 0 auto; padding: 20px 24px 32px; }
@@ -474,6 +480,13 @@
     }
     .sl-tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
     .sl-tab:hover:not(.active) { color: var(--text); }
+    #slInfoBar { display: flex; align-items: center; flex-wrap: wrap; gap: 0; padding: 6px 14px; background: var(--panel-2); border-bottom: 1px solid var(--border); font-size: 11.5px; row-gap: 2px; }
+    #slInfoBar .sib-sep { color: var(--border); margin: 0 7px; }
+    #slInfoBar .sib-squad { font-weight: 700; color: var(--accent); }
+    #slInfoBar .sib-contest { color: var(--muted); }
+    #slInfoBar .sib-label { color: var(--muted); margin-right: 3px; }
+    #slInfoBar .sib-val { font-weight: 600; color: var(--text); }
+    #slInfoBar .sib-pts { font-weight: 700; color: var(--accent); }
 
     /* ── Daily panel tabs ───────────────────────────────────────────────── */
     .daily-tabs {
@@ -1070,6 +1083,8 @@
             <span class="sl-tab" data-sltab="season">Season</span>
             <span class="sl-tab" data-sltab="leagues">Leagues</span>
           </div>
+          <!-- Squad context bar — shown once user has a squad -->
+          <div id="slInfoBar" style="display:none;"></div>
 
           <!-- XI picker tab -->
           <div id="slXiTab">
@@ -4771,6 +4786,32 @@ p31,Sample Player,MI,bat,9.0,false
       if (tab === 'history') renderHistory();
     }
 
+    function renderSlInfoBar() {
+      const bar = $('#slInfoBar');
+      if (!bar) return;
+      const squad   = state.sl.squad;
+      const contest = state.sl.seasonContest;
+      if (!squad) { bar.style.display = 'none'; return; }
+      const squadName   = escapeHtml(squad.name || 'My Squad');
+      const contestName = contest ? escapeHtml(contest.name || 'Season Long') : null;
+      const draftCount  = state.sl.xiPlayers?.length ?? 0;
+      const draftLabel  = draftCount === 11
+        ? `<span style="color:var(--good);font-weight:700;">11/11 ✓</span>`
+        : `<span style="color:var(--muted);">${draftCount}/11</span>`;
+      const xfers       = state.sl.seasonXferCount ?? 0;
+      const seasonPts   = state.sl.seasonData?.seasonTotal ?? null;
+      bar.style.display = 'flex';
+      bar.innerHTML = `
+        <span class="sib-squad">${squadName}</span>
+        ${contestName ? `<span class="sib-sep">|</span><span class="sib-contest">${contestName}</span>` : ''}
+        <span class="sib-sep">|</span>
+        <span class="sib-label">Draft:</span>${draftLabel}
+        <span class="sib-sep">|</span>
+        <span class="sib-label">Xfers:</span><span class="sib-val">${xfers}</span>
+        ${seasonPts !== null ? `<span class="sib-sep">|</span><span class="sib-pts">${seasonPts} pts</span>` : ''}
+      `;
+    }
+
     function renderSlActiveScreen() {
       const tab = state.sl.activeSlTab;
       document.querySelectorAll('.sl-tab').forEach(t =>
@@ -4779,6 +4820,7 @@ p31,Sample Player,MI,bat,9.0,false
       $('#slLiveTab').style.display    = tab === 'live'    ? '' : 'none';
       $('#slSeasonTab').style.display  = tab === 'season'  ? '' : 'none';
       $('#slLeaguesTab').style.display = tab === 'leagues' ? '' : 'none';
+      renderSlInfoBar();
       if (tab === 'xi')      renderSlXiTab();
       if (tab === 'live')    renderSlLiveTab();
       if (tab === 'season')  renderSlSeasonTab();
@@ -10045,14 +10087,38 @@ p31,Sample Player,MI,bat,9.0,false
       grid.innerHTML = contests.map(c => {
         const type = c.contest_type === 'daily' ? 'Daily XI' : (c.is_private ? `🔒 ${escapeHtml(c.name)}` : escapeHtml(c.name || 'Season Long'));
         const isActive = lbState.tab === c.id || (lbState.tab === 'daily' && c.contest_type === 'daily');
+        let statusHtml = '';
+        if (c.contest_type === 'season_long') {
+          const isJoined = state.sl.squad?.contest_id === c.id;
+          if (isJoined) {
+            const squadName = escapeHtml(state.sl.squad.name || 'My Squad');
+            const draftCount = state.sl.xiPlayers?.length ?? 0;
+            const draftStatus = draftCount === 11 ? '11/11 drafted ✓' : draftCount > 0 ? `${draftCount}/11 drafted` : 'Draft pending';
+            statusHtml = `<div class="contest-card-status">
+              <span class="cc-joined-badge">✓ Joined</span>
+              <span class="cc-squad-name">${squadName}</span>
+              <span class="cc-draft-status">· ${draftStatus}</span>
+            </div>`;
+          } else {
+            statusHtml = `<div class="contest-card-status">
+              <span class="cc-join-pill">Join →</span>
+            </div>`;
+          }
+        }
         return `<div class="contest-card${isActive ? ' active' : ''}" data-contestid="${c.id}" data-contesttype="${c.contest_type}">
           <div class="contest-card-name">${type}</div>
           <div class="contest-card-meta">${c.contest_type === 'daily' ? 'Per-match fresh pick' : 'Season-long squad'}</div>
+          ${statusHtml}
         </div>`;
       }).join('');
 
       grid.querySelectorAll('.contest-card').forEach(card => {
-        card.addEventListener('click', () => {
+        card.addEventListener('click', e => {
+          // "Join →" pill — navigate to My Team tab instead of selecting card
+          if (e.target.classList.contains('cc-join-pill')) {
+            switchPageTab('team');
+            return;
+          }
           grid.querySelectorAll('.contest-card').forEach(c => c.classList.remove('active'));
           card.classList.add('active');
           const cid = card.dataset.contestid;
@@ -10124,7 +10190,32 @@ p31,Sample Player,MI,bat,9.0,false
 
       const data = state.sl?.seasonData;
       if (!data) {
-        historyEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:16px 0;">No season data yet. Join a Season Long contest to see history here.</div>';
+        const hasDraft = state.sl?.squad && (state.sl?.xiPlayers?.length ?? 0) > 0;
+        if (hasDraft) {
+          const draftCount  = state.sl.xiPlayers.length;
+          const capName     = PLAYERS.find(p => p.id === state.sl.xiCaptain)?.name?.split(' ').pop() ?? '—';
+          const vcName      = PLAYERS.find(p => p.id === state.sl.xiVc)?.name?.split(' ').pop() ?? '—';
+          // Zero-state metrics
+          $('#seasonTotalPts').textContent  = '0 pts';
+          $('#seasonMatchCount').textContent = 'No matches played yet';
+          $('#seasonXfers').textContent      = '0';
+          $('#seasonXferPenalty').textContent = 'no penalties';
+          $('#seasonBestPts').textContent    = '—';
+          $('#seasonBestMatch').textContent  = '—';
+          historyEl.innerHTML = `
+            <div style="background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.3);border-radius:10px;padding:14px 16px;margin-bottom:16px;display:flex;gap:12px;align-items:flex-start;">
+              <span style="font-size:22px;line-height:1;">📋</span>
+              <div>
+                <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:5px;">Draft saved — awaiting first match lock</div>
+                <div style="font-size:12px;color:var(--muted);line-height:1.5;">
+                  ${draftCount}/11 players selected · C: ${escapeHtml(capName)} · VC: ${escapeHtml(vcName)}<br>
+                  Points will appear here after Match 1 is locked by the admin.
+                </div>
+              </div>
+            </div>`;
+        } else {
+          historyEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:16px 0;">No season data yet. Join a Season Long contest to see history here.</div>';
+        }
         return;
       }
 
@@ -10137,7 +10228,28 @@ p31,Sample Player,MI,bat,9.0,false
       $('#seasonXferPenalty').textContent = totalPenalty ? `−${totalPenalty} pts penalty` : 'no penalties';
 
       if (!data.matches?.length) {
-        historyEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:16px 0;">No matches scored yet.</div>';
+        // Season data exists (squad joined) but no matches scored yet — same pre-start banner
+        const draftCount  = state.sl?.xiPlayers?.length ?? 0;
+        const capName     = PLAYERS.find(p => p.id === state.sl?.xiCaptain)?.name?.split(' ').pop() ?? '—';
+        const vcName      = PLAYERS.find(p => p.id === state.sl?.xiVc)?.name?.split(' ').pop() ?? '—';
+        $('#seasonTotalPts').textContent   = (data.seasonTotal ?? 0) + ' pts';
+        $('#seasonMatchCount').textContent = 'No matches played yet';
+        $('#seasonXfers').textContent      = (data.transfers || []).length;
+        const totalPenalty = (data.transfers || []).reduce((s, t) => s + Number(t.points_deducted ?? 0), 0);
+        $('#seasonXferPenalty').textContent = totalPenalty ? `−${totalPenalty} pts penalty` : 'no penalties';
+        $('#seasonBestPts').textContent     = '—';
+        $('#seasonBestMatch').textContent   = '—';
+        historyEl.innerHTML = `
+          <div style="background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.3);border-radius:10px;padding:14px 16px;margin-bottom:16px;display:flex;gap:12px;align-items:flex-start;">
+            <span style="font-size:22px;line-height:1;">📋</span>
+            <div>
+              <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:5px;">Draft saved — awaiting first match lock</div>
+              <div style="font-size:12px;color:var(--muted);line-height:1.5;">
+                ${draftCount}/11 players selected · C: ${escapeHtml(capName)} · VC: ${escapeHtml(vcName)}<br>
+                Points will appear here after Match 1 is locked by the admin.
+              </div>
+            </div>
+          </div>`;
         return;
       }
 
