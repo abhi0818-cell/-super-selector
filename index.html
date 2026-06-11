@@ -115,6 +115,16 @@
     /* Pool toggle button */
     #editTeamBtn { font-size: 12px; padding: 5px 12px; border-radius: 8px; }
 
+    /* Multi-select match filter chips */
+    .match-chip {
+      padding: 4px 9px; border-radius: 14px; font-size: 11px; cursor: pointer; user-select: none;
+      background: var(--panel); border: 1px solid var(--border); color: var(--muted);
+      white-space: nowrap; transition: all 0.12s;
+    }
+    .match-chip:hover { border-color: var(--accent); color: var(--text); }
+    .match-chip.active { background: var(--accent); color: #1C1F26; border-color: var(--accent); font-weight: 600; }
+    .match-chip.all-chip { font-weight: 500; }
+
     .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); }
     .panel h2 { margin: 0; padding: 14px 16px; border-bottom: 1px solid var(--border); font-size: 14px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); display: flex; justify-content: space-between; align-items: center; }
     .panel .body { padding: 14px 16px; }
@@ -943,7 +953,7 @@
         <span class="chip" data-role="ar">AR</span>
         <span class="chip" data-role="bowl">BOWL</span>
         <span class="chip" id="osFilterChip" style="display:none;" title="Show overseas players only">✈️ OS</span>
-        <select id="matchFilter" style="font-size:12px; padding:6px 10px;" title="Filter pool to a match's two squads"></select>
+        <div id="matchFilterChips" style="display:flex; flex-wrap:wrap; gap:5px; align-items:center;"></div>
         <select id="teamFilter" style="font-size:12px; padding:6px 10px;"></select>
       </div>
       <div id="playerGrid" class="player-grid"></div>
@@ -960,7 +970,6 @@
           <span class="dot"></span>
           <span id="countdownText">—</span>
         </span>
-        <button id="editTeamBtn" class="ctrl-btn" title="Show player pool to edit your team" style="display:none; margin-right:14px;">✏️ Edit team</button>
       </h2>
 
       <!-- ═══ DAILY PANEL (existing) ═══ -->
@@ -1067,7 +1076,9 @@
             <!-- Booster pills (shown when contest has available_boosters) -->
             <div id="slBoosterBar" style="display:none; padding:6px 0 8px;"></div>
             <!-- Selected XI list -->
-            <div id="slXiList" style="margin-bottom:6px;"></div>
+            <div id="slXiList" style="margin-bottom:10px;"></div>
+            <!-- Pick / Edit Team button — opens player pool -->
+            <button id="editTeamBtn" class="ctrl-btn" style="width:100%; margin-bottom:10px; padding:9px; font-size:13px; display:none;">✏️ Pick / Edit Team</button>
             <div class="save-bar">
               <span style="flex:1; font-size:12px; color:var(--muted);" id="slXiSaveLabel">Pick 11 from the pool.</span>
               <button id="slRevertBtn" class="danger" style="display:none;">Revert to Saved</button>
@@ -1853,6 +1864,7 @@ p31,Sample Player,MI,bat,9.0,false
       format: 'T20',
       filterRole: 'ALL',
       filterOS: false,
+      selectedMatchIds: new Set(), // multi-select match filter; empty = show all
       search: '',
       selected: [],
       captain: null,
@@ -2440,7 +2452,6 @@ p31,Sample Player,MI,bat,9.0,false
       const lbBtn    = $('#lbBtn');
       const rulesBtn = $('#rulesBtn');
       const pageTabs = $('#pageTabs');
-      const editTeamBtn = $('#editTeamBtn');
 
       const isAdmin = user?.email === ADMIN_EMAIL;
       if (user) {
@@ -2454,7 +2465,6 @@ p31,Sample Player,MI,bat,9.0,false
         rulesBtn.style.display = '';
         adminBtn.style.display = isAdmin ? '' : 'none';
         pageTabs.style.display = 'flex';
-        editTeamBtn.style.display = '';
       } else {
         pill.style.display     = 'none';
         signOut.style.display  = 'none';
@@ -2462,7 +2472,6 @@ p31,Sample Player,MI,bat,9.0,false
         rulesBtn.style.display = 'none';
         adminBtn.style.display = !REQUIRE_AUTH ? '' : 'none';
         pageTabs.style.display = !REQUIRE_AUTH ? 'flex' : 'none';
-        editTeamBtn.style.display = !REQUIRE_AUTH ? '' : 'none';
       }
     }
 
@@ -3264,6 +3273,7 @@ p31,Sample Player,MI,bat,9.0,false
       // Reset pool filters on tournament change
       state.filterTeam = 'ALL';
       state.filterOS   = false;
+      state.selectedMatchIds = new Set();
       const tournament = state.tournaments.find(t => t.id === id);
       applyTournamentFormat(tournament);
       // Auto-fill Schedule sync field with this tournament's saved series ID
@@ -3866,7 +3876,7 @@ p31,Sample Player,MI,bat,9.0,false
       const xiList = $('#slXiList');
       const totalStatEl = $('#slXiStatTotal .value');
       if (xi.length === 0) {
-        xiList.innerHTML = '<div class="empty" style="padding:8px 0; font-size:12px;">No players selected — tap from the pool on the left.</div>';
+        xiList.innerHTML = '<div class="empty" style="padding:8px 0; font-size:12px;">No players selected — click <strong>Pick / Edit Team</strong> below to open the player pool.</div>';
         if (totalStatEl) totalStatEl.textContent = '0.0';
       } else {
         // Compute live scores for all XI players using same engine as daily mode.
@@ -5031,18 +5041,43 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     function renderMatchSelector() {
-      const sel = $('#matchFilter');
-      if (!sel) return;
-      const cur = state.activeMatchId;
+      const chips = $('#matchFilterChips');
+      if (!chips) return;
+
       const sorted = [...state.matches].sort((a,b)=>(a.match_number||0)-(b.match_number||0));
-      const opts = ['<option value="">All matches</option>']
-        .concat(sorted.map(m => {
-          const home = m.home_team_id || '—';
-          const away = m.away_team_id || '—';
-          const label = `Match ${m.match_number ?? '?'}: ${home} vs ${away}`;
-          return `<option value="${m.id}" ${cur===m.id?'selected':''}>${escapeHtml(label)}</option>`;
-        }));
-      sel.innerHTML = opts.join('');
+      const sel = state.selectedMatchIds;
+
+      // "All" chip — active when nothing is selected
+      const allActive = sel.size === 0;
+      let html = `<span class="match-chip all-chip ${allActive ? 'active' : ''}" data-match-id="__all__">All</span>`;
+
+      sorted.forEach(m => {
+        const home = m.home_team_id || '—';
+        const away = m.away_team_id || '—';
+        const label = `M${m.match_number ?? '?'}: ${home} vs ${away}`;
+        const active = sel.has(m.id);
+        html += `<span class="match-chip ${active ? 'active' : ''}" data-match-id="${m.id}">${escapeHtml(label)}</span>`;
+      });
+
+      chips.innerHTML = html;
+
+      // Wire click handlers
+      chips.querySelectorAll('.match-chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          const mid = chip.dataset.matchId;
+          if (mid === '__all__') {
+            state.selectedMatchIds = new Set();
+          } else {
+            const next = new Set(state.selectedMatchIds);
+            if (next.has(mid)) next.delete(mid);
+            else next.add(mid);
+            state.selectedMatchIds = next;
+          }
+          renderMatchSelector(); // re-render chips
+          renderPool();          // refresh pool
+        });
+      });
+
       // Settings dropdown also depends on state.matches
       renderMatchIdDropdown();
     }
@@ -5319,7 +5354,6 @@ p31,Sample Player,MI,bat,9.0,false
 
       // Switch the UI to this match
       state.activeMatchId = m.id;
-      $('#matchFilter').value = m.id;
       state.format = m.format;
       const fmtPill = $('#formatPill'); if (fmtPill) fmtPill.textContent = m.format;
       state.rulesEditing = m.format;
@@ -5356,8 +5390,23 @@ p31,Sample Player,MI,bat,9.0,false
       renderMatchSelector();
       const grid = $('#playerGrid');
       const term = state.search.trim().toLowerCase();
-      const m = activeMatch();
-      const matchTeams = m ? new Set([m.home_team_id, m.away_team_id]) : null;
+
+      // Build matchTeams from multi-select chip state (empty Set = no filter)
+      let matchTeams = null;
+      if (state.selectedMatchIds && state.selectedMatchIds.size > 0) {
+        matchTeams = new Set();
+        state.matches.forEach(m => {
+          if (state.selectedMatchIds.has(m.id)) {
+            if (m.home_team_id) matchTeams.add(m.home_team_id);
+            if (m.away_team_id) matchTeams.add(m.away_team_id);
+          }
+        });
+      } else if (state.mode !== 'season_long') {
+        // Daily mode with no chip selected: fall back to active match filter
+        const m = activeMatch();
+        if (m) matchTeams = new Set([m.home_team_id, m.away_team_id]);
+      }
+
       const list = PLAYERS.filter(p => {
         if (state.filterRole !== 'ALL' && p.role !== state.filterRole) return false;
         if (state.filterTeam !== 'ALL' && p.team !== state.filterTeam) return false;
@@ -9789,6 +9838,7 @@ p31,Sample Player,MI,bat,9.0,false
       $('#pageTabSeason').style.display  = ptab === 'season'  ? '' : 'none';
       if (ptab === 'home')    renderPageHomeTab();
       if (ptab === 'contest') renderPageContestTab();
+      if (ptab === 'team')    ensureEditTeamBtnVisible();
       if (ptab === 'season')  renderPageSeasonTab();
     }
 
@@ -9803,13 +9853,20 @@ p31,Sample Player,MI,bat,9.0,false
       const main = $('#pageTabTeam');
       pool.style.display = open ? '' : 'none';
       main.classList.toggle('pool-open', open);
-      btn.textContent = open ? '✕ Hide pool' : '✏️ Edit team';
+      if (btn) btn.textContent = open ? '✕ Close Pool' : '✏️ Pick / Edit Team';
     }
 
     $('#editTeamBtn').addEventListener('click', () => {
       const isOpen = $('#poolPanel').style.display !== 'none';
       setPoolOpen(!isOpen);
     });
+
+    // Show the editTeamBtn when My Team tab is active (it lives in the SL panel)
+    // It starts hidden in HTML; reveal it once the panel is shown
+    function ensureEditTeamBtnVisible() {
+      const btn = $('#editTeamBtn');
+      if (btn) btn.style.display = '';
+    }
 
     // "Full view" button in Contest tab → opens the existing leaderboard modal
     $('#openFullLbBtn').addEventListener('click', openLeaderboard);
@@ -10180,43 +10237,7 @@ p31,Sample Player,MI,bat,9.0,false
     document.querySelectorAll('.admin-tabs .a-tab').forEach(t => t.addEventListener('click', () => setAdminTab(t.dataset.tab)));
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#adminModal').classList.contains('open')) closeAdmin(); });
     $('#teamFilter').addEventListener('change', e => { state.filterTeam = e.target.value; renderPool(); });
-    $('#matchFilter').addEventListener('change', async e => {
-      state.activeMatchId = e.target.value || null;
-      const m = activeMatch();
-      if (m) {
-        // Sync format with the chosen match
-        state.format = m.format;
-        const _fp = $('#formatPill'); if (_fp) _fp.textContent = m.format;
-        state.rulesEditing = m.format;
-        renderRulesEditor();
-        // Try to load this match's saved XI; if found, populate the squad list
-        // Web table (user_teams) is checked first; mobile table (user_match_xi) is the fallback.
-        if (state.db) {
-          try {
-            let xi = await state.db.getUserTeamForMatch(m.id);
-            if (!xi || xi.playerIds.length !== 11) {
-              xi = await state.db.getUserMatchXI(m.id);
-            }
-            if (xi && xi.playerIds.length === 11) {
-              state.selected      = xi.playerIds.filter(pid => playerById(pid));
-              state.captain       = xi.captainId;
-              state.viceCaptain   = xi.viceCaptainId;
-              state.activeSavedTeamId = xi.id;
-              state.stats         = {};
-              const src = xi._source === 'user_match_xi' ? ' (from mobile)' : '';
-              toast(`Loaded XI for Match ${m.match_number ?? '?'}${src}.`);
-            } else {
-              // No saved XI for this match — start fresh
-              state.selected = []; state.captain = null; state.viceCaptain = null; state.stats = {};
-              state.activeSavedTeamId = null;
-            }
-          } catch (err) { console.warn('Could not load XI for match', err); }
-        }
-      }
-      renderPool(); render();
-      // Notify season-long panel so it reloads transfer info + saved XI
-      document.dispatchEvent(new Event('ss:matchChanged'));
-    });
+    // Note: #matchFilter select replaced with #matchFilterChips chip UI — no select listener needed.
     $('#csvOpenBtn').addEventListener('click', openCsvView);
     $('#csvCancelBtn').addEventListener('click', closeCsvView);
     $('#csvPreviewBtn').addEventListener('click', csvPreviewHandler);
