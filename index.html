@@ -157,29 +157,8 @@
     }
     .filters .chip.active { background: var(--accent); color: #1C1F26; border-color: var(--accent); font-weight: 600; }
 
-    /* 4-column pool grid */
-    .player-grid { display: grid; grid-template-columns: repeat(4, 1fr); overflow-y: auto; max-height: 420px; }
-    /* When role filter is active, collapse to card list */
-    .player-grid.role-filtered { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; padding: 10px 14px; }
-    /* Column headers row */
-    .pool-col-headers { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--border); flex-shrink: 0; }
-    .pool-col-headers.hidden { display: none; }
-    .pool-col-h { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; padding: 6px 4px; background: var(--panel-2); text-align: center; }
-    .pool-col-h:not(:last-child) { border-right: 1px solid var(--border); }
-    /* Compact player cell (4-col mode) */
-    .player-cell { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 7px 4px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); cursor: pointer; text-align: center; transition: background .1s; }
-    .player-cell:nth-child(4n) { border-right: none; }
-    .player-cell:hover { background: var(--panel-2); }
-    .player-cell.selected { background: rgba(201,168,76,0.15); }
-    .player-cell.selected:hover { background: rgba(201,168,76,0.25); }
-    .player-cell.disabled { opacity: .38; cursor: not-allowed; }
-    .player-cell .pc-avatar { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; flex-shrink: 0; position: relative; }
-    .player-cell.selected .pc-avatar::after { content:''; position:absolute; inset:-2px; border-radius:50%; border:2px solid var(--accent); }
-    .player-cell .pc-name { font-size: 11px; font-weight: 600; color: var(--text); line-height: 1.2; word-break: break-word; }
-    .player-cell .pc-team { font-size: 9px; color: var(--muted); }
-    .player-cell .pc-cr { font-size: 10px; font-weight: 700; color: var(--accent-2); }
-    .player-cell-empty { border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); min-height: 68px; }
-    .player-cell-empty:nth-child(4n) { border-right: none; }
+    /* Player pool card grid — original tile style, vertical scroll only */
+    .player-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; padding: 12px 14px; max-height: 440px; overflow-y: auto; overflow-x: hidden; }
     .player-card {
       background: rgba(255,255,255,0.72); border: 1px solid rgba(201,168,76,0.15); border-radius: 10px;
       padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px;
@@ -1068,13 +1047,6 @@
         <div class="pf-match-row-wrap">
           <div class="pf-match-row" id="matchFilterChips"></div>
         </div>
-      </div>
-      <!-- Fixed column headers: hidden when a role filter is active -->
-      <div class="pool-col-headers" id="poolColHeaders">
-        <div class="pool-col-h">WK</div>
-        <div class="pool-col-h">BAT</div>
-        <div class="pool-col-h">AR</div>
-        <div class="pool-col-h">BOWL</div>
       </div>
       <div id="playerGrid" class="player-grid"></div>
     </section>
@@ -2568,11 +2540,29 @@ p31,Sample Player,MI,bat,9.0,false
     function showApp(user) {
       $('#loginScreen').classList.remove('visible');
       updateHeaderUser(user);
-      // Persist display name for leaderboard (non-blocking)
+      // Persist + fetch display name (non-blocking)
       if (user && state.db) {
-        const displayName = user.user_metadata?.full_name || user.email || '';
+        const metaName = user.user_metadata?.full_name || '';
+        const fallback = user.email || '';
+        const displayName = metaName || fallback;
         state.db.upsertProfile({ userId: user.id, displayName, email: user.email || '' })
           .catch(e => console.warn('profile upsert failed', e));
+        // Fetch the stored display_name (may differ from metadata for pre-existing users)
+        state.db.getMyProfile(user.id).then(profile => {
+          if (profile?.display_name && profile.display_name !== user.email) {
+            state.myDisplayName = profile.display_name;
+          } else {
+            state.myDisplayName = metaName || user.email?.split('@')[0] || '';
+          }
+          updateHeaderUser(user); // re-render header with correct name
+          // Also refresh greeting if home tab is visible
+          const homeGreeting = $('#homeGreeting');
+          if (homeGreeting && state.myDisplayName) {
+            homeGreeting.textContent = `Welcome back, ${state.myDisplayName}`;
+          }
+        }).catch(() => {
+          state.myDisplayName = metaName || user.email?.split('@')[0] || '';
+        });
       }
     }
 
@@ -2588,7 +2578,7 @@ p31,Sample Player,MI,bat,9.0,false
 
       const isAdmin = user?.email === ADMIN_EMAIL;
       if (user) {
-        const displayName   = user.user_metadata?.full_name || user.email || 'User';
+        const displayName   = state.myDisplayName || user.user_metadata?.full_name || user.email || 'User';
         const initials      = displayName.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('');
         avatar.textContent  = initials || '?';
         name.textContent    = displayName;
@@ -5610,78 +5600,45 @@ p31,Sample Player,MI,bat,9.0,false
       const isSL    = state.mode === 'season_long';
       const slXiSet = new Set(isSL ? state.sl.xiPlayers : []);
 
-      // Role colour map for avatars
-      const roleBg = { wk:'#FAC775', bat:'#B5D4F4', ar:'#9FE1CB', bowl:'#F5C4B3' };
-      const roleTc = { wk:'#633806', bat:'#0C447C', ar:'#085041', bowl:'#712B13' };
-      function playerInitials(n) { return n.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
-
-      const isRoleFiltered = state.filterRole !== 'ALL';
-      const colHeaders = $('#poolColHeaders');
-      if (colHeaders) colHeaders.classList.toggle('hidden', isRoleFiltered);
-
-      if (isRoleFiltered) {
-        // Filtered to one role — flat card list (original style)
-        grid.classList.add('role-filtered');
-        grid.innerHTML = list.map(p => {
-          let sel, disabled;
-          if (isSL) { sel = slXiSet.has(p.id); disabled = !sel && !canAddToSlXi(p); }
-          else       { sel = state.selected.includes(p.id); disabled = !sel && !canAdd(p); }
-          const isCap = isSL && p.id === state.sl.xiCaptain;
-          const isVc  = isSL && p.id === state.sl.xiVc;
-          const capVcBtns = isSL && sel ? `
-            <div class="cap-vc-btns" style="display:flex;gap:3px;margin-top:3px;">
-              <button class="cap-btn ${isCap?'captain':''}" data-slcap="${p.id}" title="Captain">C</button>
-              <button class="cap-btn ${isVc?'vc':''}"       data-slvc="${p.id}"  title="Vice-C">V</button>
-            </div>` : '';
-          const nameSuffix = isCap ? ' <span class="cap-badge">C</span>' : isVc ? ' <span class="vc-badge">VC</span>' : '';
-          return `<div class="player-card ${sel?'selected':''} ${disabled?'disabled':''}" data-id="${p.id}">
+      grid.innerHTML = list.map(p => {
+        let sel, disabled, badge = '';
+        if (isSL) {
+          sel      = slXiSet.has(p.id);
+          disabled = !sel && !canAddToSlXi(p);
+        } else {
+          sel      = state.selected.includes(p.id);
+          disabled = !sel && !canAdd(p);
+        }
+        const isCap = isSL && p.id === state.sl.xiCaptain;
+        const isVc  = isSL && p.id === state.sl.xiVc;
+        const capVcBtns = isSL && sel ? `
+          <div class="cap-vc-btns" style="display:flex;gap:3px;margin-top:3px;">
+            <button class="cap-btn ${isCap?'captain':''}" data-slcap="${p.id}" title="Captain">C</button>
+            <button class="cap-btn ${isVc?'vc':''}"       data-slvc="${p.id}"  title="Vice-C">V</button>
+          </div>` : '';
+        const nameSuffix = isCap ? ' <span class="cap-badge">C</span>' : isVc ? ' <span class="vc-badge">VC</span>' : '';
+        return `
+          <div class="player-card ${sel?'selected':''} ${disabled?'disabled':''}" data-id="${p.id}">
             <div>
-              <div class="name">${p.name}${nameSuffix}</div>
-              <div class="meta"><span class="role-tag role-${p.role}">${roleLabel[p.role]}</span>${p.team}${p.overseas?' <span class="os-tag">✈️</span>':''}</div>
+              <div class="name">${p.name}${nameSuffix}${badge}</div>
+              <div class="meta">
+                <span class="role-tag role-${p.role}">${roleLabel[p.role]}</span>
+                ${p.team}
+                ${p.overseas ? '<span class="os-tag" title="Overseas player">✈️</span>' : ''}
+              </div>
               ${capVcBtns}
             </div>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
               <span class="sel-tick">✓</span>
               <div class="credit">${p.credits.toFixed(1)}</div>
             </div>
-          </div>`;
-        }).join('');
-        grid.querySelectorAll('.player-card').forEach(card => {
-          card.addEventListener('click', () => togglePlayer(card.dataset.id));
-        });
-      } else {
-        // 4-column grid: WK | BAT | AR | BOWL
-        grid.classList.remove('role-filtered');
-        const ROLES = ['wk','bat','ar','bowl'];
-        const byRole = { wk:[], bat:[], ar:[], bowl:[] };
-        list.forEach(p => { if (byRole[p.role]) byRole[p.role].push(p); });
-        const maxRows = Math.max(0, ...ROLES.map(r => byRole[r].length));
-        let html = '';
-        for (let i = 0; i < maxRows; i++) {
-          ROLES.forEach(role => {
-            const p = byRole[role][i];
-            if (!p) { html += `<div class="player-cell-empty"></div>`; return; }
-            let sel, disabled;
-            if (isSL) { sel = slXiSet.has(p.id); disabled = !sel && !canAddToSlXi(p); }
-            else       { sel = state.selected.includes(p.id); disabled = !sel && !canAdd(p); }
-            const isCap = isSL && p.id === state.sl.xiCaptain;
-            const isVc  = isSL && p.id === state.sl.xiVc;
-            const capBadge = isCap ? '<span class="cap-badge" style="font-size:9px;">C</span>' : isVc ? '<span class="vc-badge" style="font-size:9px;">V</span>' : '';
-            const osMark = p.overseas ? '<span title="Overseas" style="font-size:8px;color:var(--accent);">✈</span>' : '';
-            html += `<div class="player-cell${sel?' selected':''}${disabled?' disabled':''}" data-id="${p.id}">
-              <div class="pc-avatar" style="background:${roleBg[p.role]};color:${roleTc[p.role]};">${playerInitials(p.name)}</div>
-              <div class="pc-name">${p.name.split(' ').pop()}${capBadge}${osMark}</div>
-              <div class="pc-team">${p.team}</div>
-              <div class="pc-cr">${p.credits.toFixed(1)}</div>
-            </div>`;
-          });
-        }
-        grid.innerHTML = html;
-        grid.querySelectorAll('.player-cell:not(.disabled)').forEach(cell => {
-          cell.addEventListener('click', () => togglePlayer(cell.dataset.id));
-        });
-      }
-      // Wire C/V buttons in SL mode (flat card view)
+          </div>
+        `;
+      }).join('');
+      grid.querySelectorAll('.player-card').forEach(card => {
+        card.addEventListener('click', () => togglePlayer(card.dataset.id));
+      });
+      // Wire C/V buttons in SL mode
       if (isSL) {
         grid.querySelectorAll('[data-slcap]').forEach(btn =>
           btn.addEventListener('click', e => { e.stopPropagation(); slSetCaptain(btn.dataset.slcap); }));
@@ -10102,10 +10059,10 @@ p31,Sample Player,MI,bat,9.0,false
       const grid = $('#homeTournamentCards');
       if (!grid) return;
 
-      // Update greeting with user's name
+      // Update greeting with user's preferred name
       const user = state.currentUser;
       if (user) {
-        const name = user.user_metadata?.full_name?.split(' ')[0] || user.email?.split('@')[0] || '';
+        const name = state.myDisplayName || user.user_metadata?.full_name || user.email?.split('@')[0] || '';
         $('#homeGreeting').textContent = name ? `Welcome back, ${name}` : 'Welcome back';
       }
 

@@ -1467,6 +1467,14 @@ export function createDb(cfg = {}) {
       if (error) throw error;
     },
 
+    /** Fetch the signed-in user's profile row. Returns { display_name, email } or null. */
+    async getMyProfile(userId) {
+      const sb = await getClient();
+      const { data, error } = await sb.from('profiles').select('display_name, email').eq('id', userId).single();
+      if (error) return null;
+      return data;
+    },
+
     /** Returns a map of userId → display_name (falls back to email). */
     async getProfiles() {
       const sb = await getClient();
