@@ -115,12 +115,23 @@
     /* Pool toggle button */
     #editTeamBtn { font-size: 12px; padding: 5px 12px; border-radius: 8px; }
 
-    /* Multi-select match filter chips */
-    .match-chip {
-      padding: 4px 9px; border-radius: 14px; font-size: 11px; cursor: pointer; user-select: none;
-      background: var(--panel); border: 1px solid var(--border); color: var(--muted);
-      white-space: nowrap; transition: all 0.12s;
-    }
+    /* ── Pool filter bar ── */
+    .pool-filters { display: flex; flex-direction: column; gap: 7px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel-2); }
+    .pf-search-wrap { position: relative; }
+    .pf-search-wrap input { width: 100%; padding: 6px 10px 6px 28px; border: 1px solid var(--border); border-radius: 20px; background: var(--bg); font-size: 12px; color: var(--text); }
+    .pf-search-icon { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); font-size: 12px; color: var(--muted); pointer-events: none; line-height: 1; }
+    .pf-row { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
+    .pf-label { font-size: 10px; color: var(--muted); white-space: nowrap; letter-spacing: .04em; flex-shrink: 0; }
+    .pf-sep { width: 1px; height: 14px; background: var(--border); flex-shrink: 0; align-self: center; margin: 0 2px; }
+    .pf-match-row { display: flex; gap: 5px; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; align-items: center; }
+    .pf-match-row::-webkit-scrollbar { height: 3px; }
+    .pf-match-row::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+    .pf-chip { padding: 4px 9px; border-radius: 99px; font-size: 11px; cursor: pointer; user-select: none; background: var(--panel); border: 1px solid var(--border); color: var(--muted); white-space: nowrap; transition: background .12s, color .12s, border-color .12s; }
+    .pf-chip:hover { border-color: var(--accent); color: var(--text); }
+    .pf-chip.active { background: var(--accent); color: #1C1F26; border-color: var(--accent); font-weight: 600; }
+    .pf-chip.os-active { background: #BA7517; color: #fff; border-color: #BA7517; font-weight: 600; }
+    /* alias so existing renderMatchSelector output still works */
+    .match-chip { padding: 4px 9px; border-radius: 99px; font-size: 11px; cursor: pointer; user-select: none; background: var(--panel); border: 1px solid var(--border); color: var(--muted); white-space: nowrap; transition: background .12s, color .12s, border-color .12s; }
     .match-chip:hover { border-color: var(--accent); color: var(--text); }
     .match-chip.active { background: var(--accent); color: #1C1F26; border-color: var(--accent); font-weight: 600; }
     .match-chip.all-chip { font-weight: 500; }
@@ -945,16 +956,27 @@
     <!-- LEFT: Player picker -->
     <section class="panel" id="poolPanel" style="display:none;">
       <h2>Player Pool</h2>
-      <div class="filters">
-        <input id="search" type="text" placeholder="Search players or teams…" />
-        <span class="chip active" data-role="ALL">All</span>
-        <span class="chip" data-role="wk">WK</span>
-        <span class="chip" data-role="bat">BAT</span>
-        <span class="chip" data-role="ar">AR</span>
-        <span class="chip" data-role="bowl">BOWL</span>
-        <span class="chip" id="osFilterChip" style="display:none;" title="Show overseas players only">✈️ OS</span>
-        <div id="matchFilterChips" style="display:flex; flex-wrap:wrap; gap:5px; align-items:center;"></div>
-        <select id="teamFilter" style="font-size:12px; padding:6px 10px;"></select>
+      <div class="pool-filters">
+        <!-- Row 1: Search -->
+        <div class="pf-search-wrap">
+          <span class="pf-search-icon">⌕</span>
+          <input id="search" type="text" placeholder="Search players or teams…" />
+        </div>
+        <!-- Row 2: Role chips + OS + separator + Team chips -->
+        <div class="pf-row" id="pfRoleTeamRow">
+          <span class="pf-label">Role</span>
+          <span class="pf-chip active" data-role="ALL">All</span>
+          <span class="pf-chip" data-role="wk">WK</span>
+          <span class="pf-chip" data-role="bat">BAT</span>
+          <span class="pf-chip" data-role="ar">AR</span>
+          <span class="pf-chip" data-role="bowl">BOWL</span>
+          <span class="pf-chip" id="osFilterChip" style="display:none;" title="Show overseas only">✈ OS</span>
+          <span class="pf-sep"></span>
+          <span class="pf-label">Team</span>
+          <span id="teamFilterChips" style="display:contents;"></span>
+        </div>
+        <!-- Row 3: Match chips (scrollable, upcoming only) -->
+        <div class="pf-match-row" id="matchFilterChips"></div>
       </div>
       <div id="playerGrid" class="player-grid"></div>
     </section>
@@ -2702,25 +2724,35 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     function renderTeamFilter() {
-      const sel = $('#teamFilter');
-      if (!sel) return;
+      const wrap = $('#teamFilterChips');
+      if (!wrap) return;
       const cur = state.filterTeam;
-      // Derive teams from the current tournament player pool (not all DB teams)
+      // Derive teams from current tournament player pool
       const tournamentTeamIds = [...new Set(PLAYERS.map(p => p.team))].sort();
-      const opts = ['<option value="ALL">All teams</option>']
-        .concat(tournamentTeamIds.map(id => {
-          const meta = TEAMS_DATA.find(t => t.id === id);
-          const label = meta ? `${id} — ${escapeHtml(meta.name)}` : escapeHtml(id);
-          return `<option value="${id}" ${cur===id?'selected':''}>${label}</option>`;
-        }));
-      sel.innerHTML = opts.join('');
 
-      // Show / hide the ✈️ OS filter chip based on tournament overseas cap
+      let html = `<span class="pf-chip${cur==='ALL'?' active':''}" data-team="ALL">All</span>`;
+      tournamentTeamIds.forEach(id => {
+        html += `<span class="pf-chip${cur===id?' active':''}" data-team="${escapeHtml(id)}">${escapeHtml(id)}</span>`;
+      });
+      wrap.innerHTML = html;
+
+      // Wire click handlers — single-select (radio)
+      wrap.querySelectorAll('.pf-chip[data-team]').forEach(chip => {
+        chip.addEventListener('click', () => {
+          state.filterTeam = chip.dataset.team;
+          wrap.querySelectorAll('.pf-chip[data-team]').forEach(c => c.classList.remove('active'));
+          chip.classList.add('active');
+          renderPool();
+        });
+      });
+
+      // Show / hide OS chip; use amber active class
       const osChip = $('#osFilterChip');
       if (osChip) {
         const hasCap = getOverseasCap() > 0 && getOverseasCap() < 11;
         osChip.style.display = hasCap ? '' : 'none';
-        osChip.classList.toggle('active', state.filterOS);
+        osChip.classList.toggle('os-active', state.filterOS);
+        osChip.classList.remove('active'); // ensure gold variant never sticks
       }
     }
 
@@ -5044,17 +5076,30 @@ p31,Sample Player,MI,bat,9.0,false
       const chips = $('#matchFilterChips');
       if (!chips) return;
 
-      const sorted = [...state.matches].sort((a,b)=>(a.match_number||0)-(b.match_number||0));
-      const sel = state.selectedMatchIds;
+      // Only upcoming (not completed, not locked) matches
+      const upcoming = state.matches.filter(m => m.status !== 'completed' && !m.locked);
 
-      // "All" chip — active when nothing is selected
+      // Sort: known numeric match numbers first, then '?' / null matches at end
+      const hasNumber = m => m.match_number != null && String(m.match_number).trim() !== '?' && !isNaN(Number(m.match_number));
+      const sorted = [...upcoming].sort((a, b) => {
+        const aN = hasNumber(a), bN = hasNumber(b);
+        if (aN && bN) return Number(a.match_number) - Number(b.match_number);
+        if (aN) return -1;  // a has number, b is '?'  → a first
+        if (bN) return 1;   // b has number, a is '?'  → b first
+        return 0;           // both '?' → preserve order
+      });
+
+      const sel = state.selectedMatchIds;
       const allActive = sel.size === 0;
-      let html = `<span class="match-chip all-chip ${allActive ? 'active' : ''}" data-match-id="__all__">All</span>`;
+
+      let html = `<span class="pf-label" style="margin-right:2px;">Match</span>`;
+      html += `<span class="match-chip all-chip ${allActive ? 'active' : ''}" data-match-id="__all__">All</span>`;
 
       sorted.forEach(m => {
         const home = m.home_team_id || '—';
         const away = m.away_team_id || '—';
-        const label = `M${m.match_number ?? '?'}: ${home} vs ${away}`;
+        const num  = m.match_number != null ? m.match_number : '?';
+        const label = `M${num}: ${home} vs ${away}`;
         const active = sel.has(m.id);
         html += `<span class="match-chip ${active ? 'active' : ''}" data-match-id="${m.id}">${escapeHtml(label)}</span>`;
       });
@@ -5073,12 +5118,12 @@ p31,Sample Player,MI,bat,9.0,false
             else next.add(mid);
             state.selectedMatchIds = next;
           }
-          renderMatchSelector(); // re-render chips
-          renderPool();          // refresh pool
+          renderMatchSelector();
+          renderPool();
         });
       });
 
-      // Settings dropdown also depends on state.matches
+      // Settings match dropdown also depends on state.matches
       renderMatchIdDropdown();
     }
 
@@ -9567,16 +9612,16 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     // ─── EVENT WIRING ────────────────────────────────────────────────────────
-    // Role filter chips (All / WK / BAT / AR / BOWL)
-    document.querySelectorAll('.chip[data-role]').forEach(c => c.addEventListener('click', () => {
-      document.querySelectorAll('.chip[data-role]').forEach(x => x.classList.remove('active'));
+    // Role filter chips (All / WK / BAT / AR / BOWL) — now use .pf-chip[data-role]
+    document.querySelectorAll('.pf-chip[data-role]').forEach(c => c.addEventListener('click', () => {
+      document.querySelectorAll('.pf-chip[data-role]').forEach(x => x.classList.remove('active'));
       c.classList.add('active'); state.filterRole = c.dataset.role; renderPool();
     }));
-    // OS filter chip (toggle — independent of role chips)
+    // OS filter chip (toggle — amber active class)
     const _osChip = $('#osFilterChip');
     if (_osChip) _osChip.addEventListener('click', () => {
       state.filterOS = !state.filterOS;
-      _osChip.classList.toggle('active', state.filterOS);
+      _osChip.classList.toggle('os-active', state.filterOS);
       renderPool();
     });
     $('#search').addEventListener('input', e => { state.search = e.target.value; renderPool(); });
@@ -10236,7 +10281,7 @@ p31,Sample Player,MI,bat,9.0,false
     $('#adminSearch').addEventListener('input', e => { state.adminSearch = e.target.value; renderAdmin(); });
     document.querySelectorAll('.admin-tabs .a-tab').forEach(t => t.addEventListener('click', () => setAdminTab(t.dataset.tab)));
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#adminModal').classList.contains('open')) closeAdmin(); });
-    $('#teamFilter').addEventListener('change', e => { state.filterTeam = e.target.value; renderPool(); });
+    // Team filter is now chip-based (rendered by renderTeamFilter) — no select listener needed.
     // Note: #matchFilter select replaced with #matchFilterChips chip UI — no select listener needed.
     $('#csvOpenBtn').addEventListener('click', openCsvView);
     $('#csvCancelBtn').addEventListener('click', closeCsvView);
