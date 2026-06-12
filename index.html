@@ -366,6 +366,8 @@
     .team-swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: middle; margin-right: 6px; border: 1px solid var(--border); }
     .admin-table .col-color { width: 80px; }
     .admin-table .col-color input { padding: 0; height: 24px; }
+    .admin-table .col-color2 { width: 80px; }
+    .admin-table .col-color2 input { padding: 0; height: 24px; }
     .admin-toolbar { display: flex; gap: 8px; padding: 0 12px 10px; align-items: center; }
     .admin-toolbar input.admin-search-inp { flex: 1; }
     .admin-toolbar button { font-size: 12px; padding: 6px 12px; }
@@ -1393,7 +1395,8 @@
             <tr>
               <th class="col-id">Code</th>
               <th>Name</th>
-              <th class="col-color">Color</th>
+              <th class="col-color">Color 1</th>
+              <th class="col-color2">Color 2</th>
               <th class="col-actions"></th>
             </tr>
           </thead>
@@ -2640,7 +2643,7 @@ p31,Sample Player,MI,bat,9.0,false
         // Load teams + players + saved teams from DB
         try {
           const tms = await db.getTeams();
-          if (tms.length) TEAMS_DATA = tms.map(t => ({ id: t.id, name: t.name, color: t.color }));
+          if (tms.length) TEAMS_DATA = tms.map(t => ({ id: t.id, name: t.name, color: t.color, color2: t.color2 ?? null }));
         } catch (e) { console.warn('Teams table empty? Falling back to seed.', e); }
         // Load tournaments — pick most recent as the active one
         try {
@@ -3605,6 +3608,11 @@ p31,Sample Player,MI,bat,9.0,false
       const slTab    = document.querySelector('.m-tab[data-mode="season_long"]');
       if (dailyTab) dailyTab.style.display = hasDailyContest ? '' : 'none';
       if (slTab)    slTab.style.display    = hasSlContest    ? '' : 'none';
+      // Show/hide the top-level Season page tab — only relevant when SL exists
+      const seasonPageTab = document.querySelector('.p-tab[data-ptab="season"]');
+      if (seasonPageTab) seasonPageTab.style.display = hasSlContest ? '' : 'none';
+      // If Season tab is active and SL no longer exists, bounce back to Home
+      if (!hasSlContest && activePageTab === 'season') switchPageTab('home');
       // Auto-switch away from a tab whose contest no longer exists
       if (!hasDailyContest && state.mode === 'daily') {
         if (hasSlContest) switchMode('season_long');
@@ -8515,7 +8523,7 @@ p31,Sample Player,MI,bat,9.0,false
             teamsUpserted = await state.db.bulkUpsertTeams(teamRows);
             // Refresh local teams cache
             const freshTeams = await state.db.getTeams();
-            TEAMS_DATA = freshTeams.map(t => ({ id: t.id, name: t.name, color: t.color }));
+            TEAMS_DATA = freshTeams.map(t => ({ id: t.id, name: t.name, color: t.color, color2: t.color2 ?? null }));
           } catch (e) {
             console.warn('Team upsert failed (non-fatal):', e);
           }
@@ -9166,6 +9174,7 @@ p31,Sample Player,MI,bat,9.0,false
           <td class="col-id"><input data-f="id" type="text" value="${nextTeamCode()}" maxlength="6" style="text-transform:uppercase;" /></td>
           <td><input data-f="name" type="text" placeholder="Team name" /></td>
           <td class="col-color"><input data-f="color" type="color" value="#22d3ee" /></td>
+          <td class="col-color2"><input data-f="color2" type="color" value="#ffffff" /></td>
           <td class="col-actions"><button class="row-add" id="addTeamBtn" title="Add">+</button></td>
         </tr>
       `;
@@ -9174,6 +9183,7 @@ p31,Sample Player,MI,bat,9.0,false
           <td class="col-id"><span class="team-swatch" style="background:${t.color || '#666'}"></span>${t.id}</td>
           <td><input data-f="name" type="text" value="${escapeHtml(t.name)}" /></td>
           <td class="col-color"><input data-f="color" type="color" value="${t.color || '#666666'}" /></td>
+          <td class="col-color2"><input data-f="color2" type="color" value="${t.color2 || '#ffffff'}" title="Secondary color (sleeves/collar)" /></td>
           <td class="col-actions"><button class="row-del" data-act="del" title="Delete">×</button><span style="font-size:10px; color:var(--muted); margin-left:6px;">${playerCounts[t.id] || 0} pl</span></td>
         </tr>
       `).join('');
@@ -9364,17 +9374,18 @@ p31,Sample Player,MI,bat,9.0,false
 
     async function addTeamHandler() {
       const row = $('#addTeamRow');
-      const id    = row.querySelector('[data-f="id"]').value.trim().toUpperCase();
-      const name  = row.querySelector('[data-f="name"]').value.trim();
-      const color = row.querySelector('[data-f="color"]').value;
+      const id     = row.querySelector('[data-f="id"]').value.trim().toUpperCase();
+      const name   = row.querySelector('[data-f="name"]').value.trim();
+      const color  = row.querySelector('[data-f="color"]').value;
+      const color2 = row.querySelector('[data-f="color2"]').value || null;
       if (!id || !name) { toast('Code and name are required.'); return; }
       if (teamByCode(id)) { toast(`Code "${id}" already exists.`); return; }
       try {
         if (state.db) {
-          const inserted = await state.db.addTeam({ id, name, color });
-          TEAMS_DATA.push({ id: inserted.id, name: inserted.name, color: inserted.color });
+          const inserted = await state.db.addTeam({ id, name, color, color2 });
+          TEAMS_DATA.push({ id: inserted.id, name: inserted.name, color: inserted.color, color2: inserted.color2 });
         } else {
-          TEAMS_DATA.push({ id, name, color });
+          TEAMS_DATA.push({ id, name, color, color2 });
         }
         toast(`Added ${id}.`);
         renderTeamsAdmin(); renderPool(); renderTeamFilter();
@@ -9383,15 +9394,16 @@ p31,Sample Player,MI,bat,9.0,false
 
     async function saveTeamEdit(id, tr) {
       const patch = {
-        name:  tr.querySelector('[data-f="name"]').value.trim(),
-        color: tr.querySelector('[data-f="color"]').value,
+        name:   tr.querySelector('[data-f="name"]').value.trim(),
+        color:  tr.querySelector('[data-f="color"]').value,
+        color2: tr.querySelector('[data-f="color2"]').value || null,
       };
       if (!patch.name) { toast('Name is required.'); return; }
       try {
         if (state.db) {
           const upd = await state.db.updateTeam(id, patch);
           const idx = TEAMS_DATA.findIndex(t => t.id === id);
-          if (idx >= 0) TEAMS_DATA[idx] = { id: upd.id, name: upd.name, color: upd.color };
+          if (idx >= 0) TEAMS_DATA[idx] = { id: upd.id, name: upd.name, color: upd.color, color2: upd.color2 };
         } else {
           const idx = TEAMS_DATA.findIndex(t => t.id === id);
           if (idx >= 0) TEAMS_DATA[idx] = { ...TEAMS_DATA[idx], ...patch };
@@ -10071,6 +10083,36 @@ p31,Sample Player,MI,bat,9.0,false
       const label = open ? '✕ Close' : '✏️ Edit Team';
       if (btnSL) btnSL.textContent = label;
       if (btnDy) btnDy.textContent = label;
+
+      // When pool is open, hide sub-tab navigation and force-show Pick XI only.
+      // Live Score / History / Season / Leagues are irrelevant while picking.
+      const dailyTabs = $('.daily-tabs');
+      const slTabs    = $('.sl-tabs');
+      if (dailyTabs) dailyTabs.style.display = open ? 'none' : '';
+      if (slTabs)    slTabs.style.display    = open ? 'none' : '';
+
+      if (open) {
+        // Force the Pick XI panels visible regardless of which sub-tab was active
+        const dpxi = $('#dailyPickXiTab');
+        const dliv = $('#dailyLiveTab');
+        const dhis = $('#dailyHistoryTab');
+        if (dpxi) dpxi.style.display = '';
+        if (dliv) dliv.style.display = 'none';
+        if (dhis) dhis.style.display = 'none';
+
+        const sxi  = $('#slXiTab');
+        const sliv = $('#slLiveTab');
+        const sse  = $('#slSeasonTab');
+        const slg  = $('#slLeaguesTab');
+        if (sxi)  sxi.style.display  = '';
+        if (sliv) sliv.style.display = 'none';
+        if (sse)  sse.style.display  = 'none';
+        if (slg)  slg.style.display  = 'none';
+      } else {
+        // Restore sub-tabs to whichever was last active
+        if (state.mode === 'daily') renderDailyActiveScreen();
+        else renderSlActiveScreen();
+      }
     }
 
     $('#editTeamBtn').addEventListener('click', () => {
