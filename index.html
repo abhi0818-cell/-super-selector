@@ -8836,14 +8836,24 @@ p31,Sample Player,MI,bat,9.0,false
             </tr>
           </thead>
           <tbody>
-            ${scored.map((r, i) => r.localPlayer ? `
-              <tr class="${r.inXi?'mine':''}">
+            ${scored.map((r, i) => {
+              const colSpan = unmatchedCount ? 5 : 4;
+              const bdText = Object.entries(r.breakdown).map(([cat, vals]) => {
+                const items = Object.entries(vals).filter(([,v]) => v !== 0).map(([k,v]) => `${k}: ${v>0?'+':''}${v}`).join(', ');
+                return items ? `<span class="b-cat">${cat}</span>${items}` : '';
+              }).filter(Boolean).join(' &nbsp;|&nbsp; ') || '<em style="color:var(--muted)">no events scored</em>';
+              if (r.localPlayer) return `
+              <tr class="fsc-player-row ${r.inXi?'mine':''}" style="cursor:pointer;" data-fsc-idx="${i}">
                 <td class="name">${escapeHtml(r.apiName)}</td>
                 <td class="team-tag">${r.localPlayer.team_id || '—'}</td>
                 <td>${roleLabel[r.role] || r.role}</td>
                 <td class="pts">${r.points.toFixed(1)}</td>
                 ${unmatchedCount ? '<td></td>' : ''}
-              </tr>` : `
+              </tr>
+              <tr class="fsc-breakdown-row" data-fsc-for="${i}" style="display:none;">
+                <td colspan="${colSpan}" style="padding:4px 12px 8px;font-size:11px;color:var(--fg);background:var(--panel-2);border-bottom:1px solid var(--border);">${bdText}</td>
+              </tr>`;
+              return `
               <tr class="unmatched" data-api-name="${escapeHtml(r.apiName)}" data-idx="${i}">
                 <td class="name">${escapeHtml(r.apiName)}</td>
                 <td class="team-tag">—</td>
@@ -8852,8 +8862,8 @@ p31,Sample Player,MI,bat,9.0,false
                 <td class="link-cell">
                   <button class="link-btn">Link</button>
                 </td>
-              </tr>`
-            ).join('')}
+              </tr>`;
+            }).join('')}
           </tbody>
         </table>
       `;
@@ -8861,6 +8871,18 @@ p31,Sample Player,MI,bat,9.0,false
       // Wire Link buttons via addEventListener — onclick attributes don't work in module scripts
       view.querySelectorAll('.link-btn').forEach(btn => {
         btn.addEventListener('click', () => expandLinkRow(btn));
+      });
+
+      // Click a player row → toggle breakdown detail row
+      view.querySelectorAll('.fsc-player-row').forEach(tr => {
+        tr.addEventListener('click', () => {
+          const idx = tr.dataset.fscIdx;
+          const detail = view.querySelector(`.fsc-breakdown-row[data-fsc-for="${idx}"]`);
+          if (!detail) return;
+          const open = detail.style.display !== 'none';
+          detail.style.display = open ? 'none' : '';
+          tr.style.background = open ? '' : 'rgba(201,168,76,0.05)';
+        });
       });
     }
 
