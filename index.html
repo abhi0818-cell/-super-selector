@@ -1730,7 +1730,7 @@ p31,Sample Player,MI,bat,9.0,false
       if (!d && (!dText || dText.includes('not out'))) return null;
       if (d.includes('not out') || dText.includes('not out')) return null;
 
-      // Shape A — short type code with separate bowler/fielder fields.
+      // Shape A — short type code with separate bowler/fielder objects.
       // CricAPI v1 sometimes returns these as plain strings, sometimes as { name } objects.
       const strOrName = v => v?.name ?? (typeof v === 'string' && v ? v : null);
       const fielderName = strOrName(b.catch) ?? strOrName(b.fielder) ?? strOrName(b.catcher) ?? null;
@@ -1755,13 +1755,16 @@ p31,Sample Player,MI,bat,9.0,false
         return { type: 'run_out', bowler: null, fielder: parts[0] || null, fielder2: parts[1] || null };
       }
 
-      // Shape B — full string fallback
+      // Shape B — parse from the full dismissal-text string (covers cases where Shape A
+      // objects are missing, and also older CricAPI formats that return only a full string).
+      // Try dText first (e.g. "c Danni Wyatt-Hodge b Sophie Ecclestone"), fall back to d.
+      const str = dText || d;
       let m;
-      if ((m = d.match(/^lbw(?:\s+b\s+(.+))?/)))            return { type:'lbw',     bowler: (m[1] || bowlerName || '').trim() || null, fielder: fielderName };
-      if ((m = d.match(/^c\s*&\s*b\s+(.+)/)))               return { type:'caught',  bowler: m[1].trim(),                       fielder: fielderName };
-      if ((m = d.match(/^c(?:t)?\s+(.+?)\s+b\s+(.+)/)))     return { type:'caught',  bowler: m[2].trim(),                       fielder: m[1].trim() };
-      if ((m = d.match(/^st\s+(.+?)\s+b\s+(.+)/)))          return { type:'stumped', bowler: m[2].trim(),                       fielder: m[1].trim() };
-      if ((m = d.match(/^b\s+(.+)/)))                       return { type:'bowled',  bowler: m[1].trim(),                       fielder: null };
+      if ((m = str.match(/^lbw(?:\s+b\s+(.+))?/)))           return { type:'lbw',     bowler: (m[1] || bowlerName || '').trim() || null, fielder: fielderName };
+      if ((m = str.match(/^c\s*&\s*b\s+(.+)/)))              return { type:'caught',  bowler: m[1].trim(),                       fielder: m[1].trim() };
+      if ((m = str.match(/^c(?:t)?\s+(.+?)\s+b\s+(.+)/)))    return { type:'caught',  bowler: m[2].trim(),                       fielder: m[1].trim() };
+      if ((m = str.match(/^st\s+(.+?)\s+b\s+(.+)/)))         return { type:'stumped', bowler: m[2].trim(),                       fielder: m[1].trim() };
+      if ((m = str.match(/^b\s+(.+)/)))                      return { type:'bowled',  bowler: m[1].trim(),                       fielder: null };
       return null;
     }
 
@@ -2092,6 +2095,12 @@ p31,Sample Player,MI,bat,9.0,false
       // 'api name as returned': 'local pool name',
       'akash singh':        'Akash Singh',   // disambiguates from other Singhs
     };
+    // Merge in any aliases the admin has saved via the "Link" button — stored in localStorage
+    // so they survive page reloads without touching the database.
+    try {
+      const saved = JSON.parse(localStorage.getItem('cricapi_name_aliases') || '{}');
+      Object.assign(NAME_ALIASES, saved);
+    } catch (_) {}
 
     // Try to find a local player record matching a name from the scorecard.
     function findLocalByName(apiName) {
@@ -8192,12 +8201,12 @@ p31,Sample Player,MI,bat,9.0,false
       let json;
       json = await fetchJsonWithFallback(k => `match_scorecard?apikey=${encodeURIComponent(k)}&id=${encodeURIComponent(m.external_id)}`);
       await state.db.saveMatchScorecard(m.id, json);
-      const players = fromCricAPI(json, [], m.format);
+      const players = fromCricAPI(json, PLAYERS, m.format);
       if (!players.length) throw new Error('CricAPI returned no player rows');
-      const rows = []; let unmatched = 0;
+      const rows = []; const unmatchedNames = [];
       for (const pl of players) {
         const local = findLocalByName(pl.name);
-        if (!local) { unmatched++; continue; }
+        if (!local) { unmatchedNames.push(pl.name); continue; }
         const s = calculateScore({ ...pl, captaincy: 'normal' }, m.format);
         rows.push({
           playerId: local.id,
@@ -8218,7 +8227,7 @@ p31,Sample Player,MI,bat,9.0,false
         const idx = state.matches.findIndex(x => x.id === m.id);
         if (idx >= 0) state.matches[idx] = upd;
       }
-      return { match: matchLabel, players: rows.length, unmatched };
+      return { match: matchLabel, players: rows.length, unmatched: unmatchedNames.length, unmatchedNames };
     }
 
     /**
@@ -8245,10 +8254,21 @@ p31,Sample Player,MI,bat,9.0,false
           toast('Match already finalized.'); return;
         }
         const result = await finalizeOneMatch(m, apiKey);
-        statusEl.textContent = `✓ ${result.match} — ${result.players} players saved, ${result.unmatched} unmatched.`;
         renderMatchesAdmin();
         renderHistory();
-        toast(`Finalized ${result.match}.`);
+        if (result.unmatchedNames?.length) {
+          const list = result.unmatchedNames.map(n => `"${n}"`).join(', ');
+          statusEl.innerHTML = `✓ ${result.match} — ${result.players} players saved. `
+            + `<span style="color:var(--bad);">⚠ ${result.unmatchedNames.length} unmatched: ${escapeHtml(list)}. `
+            + `Open <strong>Fantasy Scorecard ↓</strong>, click Link on the red rows, then re-finalize.</span>`;
+          toast(`Finalized — but ${result.unmatchedNames.length} player(s) unmatched. Check scorecard.`, 6000);
+          // Auto-open the fantasy scorecard so the admin sees the red rows immediately
+          $('#fantasyScorecardSection')?.setAttribute('open', '');
+          $('#fantasyScorecardSection')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } else {
+          statusEl.textContent = `✓ ${result.match} — ${result.players} players saved.`;
+          toast(`Finalized ${result.match}.`);
+        }
       } catch (e) {
         const kind = classifyFinalizeError(e.message);
         statusEl.textContent = `✗ CricAPI finalize failed [${kind}]: ${e.message}`;
@@ -8793,8 +8813,9 @@ p31,Sample Player,MI,bat,9.0,false
         return;
       }
 
-      // Use the same adapter the live poller uses, with no squad (no captain multipliers)
-      const players = fromCricAPI(payload, [], state.format);
+      // Pass PLAYERS as the squad so fielders who didn't bat/bowl are still found via
+      // the squad fallback. Captaincy multipliers are overridden below with 'normal'.
+      const players = fromCricAPI(payload, PLAYERS, state.format);
       const xiIds = new Set(state.selected);
       const scored = players.map(pl => {
         const local = findLocalByName(pl.name);
@@ -8918,27 +8939,29 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     /**
-     * Links an unmatched API player name to a local player, updates the player's
-     * name in the DB + in-memory pool, then rescores the current match.
+     * Links an unmatched API player name to a local player by storing a persistent
+     * alias in localStorage (non-destructive — the local player's DB name is unchanged).
+     * The alias is merged into NAME_ALIASES immediately and persists across reloads.
      */
     async function linkPlayerAndRescore(apiName, playerId) {
-      if (!state.db) { toast('Connect a database first.'); return; }
       if (!playerId) { toast('Pick a player first.'); return; }
 
       const localPlayer = PLAYERS.find(p => p.id === playerId);
       if (!localPlayer) { toast('Player not found.'); return; }
 
-      const oldName = localPlayer.name;
       try {
-        // 1. Update the player name in DB to match the CricAPI spelling
-        await state.db.updatePlayer(playerId, { name: apiName });
+        // 1. Store alias: apiName (lowercase) → local player name
+        const key = apiName.toLowerCase().trim();
+        NAME_ALIASES[key] = localPlayer.name;
+        const saved = JSON.parse(localStorage.getItem('cricapi_name_aliases') || '{}');
+        saved[key] = localPlayer.name;
+        localStorage.setItem('cricapi_name_aliases', JSON.stringify(saved));
 
-        // 2. Patch the in-memory pool immediately so findLocalByName works right away
-        localPlayer.name = apiName;
-        toast(`Renamed "${oldName}" → "${apiName}". Rescoring…`, 3000);
+        toast(`Linked "${apiName}" → "${localPlayer.name}". Rescoring…`, 3000);
 
-        // 3. Rescore the current match with the updated name mapping
-        await rescoreCurrentMatch();
+        // 2. Rescore the current match with the updated alias in effect
+        if (state.db) await rescoreCurrentMatch();
+        else renderFantasyScorecard(); // local mode: just re-render
 
       } catch (e) {
         toast('Link failed: ' + e.message, 5000);
