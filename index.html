@@ -5968,7 +5968,8 @@ p31,Sample Player,MI,bat,9.0,false
                   const isVC  = p.player_id === t.vice_captain_id;
                   const badge = isCap ? '<span class="cap-badge">C</span>'
                               : isVC  ? '<span class="vc-badge">VC</span>' : '';
-                  const pts   = p.raw_points !== null ? Number(p.raw_points).toFixed(1) : '—';
+                  const mult  = isCap ? 2.0 : isVC ? 1.5 : 1.0;
+                  const pts   = p.raw_points !== null ? (Number(p.raw_points) * mult).toFixed(1) : '—';
                   const hasPts = p.raw_points !== null && p.raw_points !== 0;
                   return '<tr>' +
                     '<td class="name">' + escapeHtml(p.name) + badge + '</td>' +
