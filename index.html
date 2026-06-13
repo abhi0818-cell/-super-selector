@@ -1838,9 +1838,7 @@ p31,Sample Player,MI,bat,9.0,false
         fieldingMap[k][field]++;
       };
 
-      sc.forEach((inn, innIdx) => {
-        // Debug: show innings-level field names so we can spot CricAPI naming changes
-        console.log(`[fromCricAPI] inn[${innIdx}] keys:`, Object.keys(inn), '| batting:', inn.batting?.length ?? 0, '| bowling:', inn.bowling?.length ?? inn.bowlers?.length ?? inn.bowl?.length ?? 'n/a');
+      sc.forEach(inn => {
         // First pass: build bowler-name → wicket types array AND fielding map.
         const bowlerArr = inn.bowling || inn.bowlers || inn.bowl || [];
         const bowlerNames = bowlerArr.map(b => b.bowler?.name ?? b.player?.name ?? b.name ?? '').filter(Boolean);
@@ -1891,8 +1889,6 @@ p31,Sample Player,MI,bat,9.0,false
           const [o, bb] = String(bw.o ?? 0).split('.');
           const totalBalls = int(o)*6 + int(bb || 0);
           e.role = 'bowl';
-          // Debug: always log bowling rows so we can see raw field names and wicketsByBowler state
-          console.log(`[fromCricAPI] bowl row "${name}"`, JSON.stringify(bw), '| wByB keys:', Object.keys(wicketsByBowler), '| lookup:', wicketsByBowler[name]);
           e.bowling = {
             wickets: int(bw.w),
             wicketTypes: wicketsByBowler[name] || [],
