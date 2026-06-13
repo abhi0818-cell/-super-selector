@@ -1513,6 +1513,44 @@ export function createDb(cfg = {}) {
     },
 
     /**
+     * Fetch all daily teams for a match with their full player rosters.
+     * Used for live leaderboard computation (scoring done client-side from state.stats).
+     * Returns [{teamId, teamName, userId, captainId, vcId, playerIds:[...]}]
+     */
+    async getAllTeamPlayersForMatch(matchId) {
+      const sb = await getClient();
+      const { data: teams, error: tErr } = await sb
+        .from('user_teams')
+        .select('id, name, user_id, captain_id, vice_captain_id')
+        .eq('match_id', matchId)
+        .is('squad_id', null);
+      if (tErr) throw tErr;
+      if (!teams?.length) return [];
+
+      const teamIds = teams.map(t => t.id);
+      const { data: tp, error: pErr } = await sb
+        .from('user_team_players')
+        .select('user_team_id, player_id')
+        .in('user_team_id', teamIds);
+      if (pErr) throw pErr;
+
+      const byTeam = {};
+      (tp || []).forEach(r => {
+        if (!byTeam[r.user_team_id]) byTeam[r.user_team_id] = [];
+        byTeam[r.user_team_id].push(r.player_id);
+      });
+
+      return teams.map(t => ({
+        teamId    : t.id,
+        teamName  : t.name,
+        userId    : t.user_id,
+        captainId : t.captain_id,
+        vcId      : t.vice_captain_id,
+        playerIds : byTeam[t.id] || [],
+      }));
+    },
+
+    /**
      * Fetch players + stats for one daily team in one match.
      * Returns { captainId, viceCaptainId, players: [{player_id, name, role, raw_points, batting, bowling, fielding}] }
      */

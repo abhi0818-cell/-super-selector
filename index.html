@@ -2291,10 +2291,36 @@ p31,Sample Player,MI,bat,9.0,false
         lbState.profiles = await state.db.getProfiles();
 
         let rows = [];
+        let isLiveLeaderboard = false;
         if (lbState.tab === 'daily') {
           const matchId = $('#lbMatchPicker').value;
           if (!matchId) { el.innerHTML = '<div class="lb-empty">No completed matches yet.</div>'; return; }
-          rows = await state.db.getLeaderboardDaily(matchId);
+
+          // Check if this match is currently live and we have player stats in memory
+          const liveMatch   = state.matches.find(m => m.id === matchId);
+          const hasLiveData = Object.keys(state.stats || {}).length > 0;
+          const matchIsLive = liveMatch && ['in_progress','live'].includes(liveMatch.status);
+
+          if (matchIsLive && hasLiveData && state.db.getAllTeamPlayersForMatch) {
+            // Live path: score every team from in-memory state.stats
+            isLiveLeaderboard = true;
+            const teams = await state.db.getAllTeamPlayersForMatch(matchId);
+            rows = teams.map(t => {
+              let pts = 0;
+              t.playerIds.forEach(pid => {
+                const p      = playerById(pid); if (!p) return;
+                const stats  = state.stats[pid] || {};
+                const cap    = String(pid) === String(t.captainId)   ? 'captain'      : '';
+                const vc     = String(pid) === String(t.vcId)        ? 'vice_captain' : '';
+                const capt   = cap || vc || 'normal';
+                const result = calculateScore({ name: p.name, role: p.role, captaincy: capt, is_overseas: !!p.overseas, ...stats }, state.format || 'T20');
+                pts += result.totalPoints;
+              });
+              return { userId: t.userId, teamId: t.teamId, teamName: t.teamName, totalPoints: pts };
+            }).sort((a, b) => b.totalPoints - a.totalPoints);
+          } else {
+            rows = await state.db.getLeaderboardDaily(matchId);
+          }
         } else {
           // lbState.tab holds the contest ID for all SL / private-league tabs
           const contestId = lbState.tab !== 'daily' ? lbState.tab : (state.sl?.seasonContest?.id ?? null);
@@ -2327,10 +2353,13 @@ p31,Sample Player,MI,bat,9.0,false
           return mainRow + detailRow;
         }).join('');
 
+        const liveBadge = isLiveLeaderboard
+          ? `<span style="margin-left:6px;font-size:9px;padding:2px 6px;border-radius:8px;background:rgba(192,57,43,0.12);color:var(--bad);font-weight:700;letter-spacing:0.3px;">⚡ LIVE</span>`
+          : '';
         el.innerHTML = `<table class="lb-table">
           <thead><tr>
             <th style="width:36px">#</th>
-            <th>Player <span style="font-size:9px;color:var(--muted);font-weight:400;">(tap to expand)</span></th>
+            <th>Player${liveBadge} <span style="font-size:9px;color:var(--muted);font-weight:400;">(tap to expand)</span></th>
             <th class="r">Pts</th>
           </tr></thead>
           <tbody>${tbody}</tbody>
@@ -5082,7 +5111,11 @@ p31,Sample Player,MI,bat,9.0,false
         } catch (e) { console.warn(`[SL live] upsert failed for squad ${squadId}:`, e.message); }
       }
       // Invalidate Season cache so the Season tab reflects latest live totals
-      if (anyUpdated) state.sl.seasonData = null;
+      if (anyUpdated) {
+        state.sl.seasonData = null;
+        // Refresh leaderboard so Contest tab shows live ranks without manual reload
+        renderLeaderboard();
+      }
     }
 
     // ─── DAILY LIVE SCORE TAB ───────────────────────────────────────────────
@@ -6610,6 +6643,8 @@ p31,Sample Player,MI,bat,9.0,false
             const lmId = state.matches.find(m => m.external_id === id)?.id;
             if (lmId) persistLiveSlScores(lmId).catch(() => {});
           }
+          // Refresh leaderboard with live points (works for both daily and SL)
+          renderLeaderboard();
           renderScorecard();
           renderFantasyScorecard();
           $('#scorecardSection').setAttribute('open', '');
