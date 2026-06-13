@@ -1797,10 +1797,18 @@ p31,Sample Player,MI,bat,9.0,false
     function matchBowlerName(dismissalRef, candidates) {
       if (!dismissalRef) return null;
       const t = dismissalRef.toLowerCase().trim();
+      // 1. Exact match
       const exact = candidates.find(c => c.toLowerCase() === t);
       if (exact) return exact;
-      const lastWord = candidates.find(c => c.toLowerCase().split(/\s+/).pop() === t);
-      return lastWord || null;
+      // 2. Surname-only match — handles CricAPI spelling inconsistencies within the same
+      //    scorecard (e.g. batting row has "Charlotte Dean", bowling row has "Charollete Dean").
+      //    Only resolves when exactly one candidate shares the surname.
+      const refSurname = t.split(/\s+/).pop();
+      if (refSurname) {
+        const bySurname = candidates.filter(c => c.toLowerCase().split(/\s+/).pop() === refSurname);
+        if (bySurname.length === 1) return bySurname[0];
+      }
+      return null;
     }
 
     function fromCricAPI(payload, squad=[], fmt='T20'){
@@ -8357,7 +8365,7 @@ p31,Sample Player,MI,bat,9.0,false
           await state.db.saveMatchScorecard(matchId, json);
         }
 
-        const players = fromCricAPI(json, [], m.format || 'T20');
+        const players = fromCricAPI(json, PLAYERS, m.format || 'T20');
         if (!players.length) throw new Error('Scorecard parsed 0 players — check payload.');
 
         // Log fielding summary to console for easy verification
@@ -8980,11 +8988,11 @@ p31,Sample Player,MI,bat,9.0,false
       const localMatch = state.matches.find(m => m.external_id === externalId);
       if (!localMatch) { toast('Match not found in DB — sync first.'); return; }
 
-      const apiPlayers = fromCricAPI(state.lastScorecard, [], state.format);
-      const rows = []; let unmatched = 0;
+      const apiPlayers = fromCricAPI(state.lastScorecard, PLAYERS, state.format);
+      const rows = []; const unmatchedNames = [];
       for (const pl of apiPlayers) {
         const local = findLocalByName(pl.name);
-        if (!local) { unmatched++; continue; }
+        if (!local) { unmatchedNames.push(pl.name); continue; }
         const s = calculateScore({ ...pl, captaincy: 'normal' }, state.format);
         rows.push({
           playerId : local.id,
@@ -8996,8 +9004,12 @@ p31,Sample Player,MI,bat,9.0,false
       }
 
       if (!rows.length) {
-        toast(`Still no matching players (${unmatched} unmatched). Check player names.`, 4000);
+        toast(`Still no matching players (${unmatchedNames.length} unmatched). Check player names.`, 4000);
         return;
+      }
+      if (unmatchedNames.length) {
+        const list = unmatchedNames.map(n => `"${n}"`).join(', ');
+        toast(`Rescored — but ${unmatchedNames.length} still unmatched: ${list}. Link them and rescore again.`, 6000);
       }
 
       const n = await state.db.bulkUpsertPlayerMatchStats(localMatch.id, rows);
@@ -9034,7 +9046,7 @@ p31,Sample Player,MI,bat,9.0,false
       if (!localMatch) { toast('Selected match isn\'t in your DB. Run sync first.'); return; }
 
       try {
-        const players = fromCricAPI(state.lastScorecard, [], state.format);
+        const players = fromCricAPI(state.lastScorecard, PLAYERS, state.format);
         // Only persist rows whose API name maps to a local player (FK requirement)
         const rows = [];
         let unmatched = 0;
