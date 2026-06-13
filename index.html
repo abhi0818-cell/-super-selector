@@ -2306,40 +2306,45 @@ p31,Sample Player,MI,bat,9.0,false
         const isSL   = lbState.tab !== 'daily';
         const roleOrder = { wk: 0, bat: 1, ar: 2, bowl: 3 };
 
+        const currentMatchId = !isSL ? ($('#lbMatchPicker').value || '') : '';
+
         const tbody = rows.map((r, i) => {
           const name     = lbState.profiles[r.userId] || 'Unknown';
           const subLabel = isSL ? `${r.squadName} · ${r.matchCount} match${r.matchCount !== 1 ? 'es' : ''}` : r.teamName;
           const rank     = medals[i] || `#${i + 1}`;
           const pts      = r.totalPoints % 1 === 0 ? r.totalPoints : r.totalPoints.toFixed(1);
-          const detailId = isSL ? `lb_detail_${r.squadId?.replace(/-/g,'') ?? i}` : '';
-          const mainRow  = `<tr class="${isSL ? 'lb-expandable' : ''}" data-squad="${r.squadId || ''}" data-detail="${detailId}" style="${isSL ? 'cursor:pointer;' : ''}">
+          const detailId = isSL
+            ? `lb_detail_${r.squadId?.replace(/-/g,'') ?? i}`
+            : `lb_daily_${(r.teamId || '').replace(/-/g,'') || i}`;
+          const mainRow  = `<tr class="lb-expandable" data-squad="${r.squadId || ''}" data-team="${r.teamId || ''}" data-match="${currentMatchId}" data-detail="${detailId}" style="cursor:pointer;">
             <td class="lb-rank">${rank}</td>
-            <td><div class="lb-name">${escapeHtml(name)} ${isSL ? '<span style="font-size:10px;color:var(--muted);">▾</span>' : ''}</div><div class="lb-sub">${escapeHtml(subLabel)}</div></td>
+            <td><div class="lb-name">${escapeHtml(name)} <span style="font-size:10px;color:var(--muted);">▾</span></div><div class="lb-sub">${escapeHtml(subLabel)}</div></td>
             <td class="r">${pts}</td>
           </tr>`;
-          const detailRow = isSL ? `<tr id="${detailId}" style="display:none;"><td colspan="3" style="padding:0;"></td></tr>` : '';
+          const detailRow = `<tr id="${detailId}" style="display:none;"><td colspan="3" style="padding:0;"></td></tr>`;
           return mainRow + detailRow;
         }).join('');
 
         el.innerHTML = `<table class="lb-table">
           <thead><tr>
             <th style="width:36px">#</th>
-            <th>Player${isSL ? ' <span style="font-size:9px;color:var(--muted);font-weight:400;">(tap to expand)</span>' : ''}</th>
+            <th>Player <span style="font-size:9px;color:var(--muted);font-weight:400;">(tap to expand)</span></th>
             <th class="r">Pts</th>
           </tr></thead>
           <tbody>${tbody}</tbody>
         </table>`;
 
-        // Wire SL expand/collapse
-        if (isSL) {
+        // Wire expand/collapse — works for both SL and Daily
+        {
           el.querySelectorAll('.lb-expandable').forEach(row => {
             row.addEventListener('click', async () => {
               const detailId  = row.dataset.detail;
               const squadId   = row.dataset.squad;
+              const teamId    = row.dataset.team;
+              const matchId   = row.dataset.match;
               const detailRow = el.querySelector('#' + detailId);
               if (!detailRow) return;
               const isOpen = detailRow.style.display !== 'none';
-              // Toggle caret
               const caret = row.querySelector('span[style*="▾"], span[style*="▴"]');
               if (isOpen) {
                 detailRow.style.display = 'none';
@@ -2349,9 +2354,79 @@ p31,Sample Player,MI,bat,9.0,false
               if (caret) caret.textContent = '▴';
               detailRow.style.display = '';
               const cell = detailRow.querySelector('td');
-              // If already loaded, just show
               if (cell.innerHTML.trim()) return;
               cell.innerHTML = '<div style="padding:10px 8px;color:var(--muted);font-size:12px;">Loading…</div>';
+
+              // ── Daily leaderboard expand ──────────────────────────────────
+              if (!isSL && teamId && matchId) {
+                try {
+                  const { captainId, viceCaptainId, players } = await state.db.getTeamMatchPlayers(teamId, matchId);
+                  if (!players.length) {
+                    cell.innerHTML = '<div style="padding:10px 8px;color:var(--muted);font-size:12px;">No player data found.</div>';
+                    return;
+                  }
+                  const sorted = [...players].sort((a, b) => (roleOrder[a.role] ?? 9) - (roleOrder[b.role] ?? 9));
+                  const pRowsHtml = sorted.map((p, pi) => {
+                    const isCap = String(p.player_id) === String(captainId);
+                    const isVC  = String(p.player_id) === String(viceCaptainId);
+                    const badge = isCap ? '<span class="cap-badge">C</span>' : isVC ? '<span class="vc-badge">VC</span>' : '';
+                    const mult  = isCap ? 2.0 : isVC ? 1.5 : 1.0;
+                    const base  = p.raw_points ?? 0;
+                    const disp  = (base * mult).toFixed(1);
+                    const hasPts = base !== 0;
+
+                    // Build per-player breakdown by recalculating from stored stats
+                    let bdHtml = '';
+                    if (p.batting || p.bowling || p.fielding) {
+                      const sc = calculateScore(
+                        { name: p.name, role: p.role, batting: p.batting, bowling: p.bowling, fielding: p.fielding },
+                        state.format || 'T20'
+                      );
+                      const parts = Object.entries(sc.breakdown).flatMap(([cat, vals]) =>
+                        Object.entries(vals).filter(([, v]) => v !== 0).map(([k, v]) => `${k}: ${v > 0 ? '+' : ''}${v}`)
+                      );
+                      if (parts.length) bdHtml = `<tr id="lbd_${pi}_${detailId}" style="display:none;background:rgba(201,168,76,0.04);">
+                        <td colspan="4" style="padding:3px 12px 5px;font-size:10px;color:var(--muted);">${parts.join(' &nbsp;·&nbsp; ')}</td>
+                      </tr>`;
+                    }
+
+                    const mainTr = `<tr class="lb-daily-player" data-bd="lbd_${pi}_${detailId}" style="cursor:${bdHtml ? 'pointer' : 'default'};">
+                      <td style="padding:4px 8px;font-size:12px;">${escapeHtml(p.name)}${badge}</td>
+                      <td style="padding:4px 8px;font-size:11px;color:var(--muted);">${roleLabel[p.role] || p.role || '—'}</td>
+                      <td style="padding:4px 8px;font-size:11px;color:var(--muted);">${mult > 1 ? mult + '×' : ''}</td>
+                      <td style="padding:4px 8px;font-size:12px;text-align:right;color:${hasPts ? 'var(--accent)' : 'var(--muted)'};">${disp}</td>
+                    </tr>`;
+                    return mainTr + bdHtml;
+                  }).join('');
+
+                  cell.innerHTML = `<table style="width:100%;border-collapse:collapse;border-top:1px solid var(--border);">
+                    <thead><tr style="background:var(--panel-2);">
+                      <th style="padding:4px 8px;font-size:10px;color:var(--muted);text-align:left;">Player</th>
+                      <th style="padding:4px 8px;font-size:10px;color:var(--muted);">Role</th>
+                      <th style="padding:4px 8px;font-size:10px;color:var(--muted);">Mult</th>
+                      <th style="padding:4px 8px;font-size:10px;color:var(--muted);text-align:right;">Pts</th>
+                    </tr></thead>
+                    <tbody>${pRowsHtml}</tbody>
+                  </table>`;
+
+                  // Wire per-player breakdown toggle
+                  cell.querySelectorAll('.lb-daily-player').forEach(tr => {
+                    const bdId = tr.dataset.bd;
+                    if (!bdId) return;
+                    tr.addEventListener('click', () => {
+                      const bd = cell.querySelector('#' + bdId);
+                      if (!bd) return;
+                      bd.style.display = bd.style.display === 'none' ? '' : 'none';
+                      tr.style.background = bd.style.display === 'none' ? '' : 'rgba(201,168,76,0.05)';
+                    });
+                  });
+                } catch (e) {
+                  cell.innerHTML = `<div style="padding:10px 8px;color:var(--bad);font-size:12px;">Failed: ${e.message}</div>`;
+                }
+                return;
+              }
+
+              // ── SL leaderboard expand ─────────────────────────────────────
               try {
                 const season = await state.db.getSquadSeason(squadId);
                 if (!season.matches.length) {

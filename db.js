@@ -1505,10 +1505,49 @@ export function createDb(cfg = {}) {
       return (data || [])
         .map(t => ({
           userId      : t.user_id,
+          teamId      : t.id,
           teamName    : t.name,
           totalPoints : Number(t.user_team_match_scores?.[0]?.total_points ?? 0),
         }))
         .sort((a, b) => b.totalPoints - a.totalPoints);
+    },
+
+    /**
+     * Fetch players + stats for one daily team in one match.
+     * Returns { captainId, viceCaptainId, players: [{player_id, name, role, raw_points, batting, bowling, fielding}] }
+     */
+    async getTeamMatchPlayers(teamId, matchId) {
+      const sb = await getClient();
+      const [{ data: team }, { data: tp }] = await Promise.all([
+        sb.from('user_teams').select('captain_id, vice_captain_id').eq('id', teamId).single(),
+        sb.from('user_team_players').select('player_id').eq('user_team_id', teamId),
+      ]);
+      const pids = (tp || []).map(r => r.player_id);
+      if (!pids.length) return { captainId: null, viceCaptainId: null, players: [] };
+      const [{ data: players }, { data: stats }] = await Promise.all([
+        sb.from('players').select('id, name, role').in('id', pids),
+        sb.from('player_match_stats').select('player_id, raw_points, batting, bowling, fielding')
+          .eq('match_id', matchId).in('player_id', pids),
+      ]);
+      const playerMap = Object.fromEntries((players || []).map(p => [p.id, p]));
+      const statsMap  = Object.fromEntries((stats  || []).map(s => [s.player_id, s]));
+      return {
+        captainId    : team?.captain_id     ?? null,
+        viceCaptainId: team?.vice_captain_id ?? null,
+        players: pids.map(pid => {
+          const p = playerMap[pid] || {};
+          const s = statsMap[pid]  || {};
+          return {
+            player_id : pid,
+            name      : p.name || pid,
+            role      : p.role || '',
+            raw_points: s.raw_points ?? null,
+            batting   : s.batting   ?? null,
+            bowling   : s.bowling   ?? null,
+            fielding  : s.fielding  ?? null,
+          };
+        }),
+      };
     },
 
     /**
