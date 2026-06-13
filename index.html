@@ -5963,9 +5963,14 @@ p31,Sample Player,MI,bat,9.0,false
                     '<td></td><td></td>' +
                     '<td class="pts-cell">' + Number(t.total_points).toFixed(1) + '</td></tr>'
                   : '';
-                const pRows = sorted.map(p => {
-                  const isCap = p.player_id === t.captain_id;
-                  const isVC  = p.player_id === t.vice_captain_id;
+                const pRows = sorted.map((p, pi) => {
+                  if (pi === 0) console.log('[History C/VC debug]', {
+                    cap: t.captain_id, vc: t.vice_captain_id,
+                    firstPid: p.player_id,
+                    capType: typeof t.captain_id, pidType: typeof p.player_id
+                  });
+                  const isCap = String(p.player_id) === String(t.captain_id);
+                  const isVC  = String(p.player_id) === String(t.vice_captain_id);
                   const badge = isCap ? '<span class="cap-badge">C</span>'
                               : isVC  ? '<span class="vc-badge">VC</span>' : '';
                   const mult  = isCap ? 2.0 : isVC ? 1.5 : 1.0;
