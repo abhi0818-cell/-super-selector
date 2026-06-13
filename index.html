@@ -1723,12 +1723,18 @@ p31,Sample Player,MI,bat,9.0,false
     //   (A) Structured: b.dismissal = 'catch' | 'bowled' | 'lbw' | 'stumped'  +  b.bowler = { name }
     //   (B) Full string: b.dismissal = 'c Pant b Bumrah' (older / alternate APIs)
     function parseDismissalEntry(b) {
-      const d = String(b?.dismissal ?? '').toLowerCase().trim();
-      if (!d || d.includes('not out')) return null;
+      // CricAPI v1: dismissed batters have b.dismissal = short code ('catch','lbw',…)
+      // Not-out batters have NO b.dismissal — only b['dismissal-text'] = 'not out'.
+      const dText = String(b?.['dismissal-text'] ?? b?.dismissal ?? '').toLowerCase().trim();
+      const d     = String(b?.dismissal ?? '').toLowerCase().trim();
+      if (!d && (!dText || dText.includes('not out'))) return null;
+      if (d.includes('not out') || dText.includes('not out')) return null;
 
-      // Shape A — short type code with separate bowler/fielder fields
-      const fielderName = b.catch?.name ?? b.fielder?.name ?? b.catcher?.name ?? null;
-      const bowlerName  = b.bowler?.name ?? null;
+      // Shape A — short type code with separate bowler/fielder fields.
+      // CricAPI v1 sometimes returns these as plain strings, sometimes as { name } objects.
+      const strOrName = v => v?.name ?? (typeof v === 'string' && v ? v : null);
+      const fielderName = strOrName(b.catch) ?? strOrName(b.fielder) ?? strOrName(b.catcher) ?? null;
+      const bowlerName  = strOrName(b.bowler) ?? null;
       if (bowlerName && ['catch','caught','bowled','lbw','stumped'].includes(d)) {
         const type = d === 'catch' ? 'caught' : d;
         return { type, bowler: bowlerName, fielder: fielderName };
@@ -1751,7 +1757,7 @@ p31,Sample Player,MI,bat,9.0,false
 
       // Shape B — full string fallback
       let m;
-      if ((m = d.match(/^lbw(?:\s+b\s+(.+))?/)))            return { type:'lbw',     bowler: (m[1] || bowlerName || '').trim(), fielder: fielderName };
+      if ((m = d.match(/^lbw(?:\s+b\s+(.+))?/)))            return { type:'lbw',     bowler: (m[1] || bowlerName || '').trim() || null, fielder: fielderName };
       if ((m = d.match(/^c\s*&\s*b\s+(.+)/)))               return { type:'caught',  bowler: m[1].trim(),                       fielder: fielderName };
       if ((m = d.match(/^c(?:t)?\s+(.+?)\s+b\s+(.+)/)))     return { type:'caught',  bowler: m[2].trim(),                       fielder: m[1].trim() };
       if ((m = d.match(/^st\s+(.+?)\s+b\s+(.+)/)))          return { type:'stumped', bowler: m[2].trim(),                       fielder: m[1].trim() };
@@ -1761,16 +1767,21 @@ p31,Sample Player,MI,bat,9.0,false
 
     // Render a dismissal back into the standard scorecard short form.
     function formatDismissalText(b) {
+      // CricAPI v1 provides a ready-made 'dismissal-text' — use it directly when present.
+      const prefab = String(b?.['dismissal-text'] ?? '').trim();
+      if (prefab && !prefab.toLowerCase().includes('not out')) return prefab;
+      if (prefab.toLowerCase().includes('not out')) return 'not out';
+
       const parsed = parseDismissalEntry(b);
       if (!parsed) {
         const raw = String(b?.dismissal ?? '').trim();
         return raw && !raw.toLowerCase().includes('not out') ? raw : 'not out';
       }
       const { type, bowler, fielder, fielder2 } = parsed;
-      if (type === 'bowled')  return `b ${bowler}`;
-      if (type === 'lbw')     return `lbw b ${bowler}`;
-      if (type === 'caught')  return fielder ? `c ${fielder} b ${bowler}` : `c & b ${bowler}`;
-      if (type === 'stumped') return fielder ? `st ${fielder} b ${bowler}` : `st b ${bowler}`;
+      if (type === 'bowled')  return bowler ? `b ${bowler}` : 'bowled';
+      if (type === 'lbw')     return bowler ? `lbw b ${bowler}` : 'lbw';
+      if (type === 'caught')  return (fielder && bowler) ? `c ${fielder} b ${bowler}` : bowler ? `c & b ${bowler}` : 'caught';
+      if (type === 'stumped') return (fielder && bowler) ? `st ${fielder} b ${bowler}` : bowler ? `st b ${bowler}` : 'stumped';
       if (type === 'hit_wicket') return bowler ? `hit wkt b ${bowler}` : 'hit wicket';
       if (type === 'run_out') {
         const names = [fielder, fielder2].filter(Boolean).join(' / ');
@@ -1853,7 +1864,7 @@ p31,Sample Player,MI,bat,9.0,false
             ballsFaced: int(b.b),
             fours: int(b['4s']),
             sixes: int(b['6s']),
-            isDismissed: !(b.dismissal || '').toLowerCase().includes('not out'),
+            isDismissed: !!b.dismissal && !(b.dismissal || '').toLowerCase().includes('not out'),
           };
         });
 
