@@ -10279,7 +10279,7 @@ p31,Sample Player,MI,bat,9.0,false
       $('#pageTabSeason').style.display  = ptab === 'season'  ? '' : 'none';
       if (ptab === 'home')    renderPageHomeTab();
       if (ptab === 'contest') renderPageContestTab();
-      if (ptab === 'team')    ensureEditTeamBtnVisible();
+      if (ptab === 'team')  { ensureEditTeamBtnVisible(); requestAnimationFrame(function(){ if(typeof fitPitchRows==='function') fitPitchRows(); }); }
       if (ptab === 'season')  renderPageSeasonTab();
     }
 
