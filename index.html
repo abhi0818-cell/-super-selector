@@ -6,37 +6,37 @@
   <title>Super Selector — Fantasy Cricket</title>
   <style>
     :root {
-      --bg: #0f172a;
-      --panel: #1e293b;
-      --panel-2: #273449;
-      --border: #334155;
-      --muted: #94a3b8;
-      --text: #f1f5f9;
-      --accent: #22d3ee;
-      --accent-2: #fbbf24;
-      --good: #34d399;
-      --bad: #f87171;
-      --shadow: 0 8px 24px rgba(0,0,0,0.35);
+      --bg: #F5F0E0;
+      --panel: #FFFFFF;
+      --panel-2: #EDE8D5;
+      --border: #D6CFA8;
+      --muted: #7A7060;
+      --text: #1C1F26;
+      --accent: #C9A84C;
+      --accent-2: #A67C00;
+      --good: #2D6A35;
+      --bad: #C0392B;
+      --shadow: 0 4px 16px rgba(0,0,0,0.10);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: linear-gradient(180deg, #0b1220 0%, #0f172a 100%);
+      background: linear-gradient(180deg, #EDE8D5 0%, #F5F0E0 100%);
       color: var(--text); min-height: 100vh;
     }
     header {
       padding: 16px 24px; border-bottom: 1px solid var(--border);
       display: flex; align-items: center; justify-content: space-between; gap: 16px;
-      background: rgba(15,23,42,0.85); backdrop-filter: blur(8px);
+      background: rgba(245,240,224,0.92); backdrop-filter: blur(8px); box-shadow: 0 1px 0 var(--border);
       position: sticky; top: 0; z-index: 50;
     }
     .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; letter-spacing: 0.3px; }
     .brand .dot { width: 10px; height: 10px; background: var(--accent); border-radius: 50%; box-shadow: 0 0 12px var(--accent); }
     .brand .db-pill { font-size: 10px; padding: 2px 8px; border-radius: 12px; background: var(--panel-2); color: var(--muted); margin-left: 10px; font-weight: 500; letter-spacing: 0.5px; text-transform: uppercase; }
-    .brand .db-pill.on { background: rgba(52,211,153,0.18); color: var(--good); }
+    .brand .db-pill.on { background: rgba(45,106,53,0.12); color: var(--good); }
     .brand .api-pill { font-size: 10px; padding: 2px 8px; border-radius: 12px; background: var(--panel-2); color: var(--muted); margin-left: 6px; font-weight: 500; letter-spacing: 0.3px; cursor: default; }
-    .brand .api-pill.warn { background: rgba(251,191,36,0.18); color: var(--accent-2); }
-    .brand .api-pill.danger { background: rgba(248,113,113,0.18); color: var(--bad); }
+    .brand .api-pill.warn { background: rgba(166,124,0,0.15); color: var(--accent-2); }
+    .brand .api-pill.danger { background: rgba(192,57,43,0.12); color: var(--bad); }
     .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
     select, input, button {
       background: var(--panel); color: var(--text); border: 1px solid var(--border);
@@ -44,7 +44,7 @@
     }
     button { cursor: pointer; transition: all 0.15s; }
     button:hover { background: var(--panel-2); border-color: var(--accent); }
-    button.primary { background: var(--accent); color: #082f3a; border-color: var(--accent); font-weight: 600; }
+    button.primary { background: var(--accent); color: #1C1F26; border-color: var(--accent); font-weight: 600; }
     button.primary:hover { filter: brightness(1.08); }
     button.danger { background: transparent; border-color: var(--bad); color: var(--bad); }
     button:disabled { opacity: 0.45; cursor: not-allowed; }
@@ -64,7 +64,7 @@
       padding: 6px 12px; border-radius: 20px; background: var(--panel); border: 1px solid var(--border);
       font-size: 12px; cursor: pointer; user-select: none;
     }
-    .filters .chip.active { background: var(--accent); color: #082f3a; border-color: var(--accent); font-weight: 600; }
+    .filters .chip.active { background: var(--accent); color: #1C1F26; border-color: var(--accent); font-weight: 600; }
 
     .player-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; padding: 14px 16px; max-height: 540px; overflow-y: auto; }
     .player-card {
@@ -148,7 +148,7 @@
     .empty { padding: 30px 16px; text-align: center; color: var(--muted); font-size: 13px; }
 
     .breakdown {
-      grid-column: 1 / -1; padding: 6px 12px; background: rgba(15,23,42,0.6); border-radius: 6px; margin-top: 4px;
+      grid-column: 1 / -1; padding: 6px 12px; background: rgba(237,232,213,0.85); border-radius: 6px; margin-top: 4px;
       font-size: 11px; color: var(--muted); display: none; line-height: 1.6;
     }
     .squad-row.expanded .breakdown { display: block; }
@@ -241,16 +241,16 @@
     .admin-table .col-role      { width: 90px; }
     .admin-table .col-overseas  { width: 60px; text-align: center; }
     .admin-table .col-actions   { width: 90px; text-align: right; white-space: nowrap; }
-    .admin-table input.dirty, .admin-table select.dirty { border-color: var(--accent-2); background: rgba(251,191,36,0.08); }
+    .admin-table input.dirty, .admin-table select.dirty { border-color: var(--accent-2); background: rgba(166,124,0,0.08); }
     .admin-table .row-del { width: 24px; height: 24px; border-radius: 4px; padding: 0; background: transparent; color: var(--bad); border-color: transparent; }
     .admin-table .row-del:hover { background: rgba(248,113,113,0.15); border-color: var(--bad); }
     .admin-table .row-finalize { font-size: 10px; padding: 2px 6px; height: 22px; border-radius: 4px; background: transparent; color: var(--accent); border-color: var(--accent); margin-right: 4px; }
     .admin-table .row-finalize:hover { background: rgba(34,211,238,0.12); }
     .admin-table .row-finalize:disabled { opacity: 0.4; cursor: not-allowed; }
     .admin-table .row-recalc { font-size: 10px; padding: 2px 6px; height: 22px; border-radius: 4px; background: transparent; color: var(--accent-2); border-color: var(--accent-2); margin-right: 4px; }
-    .admin-table .row-recalc:hover { background: rgba(251,191,36,0.12); }
+    .admin-table .row-recalc:hover { background: rgba(166,124,0,0.10); }
     .admin-table .row-recalc:disabled { opacity: 0.4; cursor: not-allowed; }
-    .admin-table .row-add { width: 24px; height: 24px; border-radius: 4px; padding: 0; background: var(--accent); color: #082f3a; border-color: var(--accent); font-weight: 700; }
+    .admin-table .row-add { width: 24px; height: 24px; border-radius: 4px; padding: 0; background: var(--accent); color: #1C1F26; border-color: var(--accent); font-weight: 700; }
     .admin-tabs { display: flex; gap: 4px; padding: 0 18px; border-bottom: 1px solid var(--border); }
     .admin-tabs .a-tab { padding: 8px 14px; cursor: pointer; user-select: none; font-size: 13px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
     .admin-tabs .a-tab.active { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
@@ -304,21 +304,21 @@
     .hist-xi-table { width: 100%; border-collapse: collapse; font-size: 11px; }
     .hist-xi-table th { color: var(--muted); font-size: 9px; text-transform: uppercase;
       letter-spacing: 0.5px; padding: 5px 8px; text-align: right;
-      border-bottom: 1px solid var(--border); background: rgba(15,23,42,0.3); }
+      border-bottom: 1px solid var(--border); background: rgba(237,232,213,0.6); }
     .hist-xi-table th.name { text-align: left; }
-    .hist-xi-table td { padding: 4px 8px; text-align: right; border-bottom: 1px dashed rgba(51,65,85,0.3); }
+    .hist-xi-table td { padding: 4px 8px; text-align: right; border-bottom: 1px dashed rgba(214,207,168,0.6); }
     .hist-xi-table td.name { text-align: left; font-weight: 500; }
     .hist-xi-table td.muted { color: var(--muted); }
     .hist-xi-table td.pts-cell { font-weight: 700; color: var(--accent); }
     .hist-xi-table td.pts-cell.zero { color: var(--muted); font-weight: 400; }
     .hist-xi-table .cap-badge { font-size: 9px; padding: 1px 4px; border-radius: 3px;
-      background: rgba(251,191,36,0.2); color: var(--accent-2); margin-left: 4px; font-weight: 700; }
+      background: rgba(166,124,0,0.15); color: var(--accent-2); margin-left: 4px; font-weight: 700; }
     .hist-xi-table .vc-badge  { font-size: 9px; padding: 1px 4px; border-radius: 3px;
       background: rgba(148,163,184,0.15); color: var(--muted); margin-left: 4px; font-weight: 700; }
     .hist-xi-wrap { display: none; padding: 0; }
     .hist-xi-wrap.open { display: block; }
 
-    .save-bar { padding: 10px 16px; display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--border); background: rgba(15,23,42,0.4); }
+    .save-bar { padding: 10px 16px; display: flex; gap: 8px; align-items: center; border-top: 1px solid var(--border); background: rgba(237,232,213,0.7); }
     .save-bar input { flex: 1; }
     .save-bar small { color: var(--muted); font-size: 11px; }
 
@@ -357,14 +357,14 @@
     /* Rules editor */
     .rules-tabs { display: flex; gap: 6px; padding: 0 0 8px 0; flex-wrap: wrap; }
     .rules-tabs .tab { padding: 5px 12px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--border); font-size: 12px; cursor: pointer; user-select: none; }
-    .rules-tabs .tab.active { background: var(--accent); color: #082f3a; border-color: var(--accent); font-weight: 600; }
-    .rules-tabs .dirty-pill { margin-left: auto; font-size: 10px; padding: 4px 10px; border-radius: 12px; background: rgba(251,191,36,0.18); color: var(--accent-2); display: none; }
+    .rules-tabs .tab.active { background: var(--accent); color: #1C1F26; border-color: var(--accent); font-weight: 600; }
+    .rules-tabs .dirty-pill { margin-left: auto; font-size: 10px; padding: 4px 10px; border-radius: 12px; background: rgba(166,124,0,0.15); color: var(--accent-2); display: none; }
     .rules-tabs .dirty-pill.on { display: inline; }
     .rule-group-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin: 10px 0 4px; }
     .rule-grid { display: grid; grid-template-columns: 1fr 80px; gap: 4px 8px; align-items: center; }
     .rule-grid .lbl { font-size: 12px; color: var(--text); }
     .rule-grid input.rule-input { padding: 4px 6px; font-size: 12px; text-align: right; }
-    .rule-grid input.rule-input.changed { border-color: var(--accent-2); background: rgba(251,191,36,0.08); }
+    .rule-grid input.rule-input.changed { border-color: var(--accent-2); background: rgba(166,124,0,0.08); }
     .rules-actions { display: flex; gap: 8px; margin-top: 12px; }
     .rules-actions button { font-size: 12px; padding: 6px 12px; }
 
@@ -471,7 +471,7 @@
     #loginScreen {
       display: none;
       position: fixed; inset: 0; z-index: 200;
-      background: linear-gradient(180deg, #0b1220 0%, #0f172a 100%);
+      background: linear-gradient(180deg, #EDE8D5 0%, #F5F0E0 100%);
       align-items: center; justify-content: center;
     }
     #loginScreen.visible { display: flex; }
@@ -494,13 +494,13 @@
     #loginEmailInput:focus { border-color: var(--accent); }
     #magicLinkBtn {
       width: 100%; padding: 12px; border-radius: 8px; font-size: 15px; font-weight: 600;
-      background: var(--accent); color: #082f3a; border: none; cursor: pointer;
+      background: var(--accent); color: #1C1F26; border: none; cursor: pointer;
       transition: filter 0.15s;
     }
     #magicLinkBtn:hover  { filter: brightness(1.08); }
     #magicLinkBtn:disabled { opacity: 0.5; cursor: not-allowed; filter: none; }
     #loginSent { display: none; margin-top: 20px; padding: 14px; border-radius: 8px;
-      background: rgba(52,211,153,0.12); border: 1px solid rgba(52,211,153,0.3);
+      background: rgba(45,106,53,0.09); border: 1px solid rgba(45,106,53,0.25);
       color: var(--good); font-size: 14px; line-height: 1.5; }
     #loginError { margin-top: 12px; font-size: 13px; color: var(--bad); min-height: 18px; }
 
@@ -512,7 +512,7 @@
     }
     .user-pill .avatar {
       width: 22px; height: 22px; border-radius: 50%; background: var(--accent);
-      color: #082f3a; font-weight: 700; font-size: 11px;
+      color: #1C1F26; font-weight: 700; font-size: 11px;
       display: flex; align-items: center; justify-content: center; flex-shrink: 0;
     }
     #signOutBtn { font-size: 11px; padding: 4px 10px; }
@@ -3649,7 +3649,7 @@ const AR_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAOEAAADhCAYAAAA+s9
                 const sorted = [...t.players].sort((a, b) =>
                   (roleOrder[a.role] ?? 9) - (roleOrder[b.role] ?? 9));
                 const teamHeader = multiTeam
-                  ? '<tr style="background:rgba(15,23,42,0.3);">' +
+                  ? '<tr style="background:rgba(201,168,76,0.10);">' +
                     '<td class="name" style="font-weight:700;font-size:11px;">' + escapeHtml(t.team_name) + '</td>' +
                     '<td></td><td></td>' +
                     '<td class="pts-cell">' + Number(t.total_points).toFixed(1) + '</td></tr>'
