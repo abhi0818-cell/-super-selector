@@ -5635,13 +5635,23 @@ p31,Sample Player,MI,bat,9.0,false
       return d.toLocaleString();
     }
 
-    function jerseyHtml(c1, c2) {
-      const body   = c1 || '#888888';
-      const sleeve = c2 || body;
-      return `<svg viewBox="0 0 40 44" width="22" height="24" style="display:block;flex-shrink:0;" aria-hidden="true">
-        <path fill="${body}"   d="M10,0 Q18,9 20,9 Q22,9 30,0 L40,13 L31,17 L31,44 L9,44 L9,17 L0,13 Z"/>
-        <path fill="${sleeve}" d="M10,0 L0,13 L9,17 L9,9 Q14,8 10,0 Z"/>
-        <path fill="${sleeve}" d="M30,0 L40,13 L31,17 L31,9 Q26,8 30,0 Z"/>
+    function jerseyHtml(c1, c2, initials) {
+      const bodyColor   = c1 || '#888888';
+      const sleeveColor = c2 || '#333333';
+      const txt         = (initials || '??').toUpperCase().slice(0, 2);
+      const bodyPath   = 'M 48,8 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 L 82,8 L 90,18 L 115,32 L 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 105,165 L 65.5,166.3 L 25,166 L 31.5,59.8 L 21.5,78.3 L 3,65 L 14,32 L 42,16 Z';
+      const lSleeve    = 'M 3,65 L 21.5,78.3 L 31.5,59.8 L 42,16 L 14,32 Z';
+      const rSleeve    = 'M 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 90,18 L 115,32 Z';
+      const collarPath = 'M 48,8 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 Z';
+      return `<svg viewBox="0 0 141 179" width="44" height="56" style="display:block;flex-shrink:0;" aria-hidden="true">
+        <path d="${bodyPath}"   fill="${bodyColor}"   stroke="#11111133" stroke-width="2" stroke-linejoin="round"/>
+        <path d="${lSleeve}"   fill="${sleeveColor}" opacity="0.9"/>
+        <path d="${rSleeve}"   fill="${sleeveColor}" opacity="0.9"/>
+        <path d="${collarPath}" fill="${sleeveColor}" opacity="0.92"/>
+        <path d="${bodyPath}"   fill="none" stroke="#11111133" stroke-width="2" stroke-linejoin="round"/>
+        <text x="65" y="118" text-anchor="middle" dominant-baseline="middle"
+          font-family="Arial Black,Arial,sans-serif" font-size="36" font-weight="900"
+          fill="white" opacity="0.92">${txt}</text>
       </svg>`;
     }
 
@@ -5697,7 +5707,11 @@ p31,Sample Player,MI,bat,9.0,false
           </div>` : '';
         const nameSuffix = isCap ? ' <span class="cap-badge">C</span>' : isVc ? ' <span class="vc-badge">VC</span>' : '';
         const tm = teamByCode(p.team);
-        const jersey = jerseyHtml(tm?.color, tm?.color2);
+        const parts = p.name.trim().split(/\s+/);
+        const initials = parts.length >= 2
+          ? (parts[0][0] + parts[parts.length - 1][0])
+          : p.name.slice(0, 2);
+        const jersey = jerseyHtml(tm?.color, tm?.color2, initials);
         return `
           <div class="player-card ${sel?'selected':''} ${disabled?'disabled':''}" data-id="${p.id}">
             <div>
