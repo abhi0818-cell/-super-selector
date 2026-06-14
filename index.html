@@ -5635,6 +5635,16 @@ p31,Sample Player,MI,bat,9.0,false
       return d.toLocaleString();
     }
 
+    function jerseyHtml(c1, c2) {
+      const body   = c1 || '#888888';
+      const sleeve = c2 || body;
+      return `<svg viewBox="0 0 40 44" width="22" height="24" style="display:block;flex-shrink:0;" aria-hidden="true">
+        <path fill="${body}"   d="M10,0 Q18,9 20,9 Q22,9 30,0 L40,13 L31,17 L31,44 L9,44 L9,17 L0,13 Z"/>
+        <path fill="${sleeve}" d="M10,0 L0,13 L9,17 L9,9 Q14,8 10,0 Z"/>
+        <path fill="${sleeve}" d="M30,0 L40,13 L31,17 L31,9 Q26,8 30,0 Z"/>
+      </svg>`;
+    }
+
     function renderPool(){
       renderTeamFilter();
       renderMatchSelector();
@@ -5686,6 +5696,8 @@ p31,Sample Player,MI,bat,9.0,false
             <button class="cap-btn ${isVc?'vc':''}"       data-slvc="${p.id}"  title="Vice-C">V</button>
           </div>` : '';
         const nameSuffix = isCap ? ' <span class="cap-badge">C</span>' : isVc ? ' <span class="vc-badge">VC</span>' : '';
+        const tm = teamByCode(p.team);
+        const jersey = jerseyHtml(tm?.color, tm?.color2);
         return `
           <div class="player-card ${sel?'selected':''} ${disabled?'disabled':''}" data-id="${p.id}">
             <div>
@@ -5699,6 +5711,7 @@ p31,Sample Player,MI,bat,9.0,false
             </div>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
               <span class="sel-tick">✓</span>
+              ${jersey}
               <div class="credit">${p.credits.toFixed(1)}</div>
             </div>
           </div>
