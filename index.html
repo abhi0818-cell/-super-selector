@@ -8351,7 +8351,10 @@ p31,Sample Player,MI,bat,9.0,false
           console.warn('[finalizeOneMatch] duplicate local player skipped:', pl.name, '→', local.id);
           continue;
         }
-        const s = calculateScore({ ...pl, captaincy: 'normal' }, m.format);
+        // Use the local DB role, not the API-derived role.  fromCricAPI promotes any player
+        // who both bats AND bowls to 'ar', which incorrectly triggers the duck penalty for
+        // specialist bowlers who bat lower-order.  The DB role is the authoritative designation.
+        const s = calculateScore({ ...pl, role: local.role, captaincy: 'normal' }, m.format);
         rowMap.set(local.id, {
           playerId: local.id,
           batting : pl.batting  ?? null,
@@ -8527,7 +8530,9 @@ p31,Sample Player,MI,bat,9.0,false
             console.warn('[forceRefinalizeMatch] duplicate local player skipped:', pl.name, '→', local.id);
             continue;
           }
-          const s = calculateScore({ ...pl, captaincy: 'normal' }, m.format || 'T20');
+          // Use local DB role — fromCricAPI promotes any player with both batting + bowling data
+          // to 'ar', which wrongly applies the duck penalty to specialist bowlers.
+          const s = calculateScore({ ...pl, role: local.role, captaincy: 'normal' }, m.format || 'T20');
           rowMap2.set(local.id, {
             playerId: local.id,
             batting:  pl.batting  ?? null,
