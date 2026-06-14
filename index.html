@@ -8340,12 +8340,19 @@ p31,Sample Player,MI,bat,9.0,false
       await state.db.saveMatchScorecard(m.id, json);
       const players = fromCricAPI(json, PLAYERS, m.format);
       if (!players.length) throw new Error('CricAPI returned no player rows');
-      const rows = []; const unmatchedNames = [];
+      // Use a Map to deduplicate by local player ID — two CricAPI names can resolve
+      // to the same local player via findLocalByName, which would cause a PostgreSQL
+      // "ON CONFLICT DO UPDATE command cannot affect row a second time" error.
+      const rowMap = new Map(); const unmatchedNames = [];
       for (const pl of players) {
         const local = findLocalByName(pl.name);
         if (!local) { unmatchedNames.push(pl.name); continue; }
+        if (rowMap.has(local.id)) {
+          console.warn('[finalizeOneMatch] duplicate local player skipped:', pl.name, '→', local.id);
+          continue;
+        }
         const s = calculateScore({ ...pl, captaincy: 'normal' }, m.format);
-        rows.push({
+        rowMap.set(local.id, {
           playerId: local.id,
           batting : pl.batting  ?? null,
           bowling : pl.bowling  ?? null,
@@ -8353,6 +8360,7 @@ p31,Sample Player,MI,bat,9.0,false
           rawPoints: s.rawPoints,
         });
       }
+      const rows = Array.from(rowMap.values());
       if (!rows.length) throw new Error(`No player name from API matched local pool (${players.length} API players, all unmatched)`);
       await state.db.bulkUpsertPlayerMatchStats(m.id, rows);
       await computeAndSaveXIScoresForMatch(m.id);
@@ -8381,8 +8389,8 @@ p31,Sample Player,MI,bat,9.0,false
       if (btn) { btn.disabled = true; btn.textContent = '…'; }
 
       try {
-        // Fetch the match with its cachedScorecard flag
-        const pending = await state.db.listMatchesNeedingFinalization();
+        // Fetch the match with its cachedScorecard flag (scoped to active tournament)
+        const pending = await state.db.listMatchesNeedingFinalization(state.activeTournamentId);
         let m = pending.find(x => x.id === matchId);
         if (!m) {
           // Already finalized — just recompute XI scores in case they're stale
@@ -8511,12 +8519,16 @@ p31,Sample Player,MI,bat,9.0,false
         })));
         console.groupEnd();
 
-        const rows = []; let unmatched = 0;
+        const rowMap2 = new Map(); let unmatched = 0;
         for (const pl of players) {
           const local = findLocalByName(pl.name);
           if (!local) { unmatched++; continue; }
+          if (rowMap2.has(local.id)) {
+            console.warn('[forceRefinalizeMatch] duplicate local player skipped:', pl.name, '→', local.id);
+            continue;
+          }
           const s = calculateScore({ ...pl, captaincy: 'normal' }, m.format || 'T20');
-          rows.push({
+          rowMap2.set(local.id, {
             playerId: local.id,
             batting:  pl.batting  ?? null,
             bowling:  pl.bowling  ?? null,
@@ -8524,6 +8536,7 @@ p31,Sample Player,MI,bat,9.0,false
             rawPoints: s.rawPoints,
           });
         }
+        const rows = Array.from(rowMap2.values());
         if (!rows.length) throw new Error(`No API player names matched local pool (${players.length} players, all unmatched).`);
 
         await state.db.bulkUpsertPlayerMatchStats(matchId, rows);
@@ -8559,7 +8572,7 @@ p31,Sample Player,MI,bat,9.0,false
       btn.disabled = true;
 
       try {
-        const pending = await state.db.listMatchesNeedingFinalization();
+        const pending = await state.db.listMatchesNeedingFinalization(state.activeTournamentId);
         if (!pending.length) {
           statusEl.textContent = 'Nothing to finalize — every completed match already has player_match_stats.';
           toast('Nothing to finalize.');

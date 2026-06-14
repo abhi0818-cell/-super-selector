@@ -1164,13 +1164,15 @@ export function createDb(cfg = {}) {
      * Each returned match is annotated with `cachedScorecard: true/false` so
      * the caller can skip the CricAPI fetch when a saved payload already exists.
      */
-    async listMatchesNeedingFinalization() {
+    async listMatchesNeedingFinalization(tournamentId) {
       const sb = await getClient();
-      const { data: completed, error: e1 } = await sb
+      let mq = sb
         .from('matches')
         .select('id, match_number, format, home_team_id, away_team_id, external_id, played_on, status, notes')
         .eq('status', 'completed')
         .not('external_id', 'is', null);
+      if (tournamentId) mq = mq.eq('tournament_id', tournamentId);
+      const { data: completed, error: e1 } = await mq;
       if (e1) throw e1;
       if (!completed?.length) return [];
       const ids = completed.map(m => m.id);
