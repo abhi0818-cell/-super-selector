@@ -199,7 +199,109 @@
     .stat.ok .value { color: var(--good); }
     .stat.bad .value { color: var(--bad); }
 
-    .squad-list { max-height: 380px; overflow-y: auto; }
+    .squad-list { overflow-y: auto; }
+
+    /* ── Cricket Pitch XI View ─────────────────────────────────────────── */
+    .pitch-field {
+      position: relative;
+      background: radial-gradient(ellipse 88% 100% at 50% 50%,
+        #3ea83e 0%, #2d8a2d 35%, #1e6b1e 65%, #114411 100%);
+      border-radius: 44% / 8%;
+      min-height: 430px;
+      display: flex; flex-direction: column;
+      justify-content: space-evenly;
+      padding: 20px 8px;
+      overflow: hidden;
+      box-shadow: inset 0 0 0 3px rgba(255,255,255,0.14), 0 2px 12px rgba(0,0,0,0.18);
+    }
+    /* Outer boundary rope */
+    .pitch-field::after {
+      content: '';
+      position: absolute; inset: 6px;
+      border-radius: 44% / 8%;
+      border: 1.5px dashed rgba(255,255,255,0.18);
+      pointer-events: none;
+    }
+    /* Central pitch strip */
+    .pitch-strip {
+      position: absolute; left: 50%; top: 50%;
+      transform: translate(-50%,-50%);
+      width: 38px; height: 54%;
+      background: linear-gradient(180deg, #c9a26a 0%, #dbb87c 50%, #c9a26a 100%);
+      border-radius: 5px; opacity: 0.72; pointer-events: none;
+    }
+    .pitch-strip::before, .pitch-strip::after {
+      content: ''; position: absolute; left: -10px; right: -10px; height: 2px;
+      background: rgba(255,255,255,0.55);
+    }
+    .pitch-strip::before { top: 14%; }
+    .pitch-strip::after  { bottom: 14%; }
+    /* Role rows */
+    .pitch-row {
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+      position: relative; z-index: 1;
+    }
+    .pitch-role-lbl {
+      font-size: 8.5px; font-weight: 700; letter-spacing: 1.2px;
+      color: rgba(255,255,255,0.45); text-transform: uppercase;
+    }
+    .pitch-row-players { display: flex; justify-content: center; gap: 4px; flex-wrap: wrap; }
+    /* Individual player token */
+    .pitch-player {
+      display: flex; flex-direction: column; align-items: center; gap: 1px;
+      position: relative; cursor: pointer;
+    }
+    .pitch-jwrap { position: relative; width: 36px; }
+    .pitch-jwrap svg { width: 36px; height: auto; display: block; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5)); }
+    .pitch-jwrap .jersey-wrap { width: 36px; }
+    .pitch-jwrap .jersey-wrap svg { width: 36px; height: auto; display: block; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5)); }
+    .pitch-cbadge {
+      position: absolute; top: -5px; right: -5px;
+      width: 15px; height: 15px; border-radius: 50%;
+      font-size: 8px; font-weight: 900;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    }
+    .pitch-cbadge.c  { background: var(--accent); color: #1C1F26; }
+    .pitch-cbadge.vc { background: rgba(255,255,255,0.9); color: #6b4e00; }
+    /* Hover overlay with C / V / × buttons */
+    .pitch-controls {
+      position: absolute; bottom: -2px; left: 50%;
+      transform: translateX(-50%);
+      display: none; gap: 2px; z-index: 10;
+    }
+    .pitch-player:hover .pitch-controls { display: flex; }
+    .pitch-ctrl-btn {
+      width: 17px; height: 17px; border-radius: 3px; padding: 0;
+      font-size: 8px; font-weight: 800; cursor: pointer;
+      border: 1px solid rgba(255,255,255,0.35);
+      background: rgba(0,0,0,0.65); color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      line-height: 1;
+    }
+    .pitch-ctrl-btn.c-on  { background: var(--accent); color: #1C1F26; border-color: var(--accent); }
+    .pitch-ctrl-btn.vc-on { background: rgba(255,220,80,0.7); color: #1C1F26; }
+    .pitch-ctrl-btn.rm    { color: #f88; }
+    /* Player name tag */
+    .pitch-nametag {
+      font-size: 9.5px; font-weight: 700; color: #fff;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.95);
+      text-align: center; max-width: 50px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .pitch-ptag {
+      font-size: 8.5px; font-weight: 700; color: var(--accent);
+      text-shadow: 0 1px 2px rgba(0,0,0,0.9);
+    }
+    /* Empty slot */
+    .pitch-empty-slot {
+      width: 36px; height: 44px; border-radius: 6px;
+      border: 1.5px dashed rgba(255,255,255,0.22);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 8px; font-weight: 600; color: rgba(255,255,255,0.3);
+    }
+    /* Locked state */
+    .squad-list.locked .pitch-ctrl-btn { opacity: 0.3; pointer-events: none; }
     /* Compact XI slot rows */
     .xi-slot { display: flex; align-items: center; gap: 7px; padding: 6px 12px; border-bottom: 1px solid var(--border); }
     .xi-slot.xi-empty { opacity: .4; }
@@ -733,7 +835,8 @@
       .remove-btn { width: 32px; height: 32px; font-size: 18px; }
       .squad-row .name { font-size: 14px; }
       .squad-row .meta { font-size: 11px; }
-      .squad-list { max-height: 340px; padding: 6px 12px; }
+      .squad-list { padding: 0; }
+      .pitch-field { min-height: 360px; border-radius: 40% / 6%; }
 
       /* ── Mode tabs (Daily XI / Season Long) ─────────────────────── */
       .mode-tabs { gap: 0; width: 100%; }
@@ -5922,43 +6025,73 @@ p31,Sample Player,MI,bat,9.0,false
         ? scoreTeam(state.selected.map(buildPlayerForScoring), state.format)
         : [];
       const byName = Object.fromEntries(scored.map(s => [s.name, s]));
-      const ordered = sortByRole(state.selected);
-      const roleBg = { wk:'#FAC775', bat:'#B5D4F4', ar:'#9FE1CB', bowl:'#F5C4B3' };
-      const roleTc = { wk:'#633806', bat:'#0C447C', ar:'#085041', bowl:'#712B13' };
-      function initials(n) { return n.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
 
-      list.innerHTML = Array.from({length:11}, (_,i) => {
-        const id = ordered[i];
-        if (!id) return `<div class="xi-slot xi-empty">
-          <span class="xi-num">${i+1}</span>
-          <div class="xi-av" style="background:var(--panel-2);"></div>
-          <div class="xi-info"><div class="xi-nm" style="color:var(--muted);font-weight:400;">Empty slot</div></div>
-        </div>`;
+      // Group by role
+      const groups = { wk: [], bat: [], ar: [], bowl: [] };
+      state.selected.forEach(id => {
+        const p = playerById(id);
+        if (p && groups[p.role] !== undefined) groups[p.role].push(id);
+      });
+
+      // Min empty placeholder slots per role
+      const minSlots = { wk: 1, bat: 3, ar: 1, bowl: 3 };
+      const roleNames = { wk: 'WK', bat: 'BAT', ar: 'AR', bowl: 'BOWL' };
+
+      function playerToken(id) {
         const p = playerById(id); if (!p) return '';
-        const score = byName[p.name];
-        const isCap = state.captain === id;
-        const isVc  = state.viceCaptain === id;
-        const badge = isCap ? '<span class="xi-badge-c">C</span>' : isVc ? '<span class="xi-badge-vc">VC</span>' : '';
-        const pts   = score ? score.totalPoints.toFixed(0) : '—';
-        return `<div class="xi-slot" data-id="${id}">
-          <span class="xi-num">${i+1}</span>
-          <div class="xi-av" style="background:${roleBg[p.role]};color:${roleTc[p.role]};">${initials(p.name)}</div>
-          <div class="xi-info">
-            <div class="xi-nm">${p.name.split(' ').pop()} ${badge}</div>
-            <div class="xi-mt">${roleLabel[p.role]} · ${p.team}</div>
+        const score  = byName[p.name];
+        const isCap  = state.captain === id;
+        const isVc   = state.viceCaptain === id;
+        const tc     = teamByCode(p.team);
+        const pts    = score ? score.totalPoints.toFixed(0) : null;
+        const lname  = p.name.split(' ').pop();
+        const badge  = isCap ? '<span class="pitch-cbadge c">C</span>'
+                             : isVc ? '<span class="pitch-cbadge vc">V</span>' : '';
+        const jsvg   = jerseyAvatar(playerInitials(p.name), tc?.color || '#888', tc?.color2 || null);
+        return `<div class="pitch-player" data-id="${id}" title="${p.name} · ${p.team}">
+          <div class="pitch-jwrap">
+            ${jsvg}${badge}
+            <div class="pitch-controls">
+              <button class="pitch-ctrl-btn ${isCap?'c-on':''}"  data-act="cap">C</button>
+              <button class="pitch-ctrl-btn ${isVc?'vc-on':''}" data-act="vc">V</button>
+              <button class="pitch-ctrl-btn rm" data-act="rm">×</button>
+            </div>
           </div>
-          <button class="cap-btn ${isCap?'captain':''}" data-act="cap" title="Captain (2×)">C</button>
-          <button class="cap-btn ${isVc?'vc':''}"      data-act="vc"  title="Vice-captain (1.5×)">V</button>
-          <span class="xi-pts">${pts}</span>
-          <button class="remove-btn" data-act="rm" title="Remove">×</button>
+          <div class="pitch-nametag">${lname}</div>
+          ${pts !== null ? `<div class="pitch-ptag">${pts}pt</div>` : ''}
         </div>`;
-      }).join('');
+      }
 
-      list.querySelectorAll('.xi-slot[data-id]').forEach(row => {
-        const id = row.dataset.id;
-        row.querySelector('[data-act="cap"]').addEventListener('click', e => { e.stopPropagation(); setCaptain(id); });
-        row.querySelector('[data-act="vc"]').addEventListener ('click', e => { e.stopPropagation(); setViceCaptain(id); });
-        row.querySelector('[data-act="rm"]').addEventListener ('click', e => { e.stopPropagation(); togglePlayer(id); });
+      function emptyToken(role) {
+        return `<div class="pitch-player">
+          <div class="pitch-empty-slot">${roleNames[role]}</div>
+        </div>`;
+      }
+
+      function roleRow(role) {
+        const ids    = groups[role];
+        const min    = minSlots[role];
+        const tokens = ids.map(playerToken);
+        while (tokens.length < min) tokens.push(emptyToken(role));
+        return `<div class="pitch-row" data-role="${role}">
+          <div class="pitch-role-lbl">${roleNames[role]}</div>
+          <div class="pitch-row-players">${tokens.join('')}</div>
+        </div>`;
+      }
+
+      list.innerHTML = `<div class="pitch-field">
+        <div class="pitch-strip"></div>
+        ${roleRow('wk')}
+        ${roleRow('bat')}
+        ${roleRow('ar')}
+        ${roleRow('bowl')}
+      </div>`;
+
+      list.querySelectorAll('.pitch-player[data-id]').forEach(el => {
+        const id = el.dataset.id;
+        el.querySelector('[data-act="cap"]')?.addEventListener('click', e => { e.stopPropagation(); setCaptain(id); });
+        el.querySelector('[data-act="vc"]')?.addEventListener ('click', e => { e.stopPropagation(); setViceCaptain(id); });
+        el.querySelector('[data-act="rm"]')?.addEventListener ('click', e => { e.stopPropagation(); togglePlayer(id); });
       });
     }
 
