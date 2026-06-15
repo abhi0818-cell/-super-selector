@@ -877,6 +877,12 @@
       width:calc(var(--tsz,34px)*0.44); height:calc(var(--tsz,34px)*0.44);
       object-fit:contain; filter:drop-shadow(0 1px 4px rgba(0,0,0,0.9));
     }
+    /* ── History pitch view ─────────────────────────────────────────────────── */
+    .hist-pitch-wrap { background:#1a5c1a; overflow:hidden; }
+    .hist-pitch-oval { margin:8px 14px !important; height:360px !important; }
+    .hist-pitch-pts-bar { display:flex; justify-content:space-between; align-items:center; padding:4px 14px 8px; }
+    .hist-pitch-pts-lbl { font-size:11px; font-weight:700; color:rgba(255,255,255,0.6); text-transform:uppercase; letter-spacing:.5px; }
+    .hist-pitch-pts-val { font-size:13px; font-weight:800; color:#FFD966; text-shadow:0 1px 4px rgba(0,0,0,.8); }
     /* ═══════════════════════════════════════════════════════════════════════════ */
 </style>
 </head>
@@ -6079,35 +6085,14 @@ p31,Sample Player,MI,bat,9.0,false
           const hasXI     = m.teams.length > 0;
           const multiTeam = m.teams.length > 1;
 
-          // Player breakdown rows
-          const playerRowsHtml = hasXI
+          // Detail: pitch view per team, or placeholder if no XI picked
+          const pitchDetailHtml = hasXI
             ? m.teams.map(t => {
                 const sorted = [...t.players].sort((a, b) =>
                   (roleOrder[a.role] ?? 9) - (roleOrder[b.role] ?? 9));
-                const teamHeader = multiTeam
-                  ? '<tr style="background:rgba(237,232,213,0.6);">' +
-                    '<td class="name" style="font-weight:700;font-size:11px;">' + escapeHtml(t.team_name) + '</td>' +
-                    '<td></td><td></td>' +
-                    '<td class="pts-cell">' + Number(t.total_points).toFixed(1) + '</td></tr>'
-                  : '';
-                const pRows = sorted.map(p => {
-                  const isCap = p.player_id === t.captain_id;
-                  const isVC  = p.player_id === t.vice_captain_id;
-                  const badge = isCap ? '<span class="cap-badge">C</span>'
-                              : isVC  ? '<span class="vc-badge">VC</span>' : '';
-                  const mult  = isCap ? 2.0 : isVC ? 1.5 : 1.0;
-                  const pts   = p.raw_points !== null ? (Number(p.raw_points) * mult).toFixed(1) : '—';
-                  const hasPts = p.raw_points !== null && p.raw_points !== 0;
-                  return '<tr>' +
-                    '<td class="name">' + escapeHtml(p.name) + badge + '</td>' +
-                    '<td class="muted">' + (p.team_id || '—') + '</td>' +
-                    '<td class="muted">' + (roleLabel[p.role] || p.role) + '</td>' +
-                    '<td class="pts-cell' + (hasPts ? '' : ' zero') + '">' + pts + '</td>' +
-                    '</tr>';
-                }).join('');
-                return teamHeader + pRows;
+                return histPitchHtml({ ...t, players: sorted });
               }).join('')
-            : '<tr><td colspan="4" style="text-align:center;padding:10px 8px;color:var(--muted);font-style:italic;font-size:12px;">No XI picked for this match</td></tr>';
+            : '<div style="padding:12px 0 6px;text-align:center;font-size:12px;color:var(--muted);font-style:italic;">No XI picked for this match</div>';
 
           const matchRow =
             '<tr class="sl-match-row" data-detail="' + detailId + '" style="cursor:pointer;" title="Click to expand">' +
@@ -6118,11 +6103,7 @@ p31,Sample Player,MI,bat,9.0,false
 
           const detailRow =
             '<tr id="' + detailId + '" style="display:none;">' +
-            '<td colspan="3" style="padding:0 0 6px;">' +
-            '<table class="hist-xi-table" style="margin:0;border-top:none;">' +
-            '<thead><tr><th class="name">Player</th><th>Team</th><th>Role</th><th>Pts</th></tr></thead>' +
-            '<tbody>' + playerRowsHtml + '</tbody>' +
-            '</table></td></tr>';
+            '<td colspan="3" style="padding:0;">' + pitchDetailHtml + '</td></tr>';
 
           return matchRow + detailRow;
         }).reverse().join('');
@@ -6143,7 +6124,7 @@ p31,Sample Player,MI,bat,9.0,false
           '<tbody>' + rows + '</tbody>' +
           '</table>';
 
-        // Wire expand/collapse on match rows
+        // Wire expand/collapse on match rows; fit pitch ovals on open
         wrap.querySelectorAll('.sl-match-row').forEach(row => {
           row.addEventListener('click', () => {
             const detail = wrap.querySelector('#' + row.dataset.detail);
@@ -6152,6 +6133,11 @@ p31,Sample Player,MI,bat,9.0,false
             detail.style.display = opening ? '' : 'none';
             const caret = row.querySelector('span[style*="▾"], span[style*="▴"]');
             if (caret) caret.textContent = opening ? '▴' : '▾';
+            if (opening) {
+              requestAnimationFrame(() => {
+                detail.querySelectorAll('.hist-pitch-oval').forEach(ov => fitHistOval(ov));
+              });
+            }
           });
         });
 
@@ -11142,6 +11128,101 @@ p31,Sample Player,MI,bat,9.0,false
     function pitchEmptySlot(role) {
       return '<div class="pitch-player"><div class="pitch-empty-slot">' + role.toUpperCase() + '</div></div>';
     }
+
+    // ── History pitch helpers ────────────────────────────────────────────────
+    // Read-only token used in the History tab expansion.
+    // Shows jersey + role icon + C/VC badge + net points (after multiplier).
+    // Uses p.team_id (history data field) instead of p.team (live pool field).
+    function histPitchToken(p, captainId, vcId) {
+      var isCap = String(p.player_id) === String(captainId);
+      var isVc  = String(p.player_id) === String(vcId);
+      var ln    = p.name.split(' ').pop();
+      var badge = isCap ? '<span class="pitch-cbadge c">C</span>'
+                : isVc  ? '<span class="pitch-cbadge vc">V</span>' : '';
+      var tm = teamByCode(p.team_id);
+      var c1 = (tm && tm.color)  || '#888888';
+      var c2 = (tm && tm.color2) || '#333333';
+      var mult = isCap ? 2.0 : isVc ? 1.5 : 1.0;
+      var rawPts = (p.raw_points !== null && p.raw_points !== undefined) ? Number(p.raw_points) : null;
+      var pts = rawPts !== null ? (rawPts * mult).toFixed(1) : '—';
+      var roleKey = p.role || 'bat';
+      var iconSrc = ROLE_ICON_P[roleKey] || ROLE_ICON_P['bat'];
+      return '<div class="pitch-player">'
+        + '<div class="pitch-jwrap">'
+        + pitchJerseyHtml(pitchInits(p.name), c1, c2)
+        + badge
+        + '<img class="pitch-role-icon" src="' + iconSrc + '" alt="' + roleKey + '"/>'
+        + '</div>'
+        + '<div class="pitch-nametag">' + escapeHtml(ln) + '</div>'
+        + '<div class="pitch-ptag">' + pts + '</div>'
+        + '</div>';
+    }
+
+    // Builds the complete green-oval pitch HTML for one historical team entry.
+    function histPitchHtml(t) {
+      var ROLES_ORDER = ['wk','bat','ar','bowl'];
+      var RLBL = {wk:'WK', bat:'BAT', ar:'AR', bowl:'BOWL'};
+      var groups = {wk:[], bat:[], ar:[], bowl:[]};
+      (t.players || []).forEach(function(p) {
+        if (groups[p.role]) groups[p.role].push(p);
+        else groups['bat'].push(p);
+      });
+      var svgOverlay = '<svg class="pitch-svg-overlay" viewBox="0 0 304 460" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">'
+        + '<ellipse cx="152" cy="230" rx="145" ry="220" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="2" stroke-dasharray="7 5"/>'
+        + '<rect x="134" y="140" width="36" height="180" rx="5" fill="url(#pitchGrad)" opacity="0.72"/>'
+        + '<line x1="120" y1="165" x2="184" y2="165" stroke="rgba(255,255,255,0.6)" stroke-width="2"/>'
+        + '<line x1="120" y1="295" x2="184" y2="295" stroke="rgba(255,255,255,0.6)" stroke-width="2"/>'
+        + '<line x1="147" y1="155" x2="147" y2="167" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>'
+        + '<line x1="152" y1="155" x2="152" y2="167" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>'
+        + '<line x1="157" y1="155" x2="157" y2="167" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>'
+        + '<line x1="147" y1="293" x2="147" y2="305" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>'
+        + '<line x1="152" y1="293" x2="152" y2="305" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>'
+        + '<line x1="157" y1="293" x2="157" y2="305" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>'
+        + '</svg>';
+      var rowsHtml = ROLES_ORDER.map(function(role) {
+        var tokens = groups[role].map(function(p) {
+          return histPitchToken(p, t.captain_id, t.vice_captain_id);
+        });
+        if (!tokens.length) tokens.push(pitchEmptySlot(role));
+        return '<div class="pitch-row">'
+          + '<div class="pitch-role-lbl">' + RLBL[role] + '</div>'
+          + '<div class="pitch-row-players">' + tokens.join('') + '</div>'
+          + '</div>';
+      }).join('');
+      var totalPts = (t.total_points !== null && t.total_points !== undefined)
+        ? Number(t.total_points).toFixed(1) : '—';
+      return '<div class="hist-pitch-wrap">'
+        + '<div class="pitch-oval hist-pitch-oval">'
+        + svgOverlay
+        + '<div style="display:flex;flex-direction:column;justify-content:space-evenly;align-items:stretch;flex:1;width:100%;z-index:2;">'
+        + rowsHtml
+        + '</div>'
+        + '</div>'
+        + '<div class="hist-pitch-pts-bar">'
+        + '<span class="hist-pitch-pts-lbl">Total points</span>'
+        + '<span class="hist-pitch-pts-val">' + totalPts + '</span>'
+        + '</div>'
+        + '</div>';
+    }
+
+    // Generic fitPitchRows that works on any oval element (not just #pitchOval).
+    function fitHistOval(ovalEl) {
+      if (!ovalEl) return;
+      var ow = ovalEl.clientWidth, oh = ovalEl.clientHeight;
+      if (!ow || !oh) return;
+      var a = ow/2, b = oh/2, N = 4;
+      ovalEl.querySelectorAll('.pitch-row').forEach(function(row, i) {
+        row.style.removeProperty('--tsz');
+        var n = row.querySelectorAll('.pitch-player').length;
+        if (!n) return;
+        var yFrac = (2*i+1)/(2*N);
+        var dy    = (yFrac-0.5)*oh;
+        var availW = 2*a*Math.sqrt(Math.max(0, 1-(dy/b)*(dy/b)))*0.84;
+        var tsz = Math.min(38, Math.max(14, availW/(n*1.18+0.24)));
+        row.style.setProperty('--tsz', tsz+'px');
+      });
+    }
+    // === END HISTORY PITCH HELPERS ===
 
     function renderPitchView() {
       var mount = $('#rowsMount');
