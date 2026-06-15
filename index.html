@@ -878,7 +878,7 @@
       object-fit:contain; filter:drop-shadow(0 1px 4px rgba(0,0,0,0.9));
     }
     /* ── History pitch view ─────────────────────────────────────────────────── */
-    .hist-pitch-wrap { background:#1a5c1a; max-width:360px; margin:0 auto; border-radius:12px; overflow:hidden; }
+    .hist-pitch-wrap { background:#1a5c1a; max-width:360px; margin:0 auto; border-radius:12px; }
     .pitch-oval-hist {
       position:relative; margin:10px 14px; height:460px;
       border-radius:50%; overflow:hidden;
@@ -6148,7 +6148,10 @@ p31,Sample Player,MI,bat,9.0,false
             if (caret) caret.textContent = opening ? '▴' : '▾';
             if (opening) {
               requestAnimationFrame(() => {
-                detail.querySelectorAll('.pitch-oval-hist').forEach(ov => fitHistOval(ov));
+                detail.querySelectorAll('.pitch-oval-hist').forEach(ov => {
+                  ov.style.background = 'radial-gradient(ellipse 80% 88% at 50% 50%, #4ec94e 0%,#3aad3a 22%,#2b8f2b 45%,#1d6e1d 65%,#0f470f 85%,#09300d 100%)';
+                  fitHistOval(ov);
+                });
               });
             }
           });
