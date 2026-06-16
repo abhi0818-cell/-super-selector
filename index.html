@@ -8311,13 +8311,23 @@ p31,Sample Player,MI,bat,9.0,false
               if (m) {
                 try {
                   const statRows = await state.db.getPlayerStatsForMatchFull(id);
-                  state.lastScorecard = buildLiveScorecardFromStats(m, statRows);
-                  render();
-                  renderScorecard();
-                  renderFantasyScorecard();
-                  $('#scorecardSection')?.setAttribute('open', '');
+                  console.info(`[Scrape Now] player_match_stats rows for match ${id}:`, statRows.length, statRows);
+                  if (!m.home_team_id || !m.away_team_id) {
+                    toast(`Saved ${statRows.length} player rows, but this match has no home_team_id/away_team_id set — can't build the scorecard table without both teams assigned.`, 6000);
+                  } else {
+                    const built = buildLiveScorecardFromStats(m, statRows);
+                    if (!built) {
+                      toast(`Saved ${statRows.length} player rows, but none matched ${m.home_team_id}/${m.away_team_id} rosters in your player pool — check those players' team_id.`, 6000);
+                    }
+                    state.lastScorecard = built;
+                    render();
+                    renderScorecard();
+                    renderFantasyScorecard();
+                    $('#scorecardSection')?.setAttribute('open', '');
+                  }
                 } catch (err2) {
                   console.warn('Scrape Now: scorecard refresh failed:', err2.message);
+                  toast('Scorecard refresh failed: ' + err2.message, 5000);
                 }
               }
             } else {
