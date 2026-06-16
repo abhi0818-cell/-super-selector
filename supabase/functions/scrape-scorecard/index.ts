@@ -46,6 +46,33 @@ function stripGenderSuffix(slug: string): string {
   return slug.replace(/-(?:women|w)$/i, '')
 }
 
+/** Map of short country codes (as stored in our `teams.name`, e.g. "NZ" in
+ *  "NZ-W") to the full country slug CricketAddictor actually uses in its
+ *  URLs. Needed because ICC-tournament URLs (e.g. the Women's T20 World Cup)
+ *  use the full country name — optionally plus "-women" — rather than the
+ *  bare 2-3 letter code our DB stores (our "NZ-W" → their
+ *  "new-zealand-women", not "nz"). */
+const COUNTRY_CODE_TO_SLUG: Record<string, string> = {
+  nz: 'new-zealand', sl: 'sri-lanka', ind: 'india', aus: 'australia', eng: 'england',
+  pak: 'pakistan', sa: 'south-africa', wi: 'west-indies', ban: 'bangladesh', ire: 'ireland',
+  sco: 'scotland', afg: 'afghanistan', zim: 'zimbabwe', usa: 'united-states',
+  uae: 'united-arab-emirates', ned: 'netherlands', nam: 'namibia', png: 'papua-new-guinea',
+  can: 'canada', nep: 'nepal', oma: 'oman', qat: 'qatar', ken: 'kenya', hk: 'hong-kong',
+  jer: 'jersey', ber: 'bermuda', tha: 'thailand', vct: 'vanuatu',
+}
+
+/** Expand a short team-code slug (e.g. "nz-w", "nz") into the full slug
+ *  CricketAddictor uses (e.g. "new-zealand-women", "new-zealand"). Returns
+ *  null when the slug isn't a recognized short code (e.g. it's already a
+ *  full name), so callers can fall back to the existing candidates. */
+function expandTeamSlug(slug: string): string | null {
+  const isWomen = /-(?:women|w)$/i.test(slug)
+  const bare    = stripGenderSuffix(slug)
+  const full    = COUNTRY_CODE_TO_SLUG[bare]
+  if (!full) return null
+  return isWomen ? `${full}-women` : full
+}
+
 function ordinal(n: number): string {
   const v = n % 100
   if (v >= 11 && v <= 13) return `${n}th`
@@ -202,10 +229,16 @@ async function discoverUrl(
   const t2     = toSlug(awayTeam)
   const t1Bare = stripGenderSuffix(t1)
   const t2Bare = stripGenderSuffix(t2)
+  const t1Full = expandTeamSlug(t1)
+  const t2Full = expandTeamSlug(t2)
   const series = toSlug(tournamentName)
   const descs  = matchTypeSlugVariants(matchType, matchNumber)
 
-  const teamPairs: Array<[string, string]> = [[t1, t2], [t2, t1]]
+  // Try the full-country-name expansion first — it's the correct form for
+  // ICC tournaments (and most others) when our team slug is a short code.
+  const teamPairs: Array<[string, string]> = []
+  if (t1Full && t2Full) teamPairs.push([t1Full, t2Full], [t2Full, t1Full])
+  teamPairs.push([t1, t2], [t2, t1])
   if (t1Bare !== t1 || t2Bare !== t2) teamPairs.push([t1Bare, t2Bare], [t2Bare, t1Bare])
 
   const candidates: string[] = []
@@ -223,11 +256,20 @@ async function discoverUrl(
     } catch { /* try next */ }
   }
 
-  // Listing-page scan: match by team codes + start-time + tournament proximity
-  const scanned = await scanListingsForMatch(t1Bare, t2Bare, startTime, tournamentName)
+  // Listing-page scan: match by team codes + start-time + tournament proximity.
+  // Prefer the full-name expansion (e.g. "new-zealand") when available, since
+  // listing pages spell out full country names, not our short codes.
+  const scanned = await scanListingsForMatch(
+    t1Full ? stripGenderSuffix(t1Full) : t1Bare,
+    t2Full ? stripGenderSuffix(t2Full) : t2Bare,
+    startTime, tournamentName,
+  )
   if (scanned) return scanned
 
-  // Last-resort fallback: substring scan using gender-stripped slugs
+  // Last-resort fallback: substring scan using gender-stripped slugs (prefer
+  // the full-name expansion when we have one, same reasoning as above)
+  const t1Scan = t1Full ? stripGenderSuffix(t1Full) : t1Bare
+  const t2Scan = t2Full ? stripGenderSuffix(t2Full) : t2Bare
   try {
     const r = await fetch('https://cricketaddictor.com/livescore/recent-matches/', {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SuperSelector/1.0)' },
@@ -235,7 +277,7 @@ async function discoverUrl(
     if (r.ok) {
       const html = await r.text()
       const re = new RegExp(
-        `href="(https://cricketaddictor\\.com/livescore/[^"]*(?:${t1Bare}[^"]*${t2Bare}|${t2Bare}[^"]*${t1Bare})[^"]*scorecard/)"`,
+        `href="(https://cricketaddictor\\.com/livescore/[^"]*(?:${t1Scan}[^"]*${t2Scan}|${t2Scan}[^"]*${t1Scan})[^"]*scorecard/)"`,
         'i',
       )
       const m = html.match(re)
@@ -647,7 +689,11 @@ Deno.serve(async (req: Request) => {
       const fmt        = match.format ?? 'T20'
 
       // ── 1. Discover / use cached URL ──────────────────────────────────────
-      let url: string | null = match.scorecard_url ?? null
+      // A manual "Scrape Now" (matchId provided) always re-discovers — the
+      // admin is explicitly retrying, often *because* a previously cached
+      // URL was wrong, so reusing that same cached URL here would silently
+      // repeat the same failure forever.
+      let url: string | null = matchId ? null : (match.scorecard_url ?? null)
 
       if (!url) {
         url = await discoverUrl(
@@ -676,6 +722,9 @@ Deno.serve(async (req: Request) => {
         html   = await res.text()
         source = url.includes('cricketaddictor') ? 'cricketaddictor' : 'business_standard'
       } catch (e) {
+        // Clear the cached URL — it may be stale/wrong, so the next attempt
+        // (cron or manual) re-runs discovery instead of retrying the same dead link.
+        await sb.from('matches').update({ scorecard_url: null }).eq('id', match.id)
         results.push({ matchId: match.id, status: 'fetch_failed', url, error: (e as Error).message })
         continue
       }
@@ -686,7 +735,19 @@ Deno.serve(async (req: Request) => {
         : parseBusinessStandard(html)
 
       if (!innings.length) {
-        results.push({ matchId: match.id, status: 'parse_failed', url })
+        // Same reasoning: a cached URL that fetches OK but never parses
+        // (wrong page / wrong match) shouldn't be reused on the next attempt.
+        await sb.from('matches').update({ scorecard_url: null }).eq('id', match.id)
+        // Diagnostics: tell us *why* nothing parsed — wrong page entirely
+        // (no "Inning" text at all), or right page but no <table> markup
+        // (e.g. anti-bot challenge page / JS-only content / blocked fetch).
+        results.push({
+          matchId: match.id, status: 'parse_failed', url,
+          htmlLength: html.length,
+          hasInningText: html.includes('Inning'),
+          hasTableMarkup: html.includes('<table'),
+          htmlSnippet: html.slice(0, 300),
+        })
         continue
       }
 

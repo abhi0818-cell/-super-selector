@@ -8217,7 +8217,9 @@ p31,Sample Player,MI,bat,9.0,false
               toast(`🕷 Scraped ${r.matched} players from ${r.source}. Unmatched: ${r.unmatched?.length ?? 0}.`, 4000);
               renderMatchesAdmin();
             } else {
-              toast(`Scrape: ${r?.status ?? 'unknown'} — ${r?.error ?? r?.fallback ?? ''}`, 4000);
+              const detail = r?.error ?? r?.fallback ?? r?.url ?? '';
+              console.warn('Scrape Now failed:', r);
+              toast(`Scrape: ${r?.status ?? 'unknown'} — ${detail}`, 6000);
             }
           } catch (err) {
             toast('Scrape failed: ' + err.message, 5000);
