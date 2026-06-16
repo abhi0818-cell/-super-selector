@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+body { background: #F5F0E0; padding: 20px; font-family: Arial; }
+.card { display:flex; align-items:center; gap:10px; background:white; padding:10px; border-radius:8px; width:300px; }
+.avatar { width:44px; flex-shrink:0; }
+.avatar svg { width:44px; height:auto; display:block; }
+</style>
+</head><body>
+<h3>Jersey Test</h3>
+<div class="card">
+  <div class="avatar" id="jtest"></div>
+  <div>Virat Kohli · RCB</div>
+</div>
+<script>
+const body        = "M 48.0,8.0 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 L 82.0,8.0 L 90.0,18.0 L 115.0,32.0 L 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 105.0,165.0 L 65.5,166.3 L 25.0,166.0 L 31.5,59.8 L 21.5,78.3 L 3.0,65.0 L 14.0,32.0 L 42.0,16.0 Z";
+const leftSleeve  = "M 3.0,65.0 L 21.5,78.3 L 31.5,59.8 L 42.0,16.0 L 14.0,32.0 Z";
+const rightSleeve = "M 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 90.0,18.0 L 115.0,32.0 Z";
+const collar      = "M 48.0,8.0 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 Z";
+
+const svg = `<svg width="141" height="179" viewBox="0 0 141 179" xmlns="http://www.w3.org/2000/svg">
+  <path d="${body}"        fill="#dc2626" stroke="#111" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="${leftSleeve}"  fill="#111111" opacity="0.88"/>
+  <path d="${rightSleeve}" fill="#111111" opacity="0.88"/>
+  <path d="${collar}"      fill="#111111" opacity="0.92"/>
+  <path d="${body}"        fill="none"    stroke="#111" stroke-width="1.5" stroke-linejoin="round"/>
+  <text x="65" y="118" text-anchor="middle" dominant-baseline="middle"
+    font-family="Arial Black,Arial" font-size="28" font-weight="900" fill="white">VK</text>
+</svg>`;
+
+document.getElementById('jtest').innerHTML = svg;
+console.log('SVG injected, length:', svg.length);
+</script>
+</body></html>

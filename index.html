@@ -881,17 +881,14 @@
     .hist-pitch-wrap { background:#1a5c1a; max-width:360px; margin:0 auto; border-radius:12px; }
     .pitch-oval-hist {
       position:relative; margin:10px 14px; height:460px;
-      clip-path:ellipse(50% 50% at 50% 50%);
-      background:radial-gradient(ellipse 80% 88% at 50% 50%,
-        #4ec94e 0%,#3aad3a 22%,#2b8f2b 45%,#1d6e1d 65%,#0f470f 85%,#09300d 100%);
+      border-radius:50%; overflow:hidden;
       display:flex; flex-direction:column; justify-content:stretch;
-      padding:18px 16px 36px; overflow:visible;
-    }
-    .pitch-oval-hist::before {
-      content:''; position:absolute; inset:0; pointer-events:none;
-      background:repeating-linear-gradient(180deg,
-        transparent 0px,transparent 24px,
-        rgba(255,255,255,0.035) 24px,rgba(255,255,255,0.035) 48px);
+      padding:18px 16px 36px;
+      /* SVG overlay as CSS background image — avoids Safari's dynamic DOM compositor bug */
+      background:
+        url("data:image/svg+xml,%3Csvg viewBox='0 0 304 460' preserveAspectRatio='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cellipse cx='152' cy='230' rx='145' ry='220' fill='none' stroke='rgba(255,255,255,.22)' stroke-width='2' stroke-dasharray='7 5'/%3E%3Crect x='134' y='140' width='36' height='180' rx='5' fill='rgb(180,130,55)' opacity='.72'/%3E%3Cline x1='120' y1='165' x2='184' y2='165' stroke='rgba(255,255,255,.6)' stroke-width='2'/%3E%3Cline x1='120' y1='295' x2='184' y2='295' stroke='rgba(255,255,255,.6)' stroke-width='2'/%3E%3Cline x1='147' y1='155' x2='147' y2='167' stroke='rgba(255,255,255,.5)' stroke-width='1.5'/%3E%3Cline x1='152' y1='155' x2='152' y2='167' stroke='rgba(255,255,255,.5)' stroke-width='1.5'/%3E%3Cline x1='157' y1='155' x2='157' y2='167' stroke='rgba(255,255,255,.5)' stroke-width='1.5'/%3E%3Cline x1='147' y1='293' x2='147' y2='305' stroke='rgba(255,255,255,.5)' stroke-width='1.5'/%3E%3Cline x1='152' y1='293' x2='152' y2='305' stroke='rgba(255,255,255,.5)' stroke-width='1.5'/%3E%3Cline x1='157' y1='293' x2='157' y2='305' stroke='rgba(255,255,255,.5)' stroke-width='1.5'/%3E%3C/svg%3E") 0 0/100% 100% no-repeat,
+        repeating-linear-gradient(180deg, transparent 0px, transparent 24px, rgba(255,255,255,.035) 24px, rgba(255,255,255,.035) 48px),
+        radial-gradient(ellipse 80% 88% at 50% 50%, #4ec94e 0%,#3aad3a 22%,#2b8f2b 45%,#1d6e1d 65%,#0f470f 85%,#09300d 100%);
     }
     .hist-pitch-pts-bar { display:flex; justify-content:space-between; align-items:center; padding:4px 14px 10px; }
     .hist-pitch-pts-lbl { font-size:11px; font-weight:700; color:rgba(255,255,255,0.6); text-transform:uppercase; letter-spacing:.5px; }

@@ -1,0 +1,1099 @@
+/**
+ * LeaderboardScreen — gradient-first redesign (Pass 1)
+ * Rankings by contest. Tap any row to see that player's team for each
+ * matchweek, per-player points breakdown (bat / bowl / field / bonus)
+ * with C / VC multipliers, and any boosters applied that week.
+ * Requires: expo-linear-gradient  →  npx expo install expo-linear-gradient
+ */
+
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { PlayerRole, CaptaincyRole } from '../types';
+import { fontSize, radius, spacing, shadow } from '../theme';
+import { useContestStore } from '../store/contestStore';
+import { useLeaderboardStore, LBEntry } from '../store/leaderboardStore';
+import { useAuthStore } from '../store/authStore';
+
+// ─── Domain types ─────────────────────────────────────────────────────────────
+
+type ContestTab = {
+  id: string; label: string; icon: string; type: 'daily' | 'sl' | 'private';
+};
+
+// Re-alias so existing code doesn't need changes
+type LeaderboardEntry = LBEntry;
+
+type MatchWeek = { id: string; label: string; match: string; date: string };
+
+type MatchPlayer = {
+  name: string; team: string; role: PlayerRole; captaincy: CaptaincyRole;
+  bat: number; bowl: number; field: number; bonus: number;
+};
+
+type MatchTeam = {
+  mwId:     string;
+  pts:      number;
+  boosters: Array<{ icon: string; name: string }>;
+  players:  MatchPlayer[];
+};
+
+// ─── Gradient palette ─────────────────────────────────────────────────────────
+
+const G = {
+  bg:       ['#F5F0E0', '#EDE8D5', '#E8E2CE'] as const,
+  header:   ['rgba(245,240,224,0.98)', 'rgba(237,232,213,0.95)'] as const,
+  tabOn:    ['#1C1F26', '#2A2E38'] as const,
+  highlight:['rgba(201,168,76,0.12)', 'rgba(245,240,224,0.9)'] as const,
+  rowMe:    ['rgba(201,168,76,0.1)', 'rgba(245,240,224,0.85)'] as const,
+  // Podium
+  gold:     ['rgba(201,168,76,0.3)', 'rgba(146,101,10,0.12)'] as const,
+  silver:   ['rgba(122,112,96,0.2)', 'rgba(90,80,70,0.08)'] as const,
+  bronze:   ['rgba(168,90,30,0.2)', 'rgba(130,60,15,0.08)'] as const,
+  // Modal
+  modal:    ['rgba(245,240,224,0.99)', 'rgba(237,232,213,0.99)'] as const,
+  mwTabOn:  ['rgba(201,168,76,0.2)', 'rgba(245,240,224,0.7)'] as const,
+  mwFooter: ['rgba(201,168,76,0.1)', 'rgba(245,240,224,0.85)'] as const,
+} as const;
+
+const C = {
+  text:    '#1C1F26',
+  muted:   '#7A7060',
+  accent:  '#C9A84C',
+  gold:    '#92650A',
+  silver:  '#5A6070',
+  good:    '#2D6A35',
+  bad:     '#C0392B',
+  border:  'rgba(201,168,76,0.25)',
+  borderA: 'rgba(201,168,76,0.5)',
+} as const;
+
+// ─── Role constants ───────────────────────────────────────────────────────────
+
+const ROLE_COLOR: Record<PlayerRole, string> = {
+  wk: '#C9A84C', bat: '#1A2744', ar: '#2D6A35', bowl: '#7A3012',
+};
+const ROLE_LABEL: Record<PlayerRole, string> = {
+  wk: 'WK', bat: 'BAT', ar: 'AR', bowl: 'BOWL',
+};
+
+// ─── Point helpers ────────────────────────────────────────────────────────────
+
+function capMult(c: CaptaincyRole): number {
+  return c === 'captain' ? 2 : c === 'vice_captain' ? 1.5 : 1;
+}
+function rawPts(p: MatchPlayer): number {
+  return p.bat + p.bowl + p.field + p.bonus;
+}
+function finalPts(p: MatchPlayer): number {
+  return Math.round(rawPts(p) * capMult(p.captaincy));
+}
+
+function rankMedal(rank: number): string {
+  if (rank === 1) return '🥇';
+  if (rank === 2) return '🥈';
+  if (rank === 3) return '🥉';
+  return `#${rank}`;
+}
+
+function podiumGrad(rank: number) {
+  if (rank === 1) return G.gold;
+  if (rank === 2) return G.silver;
+  if (rank === 3) return G.bronze;
+  return null;
+}
+
+// buildTabs is now driven by real contests — see LeaderboardScreen below
+function buildFallbackTabs(): ContestTab[] {
+  return [
+    { id: 'daily', label: 'Daily',       icon: '📅', type: 'daily' },
+    { id: 'sl',    label: 'Season Long', icon: '🏅', type: 'sl'    },
+  ];
+}
+
+const CONTEST_ICONS_LB: Record<string, string> = {
+  daily: '📅', sl: '🏅', private: '🔒',
+};
+
+// ─── Mock leaderboard ─────────────────────────────────────────────────────────
+
+const MOCK_LEADERBOARD: Record<string, LeaderboardEntry[]> = {
+  daily: [
+    { rank: 1,  userId: 'u1',  displayName: 'Arjun Shah',    teamName: 'RCB Warriors',     points: 148, isCurrentUser: false },
+    { rank: 2,  userId: 'u2',  displayName: 'Priya Mehta',   teamName: 'Mumbai Mashers',   points: 134, isCurrentUser: false },
+    { rank: 3,  userId: 'u3',  displayName: 'You',           teamName: 'Super Selectors',  points: 127, isCurrentUser: true  },
+    { rank: 4,  userId: 'u4',  displayName: 'Rohan Das',     teamName: 'Delhi Daredevils', points: 119, isCurrentUser: false },
+    { rank: 5,  userId: 'u5',  displayName: 'Sneha Patel',   teamName: 'CSK Loyalists',    points: 112, isCurrentUser: false },
+    { rank: 6,  userId: 'u6',  displayName: 'Vikram Nair',   teamName: 'KKR Knights',      points: 108, isCurrentUser: false },
+    { rank: 7,  userId: 'u7',  displayName: 'Ananya Roy',    teamName: 'Punjab Panthers',  points: 101, isCurrentUser: false },
+    { rank: 8,  userId: 'u8',  displayName: 'Karan Sharma',  teamName: 'GT Titans',        points:  97, isCurrentUser: false },
+    { rank: 9,  userId: 'u9',  displayName: 'Divya Rao',     teamName: 'SRH Strikers',     points:  89, isCurrentUser: false },
+    { rank: 10, userId: 'u10', displayName: 'Harsh Gupta',   teamName: 'MI Blasters',      points:  82, isCurrentUser: false },
+  ],
+  sl: [
+    { rank: 1,  userId: 'u2',  displayName: 'Priya Mehta',   teamName: 'Mumbai Mashers',    points: 1842, isCurrentUser: false },
+    { rank: 2,  userId: 'u5',  displayName: 'Sneha Patel',   teamName: 'CSK Loyalists',     points: 1790, isCurrentUser: false },
+    { rank: 3,  userId: 'u1',  displayName: 'Arjun Shah',    teamName: 'RCB Warriors',      points: 1755, isCurrentUser: false },
+    { rank: 4,  userId: 'u10', displayName: 'You',           teamName: 'Super Selectors',   points: 1701, isCurrentUser: true  },
+    { rank: 5,  userId: 'u4',  displayName: 'Rohan Das',     teamName: 'Delhi Daredevils',  points: 1688, isCurrentUser: false },
+    { rank: 6,  userId: 'u7',  displayName: 'Ananya Roy',    teamName: 'Punjab Panthers',   points: 1632, isCurrentUser: false },
+    { rank: 7,  userId: 'u8',  displayName: 'Karan Sharma',  teamName: 'GT Titans',         points: 1598, isCurrentUser: false },
+    { rank: 8,  userId: 'u6',  displayName: 'Vikram Nair',   teamName: 'KKR Knights',       points: 1554, isCurrentUser: false },
+    { rank: 9,  userId: 'u9',  displayName: 'Divya Rao',     teamName: 'SRH Strikers',      points: 1487, isCurrentUser: false },
+    { rank: 10, userId: 'u3',  displayName: 'Harsh Gupta',   teamName: 'MI Blasters',       points: 1410, isCurrentUser: false },
+  ],
+  pl01: [
+    { rank: 1,  userId: 'u5', displayName: 'Sneha Patel',  teamName: 'CSK Loyalists',   points: 1920, isCurrentUser: false },
+    { rank: 2,  userId: 'u1', displayName: 'Arjun Shah',   teamName: 'RCB Warriors',    points: 1877, isCurrentUser: false },
+    { rank: 3,  userId: 'u3', displayName: 'You',          teamName: 'Super Selectors', points: 1843, isCurrentUser: true  },
+    { rank: 4,  userId: 'u4', displayName: 'Rohan Das',    teamName: 'Delhi Eleven',    points: 1756, isCurrentUser: false },
+    { rank: 5,  userId: 'u8', displayName: 'Karan Sharma', teamName: 'GT Titans',       points: 1699, isCurrentUser: false },
+    { rank: 6,  userId: 'u6', displayName: 'Vikram Nair',  teamName: 'KKR Knights',     points: 1634, isCurrentUser: false },
+    { rank: 7,  userId: 'u7', displayName: 'Ananya Roy',   teamName: 'Punjab Heroes',   points: 1587, isCurrentUser: false },
+    { rank: 8,  userId: 'u2', displayName: 'Priya Mehta',  teamName: 'Mumbai Mashers',  points: 1502, isCurrentUser: false },
+  ],
+  pl02: [
+    { rank: 1,  userId: 'u3', displayName: 'You',          teamName: 'Super Selectors', points: 2104, isCurrentUser: true  },
+    { rank: 2,  userId: 'u9', displayName: 'Divya Rao',    teamName: 'SRH Strikers',    points: 2056, isCurrentUser: false },
+    { rank: 3,  userId: 'u6', displayName: 'Vikram Nair',  teamName: 'KKR Knights',     points: 1988, isCurrentUser: false },
+    { rank: 4,  userId: 'u1', displayName: 'Arjun Shah',   teamName: 'RCB Warriors',    points: 1932, isCurrentUser: false },
+    { rank: 5,  userId: 'u4', displayName: 'Rohan Das',    teamName: 'Delhi Eleven',    points: 1879, isCurrentUser: false },
+  ],
+};
+
+// ─── Mock matchweeks ──────────────────────────────────────────────────────────
+
+const MOCK_MATCH_WEEKS: MatchWeek[] = [
+  { id: 'mw1', label: 'MW 1', match: 'IND vs PAK', date: 'Nov 5'  },
+  { id: 'mw2', label: 'MW 2', match: 'AUS vs ENG', date: 'Nov 12' },
+  { id: 'mw3', label: 'MW 3', match: 'SA vs NZ',   date: 'Nov 19' },
+];
+
+// ─── Mock history generator ───────────────────────────────────────────────────
+
+const PLAYER_POOL: Array<{ name: string; team: string; role: PlayerRole }> = [
+  { name: 'R. Pant',      team: 'DC',   role: 'wk'   },
+  { name: 'K. Rahul',     team: 'LSG',  role: 'wk'   },
+  { name: 'D. Karthik',   team: 'RCB',  role: 'wk'   },
+  { name: 'V. Kohli',     team: 'RCB',  role: 'bat'  },
+  { name: 'R. Sharma',    team: 'MI',   role: 'bat'  },
+  { name: 'S. Gill',      team: 'GT',   role: 'bat'  },
+  { name: 'S. Iyer',      team: 'KKR',  role: 'bat'  },
+  { name: 'D. Warner',    team: 'DC',   role: 'bat'  },
+  { name: 'A. Sharma',    team: 'PBKS', role: 'bat'  },
+  { name: 'R. Jadeja',    team: 'CSK',  role: 'ar'   },
+  { name: 'H. Pandya',    team: 'MI',   role: 'ar'   },
+  { name: 'A. Patel',     team: 'MI',   role: 'ar'   },
+  { name: 'A. Nortje',    team: 'DC',   role: 'ar'   },
+  { name: 'J. Bumrah',    team: 'MI',   role: 'bowl' },
+  { name: 'M. Shami',     team: 'GT',   role: 'bowl' },
+  { name: 'Y. Chahal',    team: 'RR',   role: 'bowl' },
+  { name: 'M. Siraj',     team: 'RCB',  role: 'bowl' },
+  { name: 'R. Bishnoi',   team: 'LSG',  role: 'bowl' },
+  { name: 'T. Natarajan', team: 'SRH',  role: 'bowl' },
+  { name: 'K. Yadav',     team: 'RCB',  role: 'bowl' },
+];
+
+function lcg(seed: number) {
+  let s = (Math.abs(seed) | 1) % 2147483647;
+  return (): number => {
+    s = (s * 1664525 + 1013904223) % 4294967296;
+    return s / 4294967296;
+  };
+}
+
+function buildHistory(userId: string): MatchTeam[] {
+  const base = userId.split('').reduce((a, c) => a * 31 + c.charCodeAt(0), 7);
+
+  return MOCK_MATCH_WEEKS.map((mw, mwIdx) => {
+    const rand = lcg(base + mwIdx * 9973);
+
+    const shuffle = <T,>(arr: T[]): T[] => {
+      const a = [...arr];
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(rand() * (i + 1));
+        const tmp = a[i]; a[i] = a[j]; a[j] = tmp;
+      }
+      return a;
+    };
+
+    const wks   = shuffle(PLAYER_POOL.filter(p => p.role === 'wk')).slice(0, 1);
+    const bats  = shuffle(PLAYER_POOL.filter(p => p.role === 'bat')).slice(0, 4);
+    const ars   = shuffle(PLAYER_POOL.filter(p => p.role === 'ar')).slice(0, 2);
+    const bowls = shuffle(PLAYER_POOL.filter(p => p.role === 'bowl')).slice(0, 4);
+    const eleven = [...wks, ...bats, ...ars, ...bowls];
+
+    const players: MatchPlayer[] = eleven.map((pl, i) => {
+      const isBat  = pl.role === 'bat' || pl.role === 'wk';
+      const isBowl = pl.role === 'bowl' || pl.role === 'ar';
+      return {
+        name:      pl.name,
+        team:      pl.team,
+        role:      pl.role,
+        captaincy: (i === 0 ? 'captain' : i === 1 ? 'vice_captain' : 'normal') as CaptaincyRole,
+        bat:   isBat  ? Math.floor(rand() * 44 + 6)  : Math.floor(rand() * 12),
+        bowl:  isBowl ? Math.floor(rand() * 40 + 4)  : Math.floor(rand() * 8),
+        field: Math.floor(rand() * 10),
+        bonus: Math.floor(rand() * 7),
+      };
+    });
+
+    const totalPts = players.reduce((s, p) => s + finalPts(p), 0);
+
+    const boosterRoll = rand();
+    const boosters: Array<{ icon: string; name: string }> = [];
+    if      (boosterRoll < 0.20) boosters.push({ icon: '⚡', name: 'Super Captain'      });
+    else if (boosterRoll < 0.35) boosters.push({ icon: '🚀', name: 'Super Vice-Captain' });
+    else if (boosterRoll < 0.46) boosters.push({ icon: '🔁', name: 'Team Double'         });
+
+    return { mwId: mw.id, pts: totalPts, boosters, players };
+  });
+}
+
+const MOCK_HISTORY: Record<string, MatchTeam[]> = Object.fromEntries(
+  ['u1','u2','u3','u4','u5','u6','u7','u8','u9','u10'].map(uid => [uid, buildHistory(uid)])
+);
+
+// ─── Team Detail Modal ────────────────────────────────────────────────────────
+
+interface TeamDetailModalProps {
+  entry:   LeaderboardEntry | null;
+  onClose: () => void;
+}
+
+function TeamDetailModal({ entry, onClose }: TeamDetailModalProps) {
+  const lastMwId = MOCK_MATCH_WEEKS[MOCK_MATCH_WEEKS.length - 1].id;
+  const [mwId, setMwId] = useState(lastMwId);
+
+  useEffect(() => {
+    if (entry) setMwId(lastMwId);
+  }, [entry?.userId]);
+
+  if (!entry) return null;
+
+  const history = MOCK_HISTORY[entry.userId] ?? [];
+  const team    = history.find(t => t.mwId === mwId);
+  const mw      = MOCK_MATCH_WEEKS.find(m => m.id === mwId)!;
+
+  return (
+    <Modal
+      visible
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <View style={styles.modalRoot}>
+        <LinearGradient colors={G.bg} style={StyleSheet.absoluteFill} />
+
+        <SafeAreaView style={styles.modalSafe} edges={['top', 'bottom']}>
+
+          {/* ── Header ── */}
+          <LinearGradient colors={G.modal} style={styles.modalHeader}>
+            <Pressable style={styles.modalClose} onPress={onClose}>
+              <Text style={styles.modalCloseText}>✕</Text>
+            </Pressable>
+            <View style={styles.modalMeta}>
+              <Text style={styles.modalName} numberOfLines={1}>{entry.displayName}</Text>
+              <Text style={styles.modalTeamName} numberOfLines={1}>{entry.teamName}</Text>
+            </View>
+            <View style={styles.modalTotalBox}>
+              <Text style={styles.modalTotalPts}>{entry.points.toLocaleString()}</Text>
+              <Text style={styles.modalTotalSub}>total pts</Text>
+            </View>
+          </LinearGradient>
+
+          {/* ── Matchweek tabs ── */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.mwTabsScroll}
+            contentContainerStyle={styles.mwTabs}
+          >
+            {MOCK_MATCH_WEEKS.map(w => {
+              const mt     = history.find(t => t.mwId === w.id);
+              const active = mwId === w.id;
+              return active ? (
+                <LinearGradient
+                  key={w.id}
+                  colors={G.mwTabOn}
+                  style={[styles.mwTab, styles.mwTabActive]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 0, y: 1 }}
+                >
+                  <Text style={[styles.mwTabLabel, styles.mwTabLabelActive]}>{w.label}</Text>
+                  <Text style={[styles.mwTabMatch, styles.mwTabMatchActive]}>{w.match}</Text>
+                  <Text style={[styles.mwTabPts, styles.mwTabPtsActive]}>{mt ? `${mt.pts} pts` : '—'}</Text>
+                </LinearGradient>
+              ) : (
+                <Pressable
+                  key={w.id}
+                  style={styles.mwTab}
+                  onPress={() => setMwId(w.id)}
+                >
+                  <Text style={styles.mwTabLabel}>{w.label}</Text>
+                  <Text style={styles.mwTabMatch}>{w.match}</Text>
+                  <Text style={styles.mwTabPts}>{mt ? `${mt.pts} pts` : '—'}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          {/* ── Body ── */}
+          {team ? (
+            <ScrollView
+              style={{ flex: 1 }}
+              contentContainerStyle={styles.teamBody}
+              showsVerticalScrollIndicator={false}
+            >
+
+              {/* Booster bar */}
+              <View style={styles.boosterBar}>
+                <Text style={styles.boosterBarLabel}>Boosters</Text>
+                {team.boosters.length > 0
+                  ? team.boosters.map((b, i) => (
+                      <View key={i} style={styles.boosterPill}>
+                        <Text style={styles.boosterPillIcon}>{b.icon}</Text>
+                        <Text style={styles.boosterPillName}>{b.name}</Text>
+                      </View>
+                    ))
+                  : <Text style={styles.boosterNone}>None used</Text>
+                }
+              </View>
+
+              {/* Column headers */}
+              <View style={styles.colHeaders}>
+                <Text style={[styles.colHdr, { flex: 1 }]}>Player</Text>
+                <Text style={[styles.colHdr, { width: 30, textAlign: 'center' }]}>BAT</Text>
+                <Text style={[styles.colHdr, { width: 30, textAlign: 'center' }]}>BWL</Text>
+                <Text style={[styles.colHdr, { width: 30, textAlign: 'center' }]}>FLD</Text>
+                <Text style={[styles.colHdr, { width: 30, textAlign: 'center' }]}>BON</Text>
+                <Text style={[styles.colHdr, { width: 44, textAlign: 'right'  }]}>PTS</Text>
+              </View>
+
+              {/* Player rows */}
+              {team.players.map((p, i) => {
+                const isCap = p.captaincy === 'captain';
+                const isVC  = p.captaincy === 'vice_captain';
+                const mult  = capMult(p.captaincy);
+                const fp    = finalPts(p);
+
+                return (
+                  <View key={i} style={[styles.playerRow, i % 2 === 1 && styles.playerRowAlt]}>
+                    <View style={[styles.roleStripe, { backgroundColor: ROLE_COLOR[p.role] }]} />
+
+                    <View style={styles.playerNameCell}>
+                      <View style={styles.playerNameRow}>
+                        {(isCap || isVC) && (
+                          <View style={[styles.capBadge, isCap ? styles.capC : styles.capVC]}>
+                            <Text style={styles.capBadgeText}>{isCap ? 'C' : 'VC'}</Text>
+                          </View>
+                        )}
+                        <Text style={styles.playerName} numberOfLines={1}>{p.name}</Text>
+                      </View>
+                      <View style={styles.playerMeta}>
+                        <View style={[styles.rolePill, { borderColor: ROLE_COLOR[p.role] + '55' }]}>
+                          <Text style={[styles.rolePillText, { color: ROLE_COLOR[p.role] }]}>
+                            {ROLE_LABEL[p.role]}
+                          </Text>
+                        </View>
+                        <Text style={styles.playerTeamText}>{p.team}</Text>
+                        {mult > 1 && (
+                          <View style={[styles.multBadge, isCap ? styles.multC : styles.multVC]}>
+                            <Text style={styles.multText}>×{mult}</Text>
+                          </View>
+                        )}
+                      </View>
+                    </View>
+
+                    <Text style={[styles.statCol, p.bat   > 0 && styles.statColLit]}>{p.bat   || '—'}</Text>
+                    <Text style={[styles.statCol, p.bowl  > 0 && styles.statColLit]}>{p.bowl  || '—'}</Text>
+                    <Text style={[styles.statCol, p.field > 0 && styles.statColLit]}>{p.field || '—'}</Text>
+                    <Text style={[styles.statCol, p.bonus > 0 && styles.statColLit]}>{p.bonus || '—'}</Text>
+
+                    <Text style={[
+                      styles.finalPts,
+                      isCap && styles.finalPtsCap,
+                      isVC  && styles.finalPtsVC,
+                    ]}>
+                      {fp}
+                    </Text>
+                  </View>
+                );
+              })}
+
+              {/* Matchweek total */}
+              <LinearGradient colors={G.mwFooter} style={styles.mwFooter} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+                <Text style={styles.mwFooterMatch}>{mw.label} · {mw.match} · {mw.date}</Text>
+                <Text style={styles.mwFooterPts}>{team.pts} pts</Text>
+              </LinearGradient>
+
+            </ScrollView>
+          ) : (
+            <View style={styles.noData}>
+              <Text style={styles.noDataText}>No data for this matchweek yet</Text>
+            </View>
+          )}
+
+        </SafeAreaView>
+      </View>
+    </Modal>
+  );
+}
+
+// ─── User highlight card ──────────────────────────────────────────────────────
+
+function UserHighlight({ entry }: { entry: LeaderboardEntry | undefined }) {
+  if (!entry) return null;
+  return (
+    <LinearGradient
+      colors={G.highlight}
+      style={styles.highlight}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+    >
+      <Text style={styles.highlightLabel}>Your ranking</Text>
+      <View style={styles.highlightRow}>
+        <Text style={styles.highlightRank}>{rankMedal(entry.rank)}</Text>
+        <View style={styles.highlightMeta}>
+          <Text style={styles.highlightTeam}>{entry.teamName}</Text>
+          <Text style={styles.highlightPts}>{entry.points.toLocaleString()} pts</Text>
+        </View>
+      </View>
+    </LinearGradient>
+  );
+}
+
+// ─── Entry row ────────────────────────────────────────────────────────────────
+
+interface EntryRowProps {
+  entry:   LeaderboardEntry;
+  onPress: () => void;
+}
+
+function EntryRow({ entry, onPress }: EntryRowProps) {
+  const isTop3    = entry.rank <= 3;
+  const podGrad   = podiumGrad(entry.rank);
+
+  const inner = (
+    <View style={styles.rowInner}>
+      {/* Rank */}
+      <View style={[styles.rankBox, isTop3 && styles.rankBoxTop]}>
+        {isTop3 ? (
+          <Text style={styles.rankMedal}>{rankMedal(entry.rank)}</Text>
+        ) : (
+          <Text style={[styles.rankNum, entry.isCurrentUser && styles.rankNumMe]}>
+            {entry.rank}
+          </Text>
+        )}
+      </View>
+
+      {/* Avatar */}
+      <View style={[styles.avatar, entry.isCurrentUser && styles.avatarMe]}>
+        <Text style={styles.avatarText}>{entry.displayName.charAt(0).toUpperCase()}</Text>
+      </View>
+
+      {/* Names */}
+      <View style={styles.nameBlock}>
+        <Text style={[styles.displayName, entry.isCurrentUser && styles.displayNameMe]}>
+          {entry.displayName}
+          {entry.isCurrentUser && <Text style={styles.youBadge}> (you)</Text>}
+        </Text>
+        <Text style={styles.teamName}>{entry.teamName}</Text>
+      </View>
+
+      {/* Points */}
+      <Text style={[styles.pts, entry.isCurrentUser && styles.ptsMe]}>
+        {entry.points.toLocaleString()}
+        <Text style={styles.ptsSuffix}> pts</Text>
+      </Text>
+
+      <Text style={styles.rowArrow}>›</Text>
+    </View>
+  );
+
+  // Top-3 get a subtle podium gradient background; current user gets purple tint
+  return (
+    <Pressable
+      style={({ pressed }) => [styles.rowWrap, pressed && styles.rowPressed]}
+      onPress={onPress}
+    >
+      {podGrad ? (
+        <LinearGradient colors={podGrad} style={styles.row} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+          {inner}
+        </LinearGradient>
+      ) : entry.isCurrentUser ? (
+        <LinearGradient colors={G.rowMe} style={[styles.row, styles.rowMe]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+          {inner}
+        </LinearGradient>
+      ) : (
+        <View style={styles.row}>{inner}</View>
+      )}
+    </Pressable>
+  );
+}
+
+// ─── Main screen ──────────────────────────────────────────────────────────────
+
+export default function LeaderboardScreen() {
+  const { user }                                         = useAuthStore();
+  const { contests }                                     = useContestStore();
+  const { entries: sbEntries, loading,
+          loadLeaderboard, setCurrentUser }              = useLeaderboardStore();
+
+  // Build tabs from real contests, fall back to hardcoded placeholders
+  const tabs: ContestTab[] = useMemo(() => {
+    if (contests.length > 0) {
+      return contests.map(c => ({
+        id:    c.id,
+        label: c.name,
+        icon:  CONTEST_ICONS_LB[c.contestType] ?? '🏏',
+        type:  c.contestType,
+      }));
+    }
+    return buildFallbackTabs();
+  }, [contests]);
+
+  const [activeTab, setActiveTab]         = useState<string>(tabs[0]?.id ?? 'daily');
+  const [selectedEntry, setSelectedEntry] = useState<LeaderboardEntry | null>(null);
+
+  // Sync active tab when contests load for the first time
+  useEffect(() => {
+    if (tabs.length > 0 && !tabs.find(t => t.id === activeTab)) {
+      setActiveTab(tabs[0].id);
+    }
+  }, [tabs]);
+
+  // Keep the store aware of who's logged in so it can flag isCurrentUser
+  useEffect(() => {
+    setCurrentUser(user?.id ?? null);
+  }, [user?.id]);
+
+  // Load leaderboard whenever tab changes (only for real contest UUIDs)
+  useEffect(() => {
+    const isRealUuid = activeTab.includes('-'); // UUID contains hyphens; mock keys don't
+    if (isRealUuid) loadLeaderboard(activeTab);
+  }, [activeTab]);
+
+  // Prefer Supabase data; fall back to mock if store has nothing yet
+  const entries = sbEntries[activeTab] ?? MOCK_LEADERBOARD[activeTab] ?? [];
+  const myEntry = entries.find(e => e.isCurrentUser);
+
+  return (
+    <View style={styles.container}>
+      {/* Full-screen gradient background */}
+      <LinearGradient colors={G.bg} style={StyleSheet.absoluteFill} />
+
+      {/* ── Header ── */}
+      <LinearGradient colors={G.header} style={styles.pageHeader}>
+        <View style={styles.headerLeft}>
+          <View style={styles.headerDot} />
+          <View>
+            <Text style={styles.pageTitle}>Leaderboard</Text>
+            <Text style={styles.pageSubtitle}>Tap any player to view their team</Text>
+          </View>
+        </View>
+      </LinearGradient>
+
+      {/* ── Contest tabs ── */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.tabs}
+        style={styles.tabsScroll}
+      >
+        {tabs.map(tab => (
+          activeTab === tab.id ? (
+            <LinearGradient
+              key={tab.id}
+              colors={G.tabOn}
+              style={[styles.tab, styles.tabActive]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+            >
+              <Text style={styles.tabIcon}>{tab.icon}</Text>
+              <Text style={[styles.tabLabel, styles.tabLabelActive]}>{tab.label}</Text>
+            </LinearGradient>
+          ) : (
+            <Pressable
+              key={tab.id}
+              style={styles.tab}
+              onPress={() => setActiveTab(tab.id)}
+            >
+              <Text style={styles.tabIcon}>{tab.icon}</Text>
+              <Text style={styles.tabLabel}>{tab.label}</Text>
+            </Pressable>
+          )
+        ))}
+      </ScrollView>
+
+      {/* ── User highlight ── */}
+      {myEntry && <UserHighlight entry={myEntry} />}
+
+      {/* ── Section label ── */}
+      <View style={styles.divider}>
+        <View style={styles.dividerLine} />
+        <Text style={styles.dividerText}>All Rankings</Text>
+        <View style={styles.dividerLine} />
+      </View>
+
+      {/* ── Rankings list (or spinner while first load) ── */}
+      {loading && entries.length === 0 ? (
+        <View style={styles.spinnerWrap}>
+          <ActivityIndicator size="large" color="#C9A84C" />
+        </View>
+      ) : (
+        <FlatList
+          data={entries}
+          keyExtractor={item => item.userId}
+          renderItem={({ item }) => (
+            <EntryRow
+              entry={item}
+              onPress={() => setSelectedEntry(item)}
+            />
+          )}
+          contentContainerStyle={styles.list}
+          ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
+          ListEmptyComponent={
+            <Text style={styles.empty}>No leaderboard data yet for this contest</Text>
+          }
+          showsVerticalScrollIndicator={false}
+        />
+      )}
+
+      {/* ── Team detail modal ── */}
+      {selectedEntry && (
+        <TeamDetailModal
+          entry={selectedEntry}
+          onClose={() => setSelectedEntry(null)}
+        />
+      )}
+    </View>
+  );
+}
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#F5F0E0',
+  },
+
+  // Page header
+  pageHeader: {
+    paddingHorizontal: spacing.xl,
+    paddingTop:        spacing.lg,
+    paddingBottom:     spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+    flexDirection:     'row',
+    alignItems:        'center',
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           spacing.sm,
+  },
+  headerDot: {
+    width:           8,
+    height:          8,
+    borderRadius:    4,
+    backgroundColor: '#C9A84C',
+    shadowColor:     '#C9A84C',
+    shadowOffset:    { width: 0, height: 0 },
+    shadowOpacity:   0.9,
+    shadowRadius:    6,
+  },
+  pageTitle: {
+    color:      C.text,
+    fontSize:   fontSize.xl,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+  },
+  pageSubtitle: {
+    color:    C.muted,
+    fontSize: fontSize.xs,
+    marginTop: 1,
+  },
+
+  // Contest tabs
+  tabsScroll: {
+    flexShrink:        0,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  tabs: {
+    flexDirection:     'row',
+    paddingHorizontal: spacing.lg,
+    paddingVertical:   spacing.sm,
+    gap:               spacing.sm,
+  },
+  tab: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               spacing.xs,
+    paddingHorizontal: spacing.md,
+    paddingVertical:   spacing.sm,
+    borderRadius:      radius.full,
+    backgroundColor:   'rgba(0,0,0,0.04)',
+    borderWidth:       1,
+    borderColor:       C.border,
+  },
+  tabActive: {
+    borderColor: 'transparent',
+  },
+  tabIcon:        { fontSize: 14 },
+  tabLabel:       { color: C.text, fontSize: fontSize.sm, fontWeight: '600' },
+  tabLabelActive: { color: '#fff', fontWeight: '700' },
+
+  // User highlight
+  highlight: {
+    margin:        spacing.lg,
+    marginBottom:  spacing.xs,
+    borderWidth:   1,
+    borderColor:   'rgba(201,168,76,0.28)',
+    borderRadius:  radius.xl,
+    padding:       spacing.lg,
+    gap:           spacing.xs,
+    ...shadow.card,
+  },
+  highlightLabel: {
+    color:         C.accent,
+    fontSize:      fontSize.xs,
+    fontWeight:    '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  highlightRow:  { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  highlightRank: { fontSize: 28 },
+  highlightMeta: { gap: 2 },
+  highlightTeam: { color: C.text, fontSize: fontSize.base, fontWeight: '700' },
+  highlightPts:  { color: C.accent, fontSize: fontSize.sm, fontWeight: '600' },
+
+  // Section divider
+  divider: {
+    flexDirection:  'row',
+    alignItems:     'center',
+    gap:            spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical:   spacing.sm,
+  },
+  dividerLine: {
+    flex:            1,
+    height:          1,
+    backgroundColor: C.border,
+  },
+  dividerText: {
+    color:         C.muted,
+    fontSize:      fontSize.xs,
+    fontWeight:    '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+
+  // Entry list
+  list: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom:     spacing.xxl,
+  },
+
+  // Entry row
+  rowWrap:    {},
+  rowPressed: { opacity: 0.78, transform: [{ scale: 0.985 }] },
+  row: {
+    backgroundColor: 'rgba(255,255,255,0.8)',
+    borderWidth:     1,
+    borderColor:     C.border,
+    borderRadius:    radius.lg,
+    overflow:        'hidden',
+    ...shadow.card,
+  },
+  rowMe: {
+    borderColor: 'rgba(201,168,76,0.45)',
+  },
+  rowInner: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           spacing.md,
+    padding:       spacing.md,
+  },
+
+  rankBox:    { width: 36, height: 36, borderRadius: radius.md, backgroundColor: 'rgba(0,0,0,0.05)', alignItems: 'center', justifyContent: 'center' },
+  rankBoxTop: { backgroundColor: 'transparent' },
+  rankMedal:  { fontSize: 22 },
+  rankNum:    { color: C.muted, fontSize: fontSize.sm, fontWeight: '700' },
+  rankNumMe:  { color: C.accent },
+
+  avatar:   { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.06)', borderWidth: 1, borderColor: C.border, alignItems: 'center', justifyContent: 'center' },
+  avatarMe: { backgroundColor: 'rgba(201,168,76,0.18)', borderColor: 'rgba(201,168,76,0.5)' },
+  avatarText: { color: C.text, fontSize: fontSize.base, fontWeight: '700' },
+
+  nameBlock:     { flex: 1, gap: 2 },
+  displayName:   { color: C.text, fontSize: fontSize.sm, fontWeight: '600' },
+  displayNameMe: { color: C.accent },
+  youBadge:      { color: C.accent, fontSize: fontSize.xs, fontWeight: '500' },
+  teamName:      { color: C.muted, fontSize: fontSize.xs },
+  pts:           { color: C.text, fontSize: fontSize.base, fontWeight: '700' },
+  ptsMe:         { color: C.accent },
+  ptsSuffix:     { color: C.muted, fontSize: fontSize.xs, fontWeight: '400' },
+  rowArrow:      { color: C.muted, fontSize: fontSize.lg, fontWeight: '400', marginLeft: -4 },
+
+  empty: { color: C.muted, fontSize: fontSize.base, textAlign: 'center', marginTop: spacing.xxl },
+
+  // ── Team Detail Modal ─────────────────────────────────────────────────────
+
+  modalRoot: {
+    flex:            1,
+    backgroundColor: '#F5F0E0',
+  },
+  modalSafe: {
+    flex: 1,
+  },
+
+  // Modal header
+  modalHeader: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical:   spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  modalClose: {
+    width:          34,
+    height:         34,
+    borderRadius:   radius.md,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    borderWidth:    1,
+    borderColor:    C.border,
+    alignItems:     'center',
+    justifyContent: 'center',
+    flexShrink:     0,
+  },
+  modalCloseText: { color: C.text, fontSize: fontSize.base, fontWeight: '700' },
+  modalMeta:      { flex: 1, gap: 2 },
+  modalName:      { color: C.text, fontSize: fontSize.base, fontWeight: '800' },
+  modalTeamName:  { color: C.muted, fontSize: fontSize.xs },
+  modalTotalBox:  { alignItems: 'flex-end' },
+  modalTotalPts:  { color: C.accent, fontSize: fontSize.lg, fontWeight: '800' },
+  modalTotalSub:  { color: C.muted, fontSize: 8, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
+
+  // Matchweek tabs
+  mwTabsScroll: {
+    flexShrink:        0,
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  mwTabs: {
+    flexDirection:     'row',
+    paddingHorizontal: spacing.lg,
+    paddingVertical:   spacing.sm,
+    gap:               spacing.sm,
+  },
+  mwTab: {
+    alignItems:        'center',
+    paddingHorizontal: spacing.lg,
+    paddingVertical:   spacing.sm,
+    borderRadius:      radius.lg,
+    borderWidth:       1,
+    borderColor:       C.border,
+    backgroundColor:   'rgba(0,0,0,0.03)',
+    minWidth:          90,
+    gap:               2,
+  },
+  mwTabActive:       { borderColor: C.borderA },
+  mwTabLabel:        { color: C.text, fontSize: fontSize.sm, fontWeight: '800' },
+  mwTabLabelActive:  { color: C.accent },
+  mwTabMatch:        { color: C.muted, fontSize: 9 },
+  mwTabMatchActive:  { color: C.accent },
+  mwTabPts:          { color: C.muted, fontSize: 9, fontWeight: '700' },
+  mwTabPtsActive:    { color: C.accent },
+
+  // Body
+  teamBody: {
+    paddingBottom: spacing.xl,
+  },
+
+  // Booster bar
+  boosterBar: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    flexWrap:        'wrap',
+    gap:             spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingVertical:   spacing.sm,
+    backgroundColor:   'rgba(0,0,0,0.03)',
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  boosterBarLabel: {
+    color:         C.muted,
+    fontSize:      9,
+    fontWeight:    '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  boosterPill: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               4,
+    paddingHorizontal: spacing.sm,
+    paddingVertical:   3,
+    backgroundColor:   'rgba(201,168,76,0.10)',
+    borderWidth:       1,
+    borderColor:       'rgba(201,168,76,0.3)',
+    borderRadius:      radius.full,
+  },
+  boosterPillIcon: { fontSize: 12 },
+  boosterPillName: { color: C.accent, fontSize: fontSize.xs, fontWeight: '700' },
+  boosterNone:     { color: C.muted, fontSize: fontSize.xs, fontStyle: 'italic' },
+
+  // Column headers
+  colHeaders: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical:   6,
+    backgroundColor:   'rgba(0,0,0,0.03)',
+    borderBottomWidth: 1,
+    borderBottomColor: C.border,
+  },
+  colHdr: {
+    color:         C.muted,
+    fontSize:      8,
+    fontWeight:    '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+
+  // Player rows
+  playerRow: {
+    flexDirection:   'row',
+    alignItems:      'center',
+    paddingRight:    spacing.md,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(201,168,76,0.12)',
+    backgroundColor:   'transparent',
+  },
+  playerRowAlt: {
+    backgroundColor: 'rgba(0,0,0,0.02)',
+  },
+
+  roleStripe: {
+    width:         3,
+    alignSelf:     'stretch',
+    marginRight:   spacing.sm,
+    borderRadius:  2,
+    marginVertical: 4,
+  },
+
+  playerNameCell: {
+    flex: 1,
+    gap:  3,
+    paddingRight: 4,
+  },
+  playerNameRow: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           5,
+  },
+  playerName: {
+    color:      C.text,
+    fontSize:   fontSize.sm,
+    fontWeight: '700',
+    flexShrink: 1,
+  },
+  playerMeta: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           5,
+  },
+  playerTeamText: {
+    color:    C.muted,
+    fontSize: 9,
+  },
+
+  capBadge: {
+    width:          16,
+    height:         16,
+    borderRadius:    8,
+    alignItems:     'center',
+    justifyContent: 'center',
+    flexShrink:     0,
+  },
+  capC:          { backgroundColor: '#C9A84C' },
+  capVC:         { backgroundColor: '#7A7060' },
+  capBadgeText:  { color: '#1C1F26', fontSize: 8, fontWeight: '900' },
+
+  rolePill: {
+    borderWidth:       1,
+    borderRadius:      radius.full,
+    paddingHorizontal: 4,
+    paddingVertical:   1,
+  },
+  rolePillText: { fontSize: 8, fontWeight: '700', letterSpacing: 0.4 },
+
+  multBadge: {
+    paddingHorizontal: 5,
+    paddingVertical:   1,
+    borderRadius:      radius.full,
+    borderWidth:       1,
+  },
+  multC:    { borderColor: '#C9A84C44', backgroundColor: 'rgba(201,168,76,0.15)' },
+  multVC:   { borderColor: '#7A706044', backgroundColor: 'rgba(122,112,96,0.15)' },
+  multText: { color: C.text, fontSize: 8, fontWeight: '800' },
+
+  statCol: {
+    width:      30,
+    textAlign:  'center',
+    color:      C.muted,
+    fontSize:   fontSize.xs,
+    fontWeight: '500',
+  },
+  statColLit: {
+    color:      C.text,
+    fontWeight: '600',
+  },
+
+  finalPts: {
+    width:      44,
+    textAlign:  'right',
+    color:      C.text,
+    fontSize:   fontSize.sm,
+    fontWeight: '800',
+  },
+  finalPtsCap: { color: '#C9A84C' },
+  finalPtsVC:  { color: '#7A7060' },
+
+  // Matchweek footer
+  mwFooter: {
+    flexDirection:    'row',
+    justifyContent:   'space-between',
+    alignItems:       'center',
+    marginTop:        spacing.md,
+    marginHorizontal: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical:   spacing.sm,
+    borderRadius:      radius.lg,
+    borderWidth:       1,
+    borderColor:       C.border,
+  },
+  mwFooterMatch: { color: C.muted, fontSize: fontSize.xs },
+  mwFooterPts:   { color: C.accent, fontSize: fontSize.base, fontWeight: '800' },
+
+  noData:      { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  noDataText:  { color: C.muted, fontSize: fontSize.base },
+  spinnerWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+});

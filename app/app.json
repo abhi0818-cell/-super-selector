@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "Super Selector",
+    "slug": "super-selector",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0f172a"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.superselector.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0f172a"
+      },
+      "package": "com.superselector.app"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-secure-store"
+    ],
+    "scheme": "superselector",
+    "extra": {
+      "supabaseUrl": "https://gepltclaeczgtruvekci.supabase.co",
+      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdlcGx0Y2xhZWN6Z3RydXZla2NpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1MTc5NTUsImV4cCI6MjA5NDA5Mzk1NX0.DW2Fzfw-gaabIbns_CUydbvOwuoko-ACEAH_g1_5Sm8"
+    }
+  }
+}
