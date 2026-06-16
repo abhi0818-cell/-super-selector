@@ -741,10 +741,13 @@ Deno.serve(async (req: Request) => {
         // Deeper diagnostics: html.includes('Inning') being true doesn't mean
         // our <h2>...Inning...</h2> regex actually matches — the heading may
         // have nested markup (breaking the [^<]* class) or be a different
-        // tag entirely. Grab the raw markup around the first "Inning" hit and
-        // the first <h2> tag so we can see the real structure.
-        const inningIdx  = html.search(/Inning/i)
-        const h2Match    = html.match(/<h2[^>]*>[\s\S]{0,200}?<\/h2>/i)
+        // tag entirely. Extract every <h2> block in full (no length cap) and
+        // report its stripped inner text, so we can see what the real
+        // innings-heading markup/tag actually looks like.
+        const h2Re = /<h2[^>]*>([\s\S]*?)<\/h2>/gi
+        const h2Texts: string[] = []
+        let h2m: RegExpExecArray | null
+        while ((h2m = h2Re.exec(html)) !== null) h2Texts.push(stripTags(h2m[1]).slice(0, 120))
         results.push({
           matchId: match.id, status: 'parse_failed', url,
           htmlLength: html.length,
@@ -752,8 +755,7 @@ Deno.serve(async (req: Request) => {
           hasTableMarkup: html.includes('<table'),
           h2Count: (html.match(/<h2/gi) ?? []).length,
           tableCount: (html.match(/<table/gi) ?? []).length,
-          firstH2Snippet: h2Match ? h2Match[0] : null,
-          inningContext: inningIdx >= 0 ? html.slice(Math.max(0, inningIdx - 150), inningIdx + 150) : null,
+          h2StrippedTexts: h2Texts,
         })
         continue
       }
