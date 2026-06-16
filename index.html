@@ -8317,13 +8317,25 @@ p31,Sample Player,MI,bat,9.0,false
                   } else {
                     const built = buildLiveScorecardFromStats(m, statRows);
                     if (!built) {
+                      const resolvedCount = statRows.filter(s => PLAYERS.some(p => p.id === s.player_id)).length;
+                      const rosterCount   = PLAYERS.filter(p => p.team_id === m.home_team_id || p.team_id === m.away_team_id).length;
                       const matchedTeamIds = [...new Set(
                         statRows.map(s => PLAYERS.find(p => p.id === s.player_id)?.team_id).filter(Boolean)
                       )];
-                      console.info('[Scrape Now] matched players\' team_id values:', matchedTeamIds,
-                        '— match expects:', m.home_team_id, m.away_team_id);
-                      toast(`Saved ${statRows.length} player rows, but none matched ${m.home_team_id}/${m.away_team_id} rosters. ` +
-                        `Those players' team_id in your pool: ${matchedTeamIds.join(', ') || 'none found'} — fix the mismatch in Teams/Players.`, 8000);
+                      console.info('[Scrape Now] diagnostic:', {
+                        statRowCount: statRows.length, resolvedCount, rosterCount,
+                        playersInPool: PLAYERS.length, playersSource,
+                        matchedTeamIds, expects: [m.home_team_id, m.away_team_id],
+                      });
+                      if (resolvedCount === 0) {
+                        toast(`Saved ${statRows.length} player rows, but NONE of those player_ids exist in the currently loaded ` +
+                          `pool (${PLAYERS.length} players, source: ${playersSource}). Your player pool for ${m.home_team_id}/${m.away_team_id} ` +
+                          `has ${rosterCount} players — if that's 0, this tournament's roster was never set up. If it's >0, the scraper resolved ` +
+                          `to different player records than your roster (re-check Player Linking).`, 9000);
+                      } else {
+                        toast(`Saved ${statRows.length} player rows (${resolvedCount} resolved to a player), but their team_id didn't match ` +
+                          `${m.home_team_id}/${m.away_team_id}: ${matchedTeamIds.join(', ') || 'none'} — fix the mismatch in Teams/Players.`, 8000);
+                      }
                     }
                     state.lastScorecard = built;
                     render();
