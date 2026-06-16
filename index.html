@@ -8303,6 +8303,23 @@ p31,Sample Player,MI,bat,9.0,false
               if (m && r.url) m.scorecard_url = r.url;
               toast(`🕷 Scraped ${r.matched} players from ${r.source}. Unmatched: ${r.unmatched?.length ?? 0}.`, 4000);
               renderMatchesAdmin();
+              // Pull the fresh player_match_stats this scrape just wrote and
+              // rebuild the Live/Fantasy scorecard panel right away — otherwise
+              // it stays on whatever was last cached (stale until the next poll
+              // tick, a Connect/reconnect, or Fetch now), which is exactly the
+              // mismatch between "points just scraped" and "what admin sees".
+              if (m) {
+                try {
+                  const statRows = await state.db.getPlayerStatsForMatchFull(id);
+                  state.lastScorecard = buildLiveScorecardFromStats(m, statRows);
+                  render();
+                  renderScorecard();
+                  renderFantasyScorecard();
+                  $('#scorecardSection')?.setAttribute('open', '');
+                } catch (err2) {
+                  console.warn('Scrape Now: scorecard refresh failed:', err2.message);
+                }
+              }
             } else {
               const detail = r?.error ?? r?.fallback ?? r?.url ?? '';
               console.warn('Scrape Now failed:', r);
