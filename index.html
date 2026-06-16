@@ -2929,8 +2929,8 @@ p31,Sample Player,MI,bat,9.0,false
         const dailyTeamsForBoot = state.savedTeams
           .filter(t => !t.squadId && activeTournamentMatchIds.has(t.matchId));
         const nextMatch = state.matches
-          .filter(m => m.status !== 'completed' && m.start_time)
-          .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))[0]
+          .filter(m => m.status !== 'completed' && effectiveLockTime(m))
+          .sort((a, b) => new Date(effectiveLockTime(a)) - new Date(effectiveLockTime(b)))[0]
           || state.matches
               .filter(m => m.status !== 'completed')
               .sort((a, b) => (a.match_number || 0) - (b.match_number || 0))[0];
@@ -3697,8 +3697,8 @@ p31,Sample Player,MI,bat,9.0,false
 
       // Find next upcoming match for this tournament
       const nextMatch = state.matches
-        .filter(m => m.status !== 'completed' && m.start_time)
-        .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))[0]
+        .filter(m => m.status !== 'completed' && effectiveLockTime(m))
+        .sort((a, b) => new Date(effectiveLockTime(a)) - new Date(effectiveLockTime(b)))[0]
         || state.matches
             .filter(m => m.status !== 'completed')
             .sort((a, b) => (a.match_number || 0) - (b.match_number || 0))[0]
@@ -4416,10 +4416,7 @@ p31,Sample Player,MI,bat,9.0,false
       bar.innerHTML = '<span style="font-size:11px;color:var(--muted);">Boosters loading…</span>';
 
       // Determine the next upcoming (unlocked) match — boosters are activated per match
-      const now          = Date.now();
-      const nextMatch    = state.matches
-        .filter(m => m.start_time && new Date(m.start_time).getTime() > now && m.status !== 'completed')
-        .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))[0] ?? null;
+      const nextMatch    = findNextScheduledMatch();
 
       // Fetch all activations for this squad
       let activations = state.sl.boosterActivations;
@@ -4609,13 +4606,11 @@ p31,Sample Player,MI,bat,9.0,false
 
     /**
      * Returns the next match that hasn't started yet — the one that will
-     * trigger the next lock when its start_time arrives.
+     * trigger the next lock when its effective lock time (lock_time, else
+     * start_time — see effectiveLockTime()) arrives.
      */
     function slNextLockMatch() {
-      const now = Date.now();
-      return state.matches
-        .filter(m => m.start_time && new Date(m.start_time).getTime() > now && m.status !== 'completed')
-        .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))[0] ?? null;
+      return findNextScheduledMatch();
     }
 
     /**
@@ -4705,13 +4700,14 @@ p31,Sample Player,MI,bat,9.0,false
     async function slCheckAutoLock({ preserveXI = false } = {}) {
       if (!state.db || !state.sl.squad) return;
       const squadId = state.sl.squad.id;
-      const now     = Date.now();
 
       // Include completed matches — if the XI was never locked (e.g. app wasn't
       // open at kickoff), lock it now using the current draft as the snapshot.
+      // hasMatchStarted() accounts for lock_time/delayed status, so a delayed
+      // match with no fresh lock_time will never be auto-locked here.
       const startedMatches = state.matches
-        .filter(m => m.start_time && new Date(m.start_time).getTime() <= now)
-        .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
+        .filter(m => hasMatchStarted(m))
+        .sort((a, b) => new Date(effectiveLockTime(a)) - new Date(effectiveLockTime(b)));
 
       let didLock = false;
       for (const m of startedMatches) {
@@ -5577,7 +5573,6 @@ p31,Sample Player,MI,bat,9.0,false
         sel.value = cur;
       } else {
         // Default to the active match first, then fall back to heuristics.
-        const now = Date.now();
         const activeMatch = state.activeMatchId
           ? sorted.find(m => m.id === state.activeMatchId)
           : null;
@@ -5587,9 +5582,10 @@ p31,Sample Player,MI,bat,9.0,false
           // 2nd choice: a match currently in progress
           sorted.find(m => m.status === 'in_progress') ||
           // 3rd choice: the soonest scheduled match that hasn't started yet
+          // (effectiveLockTime accounts for lock_time/delayed status)
           sorted
-            .filter(m => m.status !== 'completed' && m.start_time && new Date(m.start_time).getTime() > now)
-            .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))[0] ||
+            .filter(m => m.status !== 'completed' && effectiveLockTime(m) && new Date(effectiveLockTime(m)).getTime() > Date.now())
+            .sort((a, b) => new Date(effectiveLockTime(a)) - new Date(effectiveLockTime(b)))[0] ||
           // 4th choice: the closest match by date regardless of status
           sorted[0];
         if (next) sel.value = next.external_id;
@@ -5608,8 +5604,8 @@ p31,Sample Player,MI,bat,9.0,false
       if (!m) return '';
       if (m.status === 'completed')   return `Match completed — XI is final`;
       if (m.status === 'in_progress') return `Match in progress — XI is locked`;
-      if (m.start_time && new Date(m.start_time).getTime() <= Date.now())
-        return `Match has started (${new Date(m.start_time).toLocaleString()}) — XI is locked`;
+      if (hasMatchStarted(m))
+        return `Match has started (${new Date(effectiveLockTime(m)).toLocaleString()}) — XI is locked`;
       return '';
     }
 
@@ -5661,7 +5657,7 @@ p31,Sample Player,MI,bat,9.0,false
       const prev = slPrevSeasonMatch(matchId);
       if (!prev) return false;   // first season match — no prev
       if (prev.status === 'completed') return true;
-      if (prev.start_time && new Date(prev.start_time).getTime() <= Date.now()) return true;
+      if (hasMatchStarted(prev)) return true;
       return false;
     }
 
@@ -5698,29 +5694,47 @@ p31,Sample Player,MI,bat,9.0,false
 
     // ─── COUNTDOWN + AUTO-CONNECT ────────────────────────────────────────────
 
-    /** Strictly the next match whose start_time is in the future (not yet started). */
+    /**
+     * The time that actually gates "has this match started" for front-end purposes.
+     * Mirrors the exact rule db.js's getLastLockedXI() already uses server-side:
+     * lock_time overrides start_time when set, and a 'delayed' match with no
+     * lock_time has NO gate at all — it never counts as started until an admin
+     * sets a fresh lock_time, regardless of how far in the past the original
+     * start_time is. Returns null when there's no usable time (delayed, no gate).
+     */
+    function effectiveLockTime(m) {
+      if (!m) return null;
+      if (m.status === 'delayed' && !m.lock_time) return null;
+      return m.lock_time ?? m.start_time ?? null;
+    }
+    /** Has this match actually started, accounting for delay/lock_time overrides? */
+    function hasMatchStarted(m) {
+      const t = effectiveLockTime(m);
+      return t ? new Date(t).getTime() <= Date.now() : false;
+    }
+
+    /** Strictly the next match whose effective lock time is in the future (not yet started). */
     function findNextScheduledMatch() {
       const now = Date.now();
       return state.matches
-        .filter(m => m.status !== 'completed' && m.start_time && new Date(m.start_time).getTime() > now)
-        .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))[0]
+        .filter(m => m.status !== 'completed' && effectiveLockTime(m) && new Date(effectiveLockTime(m)).getTime() > now)
+        .sort((a, b) => new Date(effectiveLockTime(a)) - new Date(effectiveLockTime(b)))[0]
         || state.matches
-            .filter(m => m.status !== 'completed' && !m.start_time)
+            .filter(m => m.status !== 'completed' && !effectiveLockTime(m))
             .sort((a, b) => (a.match_number || 0) - (b.match_number || 0))[0]
         || null;
     }
 
     /**
      * The match to save an XI against.
-     * - If the active match hasn't started yet → use it.
-     * - If the active match is already live (start_time passed) → use the next scheduled match.
+     * - If the active match hasn't started yet (per effectiveLockTime) → use it.
+     * - If the active match has actually started → use the next scheduled match.
      * - Falls back to the active match if there's nothing upcoming.
      */
     function saveTargetMatch() {
       const m = activeMatch();
-      const now = Date.now();
-      const isLive = m && m.start_time && new Date(m.start_time).getTime() <= now;
-      if (!isLive) return m;                        // not started yet — save against it normally
+      if (!m) return m;
+      if (!hasMatchStarted(m)) return m;             // not started yet — save against it normally
       return findNextScheduledMatch() || m;          // started — point edits at the next game
     }
 
@@ -5733,9 +5747,7 @@ p31,Sample Player,MI,bat,9.0,false
       const m = state.activeMatchId
         ? state.matches.find(x => x.id === state.activeMatchId) : null;
       if (!m) return null;
-      const now = Date.now();
-      const isLive = m.start_time && new Date(m.start_time).getTime() <= now;
-      if (!isLive) return m;
+      if (!hasMatchStarted(m)) return m;
       return findNextScheduledMatch() || m;
     }
 
@@ -5743,10 +5755,10 @@ p31,Sample Player,MI,bat,9.0,false
     function findNextMatch() {
       const now = Date.now();
       const withTime = state.matches
-        .filter(m => m.start_time)
-        .map(m => ({ m, t: new Date(m.start_time).getTime() }))
+        .map(m => ({ m, t: effectiveLockTime(m) ? new Date(effectiveLockTime(m)).getTime() : null }))
+        .filter(x => x.t !== null)
         .sort((a, b) => a.t - b.t);
-      // Prefer a currently-live match (start_time passed but not completed)
+      // Prefer a currently-live match (effective lock time passed but not completed)
       const live = withTime.find(x => x.m.status !== 'completed' && x.t <= now);
       if (live) return live.m;
       // Otherwise the closest upcoming
@@ -5773,7 +5785,7 @@ p31,Sample Player,MI,bat,9.0,false
       const m = findNextMatch();
       if (!m) { chip.style.display = 'none'; return; }
       chip.style.display = 'inline-flex';
-      const t = new Date(m.start_time).getTime();
+      const t = new Date(effectiveLockTime(m)).getTime();
       const remaining = t - Date.now();
       const teams = `${m.home_team_id || '?'} vs ${m.away_team_id || '?'}`;
       chip.classList.remove('live', 'soon');
@@ -5786,14 +5798,15 @@ p31,Sample Player,MI,bat,9.0,false
       }
     }
 
-    // Auto-connect to CricAPI once the next match's start_time arrives. Idempotent:
-    // each match is only auto-connected once per session.
+    // Auto-connect to CricAPI once the next match's effective lock time arrives
+    // (lock_time when set, else start_time — see effectiveLockTime()). A delayed
+    // match with no lock_time set yet never auto-connects. Idempotent: each
+    // match is only auto-connected once per session.
     state.autoConnected ??= new Set();
     async function maybeAutoConnect() {
       if (state.poller) return;                              // already polling something
       const m = findNextMatch();
-      if (!m || !m.start_time) return;
-      if (new Date(m.start_time).getTime() > Date.now()) return;  // not yet
+      if (!m || !hasMatchStarted(m)) return;                  // not yet
       if (m.status === 'completed') return;
       if (state.autoConnected.has(m.id)) return;             // tried this one already
       if (!m.external_id) return;                            // no CricAPI link
@@ -6377,7 +6390,7 @@ p31,Sample Player,MI,bat,9.0,false
       if (!el) return;
       const m = saveTargetMatch();
       const live = activeMatch();
-      const isLive = live && live.start_time && new Date(live.start_time).getTime() <= Date.now();
+      const isLive = live && hasMatchStarted(live);
       el.textContent = m
         ? `${isLive && m.id !== live?.id ? '⚡ Live — saving for next: ' : 'Will save as: '}${autoXIName()}`
         : `No match picked — XI will save as a standalone team.`;
@@ -6393,8 +6406,8 @@ p31,Sample Player,MI,bat,9.0,false
     async function maybeSnapshotLiveXI() {
       if (!state.db || state.selected.length !== 11 || !state.captain || !state.viceCaptain) return;
       const live = activeMatch();
-      if (!live || !live.start_time) return;
-      if (new Date(live.start_time).getTime() > Date.now()) return; // not started yet
+      if (!live) return;
+      if (!hasMatchStarted(live)) return; // not started yet
       if (live.status === 'completed') return;
       if (state.snapshotted.has(live.id)) return;
       state.snapshotted.add(live.id);
@@ -10693,10 +10706,10 @@ p31,Sample Player,MI,bat,9.0,false
       const nextMatchMap = {};
       if (state.activeTournamentId && state.matches?.length) {
         const next = state.matches
-          .filter(m => m.status !== 'completed' && m.start_time)
-          .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))[0];
+          .filter(m => m.status !== 'completed' && effectiveLockTime(m))
+          .sort((a, b) => new Date(effectiveLockTime(a)) - new Date(effectiveLockTime(b)))[0];
         if (next) {
-          const d = new Date(next.start_time);
+          const d = new Date(effectiveLockTime(next));
           const label = next.home_team_id && next.away_team_id
             ? `${next.home_team_id} vs ${next.away_team_id}` : `Match ${next.match_number ?? ''}`;
           const dateStr = d.toLocaleDateString('en-GB', { day:'numeric', month:'short' });
