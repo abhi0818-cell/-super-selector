@@ -738,15 +738,22 @@ Deno.serve(async (req: Request) => {
         // Same reasoning: a cached URL that fetches OK but never parses
         // (wrong page / wrong match) shouldn't be reused on the next attempt.
         await sb.from('matches').update({ scorecard_url: null }).eq('id', match.id)
-        // Diagnostics: tell us *why* nothing parsed — wrong page entirely
-        // (no "Inning" text at all), or right page but no <table> markup
-        // (e.g. anti-bot challenge page / JS-only content / blocked fetch).
+        // Deeper diagnostics: html.includes('Inning') being true doesn't mean
+        // our <h2>...Inning...</h2> regex actually matches — the heading may
+        // have nested markup (breaking the [^<]* class) or be a different
+        // tag entirely. Grab the raw markup around the first "Inning" hit and
+        // the first <h2> tag so we can see the real structure.
+        const inningIdx  = html.search(/Inning/i)
+        const h2Match    = html.match(/<h2[^>]*>[\s\S]{0,200}?<\/h2>/i)
         results.push({
           matchId: match.id, status: 'parse_failed', url,
           htmlLength: html.length,
           hasInningText: html.includes('Inning'),
           hasTableMarkup: html.includes('<table'),
-          htmlSnippet: html.slice(0, 300),
+          h2Count: (html.match(/<h2/gi) ?? []).length,
+          tableCount: (html.match(/<table/gi) ?? []).length,
+          firstH2Snippet: h2Match ? h2Match[0] : null,
+          inningContext: inningIdx >= 0 ? html.slice(Math.max(0, inningIdx - 150), inningIdx + 150) : null,
         })
         continue
       }
