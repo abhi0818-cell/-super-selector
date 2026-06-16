@@ -6693,7 +6693,10 @@ p31,Sample Player,MI,bat,9.0,false
         const oppId = teamIds[1 - idx];
         const battingRows = [];
         let totalRuns = 0, totalWkts = 0;
-        PLAYERS.filter(p => p.team_id === teamId).forEach(p => {
+        // PLAYERS (live pool) entries carry the team code as `.team`, not `.team_id`
+        // (`.team_id` is a different shape used by history/leaderboard rows) — falling
+        // back to both keeps this working regardless of which shape is in play.
+        PLAYERS.filter(p => (p.team_id || p.team) === teamId).forEach(p => {
           const s = byPlayer.get(p.id);
           if (!s?.batting) return;
           const b = s.batting;
@@ -6706,7 +6709,7 @@ p31,Sample Player,MI,bat,9.0,false
         });
         const bowlingRows = [];
         let totalBallsBowled = 0;
-        PLAYERS.filter(p => p.team_id === oppId).forEach(p => {
+        PLAYERS.filter(p => (p.team_id || p.team) === oppId).forEach(p => {
           const s = byPlayer.get(p.id);
           if (!s?.bowling) return;
           const bw = s.bowling;
@@ -8318,9 +8321,9 @@ p31,Sample Player,MI,bat,9.0,false
                     const built = buildLiveScorecardFromStats(m, statRows);
                     if (!built) {
                       const resolvedCount = statRows.filter(s => PLAYERS.some(p => p.id === s.player_id)).length;
-                      const rosterCount   = PLAYERS.filter(p => p.team_id === m.home_team_id || p.team_id === m.away_team_id).length;
+                      const rosterCount   = PLAYERS.filter(p => (p.team_id || p.team) === m.home_team_id || (p.team_id || p.team) === m.away_team_id).length;
                       const matchedTeamIds = [...new Set(
-                        statRows.map(s => PLAYERS.find(p => p.id === s.player_id)?.team_id).filter(Boolean)
+                        statRows.map(s => { const pl = PLAYERS.find(p => p.id === s.player_id); return pl && (pl.team_id || pl.team); }).filter(Boolean)
                       )];
                       console.info('[Scrape Now] diagnostic:', {
                         statRowCount: statRows.length, resolvedCount, rosterCount,
@@ -9389,7 +9392,7 @@ p31,Sample Player,MI,bat,9.0,false
               if (r.localPlayer) return `
               <tr class="fsc-player-row ${r.inXi?'mine':''}" style="cursor:pointer;" data-fsc-idx="${i}">
                 <td class="name">${escapeHtml(r.apiName)}</td>
-                <td class="team-tag">${r.localPlayer.team_id || '—'}</td>
+                <td class="team-tag">${r.localPlayer.team_id || r.localPlayer.team || '—'}</td>
                 <td>${roleLabel[r.role] || r.role}</td>
                 <td class="pts">${r.points.toFixed(1)}</td>
                 ${unmatchedCount ? '<td></td>' : ''}
