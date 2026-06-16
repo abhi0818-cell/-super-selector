@@ -21,6 +21,15 @@ const SUPABASE_URL             = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
 const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
+// Browser (admin "Scrape Now" button) calls this directly, so it needs CORS
+// headers just like cricapi-proxy — otherwise the POST is blocked client-side
+// before the response ever reaches the page ("Load failed" / "Failed to fetch").
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
 // ─── Slug / URL helpers ───────────────────────────────────────────────────────
 
 function toSlug(s: string): string {
@@ -583,6 +592,9 @@ async function scoreDailyTeamsForMatch(matchId: string, pointsMap: Map<string, n
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: CORS })
+  }
   try {
     const body     = await req.json().catch(() => ({})) as { matchId?: string }
     const matchId  = body.matchId ?? null
@@ -622,7 +634,7 @@ Deno.serve(async (req: Request) => {
     if (!liveMatches.length) {
       return new Response(
         JSON.stringify({ ok: true, message: 'No live matches with scraper enabled' }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
+        { status: 200, headers: { ...CORS, 'Content-Type': 'application/json' } },
       )
     }
 
@@ -831,13 +843,13 @@ Deno.serve(async (req: Request) => {
 
     return new Response(
       JSON.stringify({ ok: true, results }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
+      { status: 200, headers: { ...CORS, 'Content-Type': 'application/json' } },
     )
   } catch (err) {
     console.error('[scrape-scorecard]', err)
     return new Response(
       JSON.stringify({ ok: false, error: (err as Error).message }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } },
+      { status: 500, headers: { ...CORS, 'Content-Type': 'application/json' } },
     )
   }
 })
