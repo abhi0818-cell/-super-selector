@@ -6363,6 +6363,8 @@ p31,Sample Player,MI,bat,9.0,false
         state.savedTeams = await state.db.listUserTeams();
         renderSavedTeams();
         toast(`Saved: ${name}`);
+        // Close the editor and drop back to the read-only Pick XI view.
+        if ($('#poolPanel').style.display !== 'none') setPoolOpen(false);
       } catch (e) { toast('Save failed: ' + e.message, 4000); }
     }
 
