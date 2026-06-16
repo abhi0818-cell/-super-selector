@@ -6661,6 +6661,71 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     /**
+     * Build a `state.lastScorecard`-shaped payload (the shape renderScorecard()/
+     * renderScores()/renderInnings() expect — { data: { matchInfo, scorecard } },
+     * scorecard items carrying team-level r/w/o plus per-player batting/bowling
+     * rows) out of the scraper's player_match_stats rows. The scraper only writes
+     * per-player rows (no team-level score row), so this reconstructs team totals
+     * by summing across each team's roster: a team's runs/wickets come from its
+     * own batting rows, and its overs come from the opposing team's bowling rows
+     * (the balls *they* bowled are the balls this team faced).
+     */
+    function buildLiveScorecardFromStats(localMatch, statRows) {
+      if (!statRows || !statRows.length) return null;
+      const byPlayer = new Map(statRows.map(s => [s.player_id, s]));
+      const teamIds = [localMatch.home_team_id, localMatch.away_team_id].filter(Boolean);
+      if (teamIds.length < 2) return null;
+
+      const scorecard = teamIds.map((teamId, idx) => {
+        const oppId = teamIds[1 - idx];
+        const battingRows = [];
+        let totalRuns = 0, totalWkts = 0;
+        PLAYERS.filter(p => p.team_id === teamId).forEach(p => {
+          const s = byPlayer.get(p.id);
+          if (!s?.batting) return;
+          const b = s.batting;
+          totalRuns += b.runs ?? 0;
+          if (b.isDismissed) totalWkts++;
+          battingRows.push({
+            batsman: { name: p.name }, r: b.runs ?? 0, b: b.ballsFaced ?? 0,
+            '4s': b.fours ?? 0, '6s': b.sixes ?? 0, isDismissed: b.isDismissed,
+          });
+        });
+        const bowlingRows = [];
+        let totalBallsBowled = 0;
+        PLAYERS.filter(p => p.team_id === oppId).forEach(p => {
+          const s = byPlayer.get(p.id);
+          if (!s?.bowling) return;
+          const bw = s.bowling;
+          totalBallsBowled += bw.ballsBowled ?? 0;
+          const overs = Math.floor((bw.ballsBowled ?? 0) / 6) + ((bw.ballsBowled ?? 0) % 6) / 10;
+          bowlingRows.push({
+            bowler: { name: p.name }, o: overs.toFixed(1), m: bw.maidens ?? 0,
+            r: bw.runsConceded ?? 0, w: bw.wickets ?? 0,
+          });
+        });
+        if (!battingRows.length && !bowlingRows.length) return null;
+        const overallOvers = Math.floor(totalBallsBowled / 6) + (totalBallsBowled % 6) / 10;
+        return {
+          inning: `${teamId} Innings`,
+          r: totalRuns, w: totalWkts, o: totalBallsBowled ? overallOvers.toFixed(1) : '0.0',
+          batting: battingRows, bowling: bowlingRows,
+        };
+      }).filter(Boolean);
+
+      if (!scorecard.length) return null;
+      return {
+        data: {
+          matchInfo: {
+            name: `${localMatch.home_team_id ?? '?'} vs ${localMatch.away_team_id ?? '?'}`,
+            status: localMatch.status === 'completed' ? 'Completed' : 'Live',
+          },
+          scorecard,
+        },
+      };
+    }
+
+    /**
      * Live view for scraper-enabled tournaments — reads player_match_stats from
      * Postgres (kept fresh by the scrape-scorecard cron job, every 15 min) instead
      * of polling CricAPI. No CricAPI calls are made anywhere in this path.
@@ -6682,6 +6747,11 @@ p31,Sample Player,MI,bat,9.0,false
           statRows.forEach(s => {
             state.stats[s.player_id] = { batting: s.batting, bowling: s.bowling, fielding: s.fielding };
           });
+          // Rebuild the "Live scorecard" panel's payload too — it reads from
+          // state.lastScorecard, which the legacy CricAPI flow keeps fresh but
+          // this scraper flow previously never touched, leaving it stuck on
+          // whatever (stale) payload was last cached.
+          state.lastScorecard = buildLiveScorecardFromStats(localMatch, statRows);
           render();
           if (state.activeDailyTab === 'live' && state.mode === 'daily') renderDailyLiveTab();
           if (state.mode === 'season_long') {
@@ -6692,6 +6762,10 @@ p31,Sample Player,MI,bat,9.0,false
           $('#scorecardSection').setAttribute('open', '');
         },
         onPoll: (statRows, status) => {
+          // Always rebuild — even when onUpdate didn't fire (hash unchanged),
+          // so a freshly-loaded page or reconnect still shows current data
+          // instead of leaving state.lastScorecard at null/stale.
+          state.lastScorecard = buildLiveScorecardFromStats(localMatch, statRows);
           render();
           renderScorecard();
           renderFantasyScorecard();

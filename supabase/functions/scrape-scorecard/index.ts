@@ -333,13 +333,31 @@ function parseRows(tableHtml: string): string[][] {
 /** Parse CricketAddictor scorecard HTML */
 function parseCricketAddictor(html: string): Innings[] {
   const innings: Innings[] = []
-  // Innings sections are delimited by <h2> with "Inning" in text
-  const sectionRe = /<h2[^>]*>([^<]*Inning[^<]*)<\/h2>([\s\S]*?)(?=<h2|<h3.*Match Info|$)/gi
-  let sec: RegExpExecArray | null
-  while ((sec = sectionRe.exec(html)) !== null) {
-    const teamName = sec[1].replace(/\s+Inning.*$/i, '').trim()
-    const body     = sec[2]
-    const tables   = parseTables(body)
+  // Innings sections are delimited by <h2> headers containing "Inning" —
+  // but the live markup wraps the score in nested tags (e.g. a <span>),
+  // so we can't require the whole <h2> body to be plain text. Instead,
+  // capture each <h2>...</h2> block in full (allowing nested markup) and
+  // strip tags before testing for "Inning".
+  const h2Re = /<h2[^>]*>([\s\S]*?)<\/h2>/gi
+  const headers: { teamName: string; start: number }[] = []
+  let h2m: RegExpExecArray | null
+  while ((h2m = h2Re.exec(html)) !== null) {
+    const text = stripTags(h2m[1])
+    if (!/Inning/i.test(text)) continue
+    headers.push({ teamName: text.replace(/\s+Inning.*$/i, '').trim(), start: h2Re.lastIndex })
+  }
+
+  for (let i = 0; i < headers.length; i++) {
+    const { teamName, start } = headers[i]
+    let end = i + 1 < headers.length ? html.indexOf('<h2', start) : html.length
+    if (end === -1) end = html.length
+    // Stop early at a "Match Info" heading too, in case it follows the last
+    // innings section before any further <h2> (there usually isn't one).
+    const miMatch = html.slice(start, end).match(/<h3[^>]*>[\s\S]{0,60}?Match Info/i)
+    if (miMatch) end = start + miMatch.index!
+
+    const body   = html.slice(start, end)
+    const tables = parseTables(body)
 
     // ── Batting (first table) ──
     const batting: BatRow[] = []
