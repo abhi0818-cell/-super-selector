@@ -6089,7 +6089,7 @@ p31,Sample Player,MI,bat,9.0,false
           s + m.teams.reduce((t2, t) => t2 + Number(t.total_points || 0), 0), 0);
 
         // Build rows ascending (so running total accumulates correctly), then reverse for display
-        const rows = ascending.map(m => {
+        const matchData = ascending.map(m => {
           const homeAway  = [m.home_team_id, m.away_team_id].filter(Boolean).join(' vs ') || 'Match';
           const label     = m.match_number ? `M${m.match_number} · ${homeAway}` : homeAway;
           const matchPts  = m.teams.reduce((s, t) => s + Number(t.total_points || 0), 0);
@@ -6098,7 +6098,9 @@ p31,Sample Player,MI,bat,9.0,false
           const hasXI     = m.teams.length > 0;
           const multiTeam = m.teams.length > 1;
 
-          // Detail: pitch view per team, or placeholder if no XI picked
+          // Pitch panel lives OUTSIDE the table (plain div) to avoid Safari compositor bug
+          // where gradient backgrounds inside <td> render as black.
+          const pitchPanelId = detailId + '-pitch';
           const pitchDetailHtml = hasXI
             ? m.teams.map(t => {
                 const sorted = [...t.players].sort((a, b) =>
@@ -6108,18 +6110,23 @@ p31,Sample Player,MI,bat,9.0,false
             : '<div style="padding:12px 0 6px;text-align:center;font-size:12px;color:var(--muted);font-style:italic;">No XI picked for this match</div>';
 
           const matchRow =
-            '<tr class="sl-match-row" data-detail="' + detailId + '" style="cursor:pointer;" title="Click to expand">' +
+            '<tr class="sl-match-row" data-detail="' + detailId + '" data-pitch="' + pitchPanelId + '" style="cursor:pointer;" title="Click to expand">' +
             '<td class="l">' + escapeHtml(label) + ' <span style="font-size:10px;color:var(--muted);">▾</span></td>' +
             '<td class="' + (hasXI ? 'pts' : '') + '"' + (hasXI ? '' : ' style="color:var(--muted);"') + '>' + matchPts.toFixed(1) + '</td>' +
             '<td' + (hasXI ? '' : ' style="color:var(--muted);"') + '>' + running.toFixed(1) + '</td>' +
             '</tr>';
 
-          const detailRow =
-            '<tr id="' + detailId + '" style="display:none;">' +
-            '<td colspan="3" style="padding:0;">' + pitchDetailHtml + '</td></tr>';
+          // Thin spacer row stays in table just to anchor position visually
+          const detailRow = '<tr id="' + detailId + '" style="display:none;"><td colspan="3" style="padding:0;"></td></tr>';
 
-          return matchRow + detailRow;
-        }).reverse().join('');
+          // Pitch panel is a plain div sibling to the table, keyed by pitchPanelId
+          const pitchPanel = '<div id="' + pitchPanelId + '" style="display:none;">' + pitchDetailHtml + '</div>';
+
+          return { matchRow, detailRow, pitchPanel };
+        }).reverse();
+
+        const tableRows = matchData.map(d => d.matchRow + d.detailRow).join('');
+        const pitchPanels = matchData.map(d => d.pitchPanel).join('');
 
         const totalRow =
           '<tr style="background:var(--panel-2);font-weight:700;border-bottom:1px solid var(--border);">' +
@@ -6128,30 +6135,31 @@ p31,Sample Player,MI,bat,9.0,false
           '<td style="padding:6px 8px;"></td>' +
           '</tr>';
 
+        // Table for match rows + pitch panels as plain divs AFTER the table (outside any <td>)
         wrap.innerHTML =
           '<table class="sl-season-table">' +
           '<thead>' +
           '<tr><th class="l">Match</th><th>Pts</th><th>Running</th></tr>' +
           totalRow +
           '</thead>' +
-          '<tbody>' + rows + '</tbody>' +
-          '</table>';
+          '<tbody>' + tableRows + '</tbody>' +
+          '</table>' +
+          pitchPanels;
 
-        // Wire expand/collapse on match rows; fit pitch ovals on open
+        // Wire expand/collapse: toggle both the spacer <tr> and the pitch <div>
         wrap.querySelectorAll('.sl-match-row').forEach(row => {
           row.addEventListener('click', () => {
             const detail = wrap.querySelector('#' + row.dataset.detail);
-            if (!detail) return;
-            const opening = detail.style.display === 'none';
-            detail.style.display = opening ? '' : 'none';
+            const pitchPanel = wrap.querySelector('#' + row.dataset.pitch);
+            if (!pitchPanel) return;
+            const opening = pitchPanel.style.display === 'none';
+            if (detail) detail.style.display = opening ? '' : 'none';
+            pitchPanel.style.display = opening ? '' : 'none';
             const caret = row.querySelector('span[style*="▾"], span[style*="▴"]');
             if (caret) caret.textContent = opening ? '▴' : '▾';
             if (opening) {
               requestAnimationFrame(() => {
-                detail.querySelectorAll('.pitch-oval-hist').forEach(ov => {
-                  ov.style.background = 'radial-gradient(ellipse 80% 88% at 50% 50%, #4ec94e 0%,#3aad3a 22%,#2b8f2b 45%,#1d6e1d 65%,#0f470f 85%,#09300d 100%)';
-                  fitHistOval(ov);
-                });
+                pitchPanel.querySelectorAll('.pitch-oval-hist').forEach(ov => fitHistOval(ov));
               });
             }
           });
