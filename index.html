@@ -5798,8 +5798,12 @@ p31,Sample Player,MI,bat,9.0,false
       if (state.autoConnected.has(m.id)) return;             // tried this one already
       if (!m.external_id) return;                            // no CricAPI link
 
+      // Scraper-enabled tournaments don't need a CricAPI key — connectLive()
+      // will route to the DB-backed scraper poller instead of CricAPI.
+      const matchTournament = state.tournaments?.find(t => t.id === m.tournament_id);
+      const scraperOn = !!matchTournament?.scraper_enabled;
       const apiKey = $('#apiKey').value.trim();
-      if (!apiKey) return;                                   // need a key
+      if (!scraperOn && !apiKey) return;                     // need a key (unless scraper handles it)
 
       state.autoConnected.add(m.id);
 
@@ -6596,6 +6600,9 @@ p31,Sample Player,MI,bat,9.0,false
         this.nextPollAt = Date.now() + this.interval;
         setPollTs(this.matchId, this.lastPollAt);
         try {
+          // Every fetch here is a real CricAPI call — count it so the #apiPill
+          // tracker is a complete, trustworthy record of daily quota usage.
+          incrementApiCallCount();
           const res = await fetch(this.url, { headers: this.headers }); if (!res.ok) throw new Error('HTTP '+res.status);
           const payload = await res.json();
           // Surface CricAPI-level failures as real errors so onError / toast fires.
@@ -6611,6 +6618,115 @@ p31,Sample Player,MI,bat,9.0,false
         } catch(e){ this.onError?.(e); }
         finally { this._inflight = false; }
       }
+    }
+
+    /**
+     * Live-data poller for scraper-enabled tournaments. Reads already-scraped
+     * player stats straight from Postgres (player_match_stats, written by the
+     * scrape-scorecard edge function) instead of calling CricAPI — so it never
+     * touches the daily API quota. Player rows are keyed by our own internal
+     * player_id, so no name-matching is needed (unlike the CricAPI flow).
+     */
+    class DbScorePoller {
+      constructor({db, matchId, format='T20', interval=60000, onUpdate, onPoll, onError}) {
+        Object.assign(this, { db, matchId, format, interval, onUpdate, onPoll, onError });
+        this._timer=null; this._inflight=false; this._lastHash=null;
+        this.lastPollAt=null; this.nextPollAt=null;
+      }
+      start(){
+        if(this._timer) return;
+        this.nextPollAt = Date.now() + this.interval;
+        this._poll();
+        this._timer = setInterval(()=>this._poll(), this.interval);
+      }
+      stop(){ if(this._timer){ clearInterval(this._timer); this._timer=null; } }
+      forceRefresh(){ this._poll(); }
+      async _poll(){
+        if (this._inflight) return; this._inflight = true;
+        this.lastPollAt = Date.now();
+        this.nextPollAt = Date.now() + this.interval;
+        try {
+          // Plain Postgres reads — not CricAPI calls, so the #apiPill counter
+          // is intentionally untouched here.
+          const [statRows, status] = await Promise.all([
+            this.db.getPlayerStatsForMatchFull(this.matchId),
+            this.db.getMatchStatus(this.matchId),
+          ]);
+          const h = JSON.stringify(statRows);
+          if (h !== this._lastHash) { this._lastHash = h; this.onUpdate?.(statRows); }
+          this.onPoll?.(statRows, status);
+        } catch(e){ this.onError?.(e); }
+        finally { this._inflight = false; }
+      }
+    }
+
+    /**
+     * Live view for scraper-enabled tournaments — reads player_match_stats from
+     * Postgres (kept fresh by the scrape-scorecard cron job, every 15 min) instead
+     * of polling CricAPI. No CricAPI calls are made anywhere in this path.
+     */
+    async function connectLiveViaScraper(localMatch){
+      if (state.poller) { state.poller.stop(); state.poller = null; }
+      stopSim();
+      state.stats = {};
+      render();
+
+      const matchId      = localMatch.id;
+      const pollInterval = 60_000; // cheap DB read — fine to check every minute
+      const pollMins     = Math.round(pollInterval / 60_000);
+
+      state.poller = new DbScorePoller({
+        db: state.db, matchId, format: state.format, interval: pollInterval,
+        onUpdate: (statRows) => {
+          // Rows are keyed by our own player_id already — no name matching needed.
+          statRows.forEach(s => {
+            state.stats[s.player_id] = { batting: s.batting, bowling: s.bowling, fielding: s.fielding };
+          });
+          render();
+          if (state.activeDailyTab === 'live' && state.mode === 'daily') renderDailyLiveTab();
+          if (state.mode === 'season_long') {
+            renderSlXiTab(); renderSlLiveTab();
+          }
+          renderScorecard();
+          renderFantasyScorecard();
+          $('#scorecardSection').setAttribute('open', '');
+        },
+        onPoll: (statRows, status) => {
+          render();
+          renderScorecard();
+          renderFantasyScorecard();
+          state._lastSyncedAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+          // Keep local match status in sync — the scraper/admin flow updates it server-side.
+          if (status && localMatch.status !== status) {
+            localMatch.status = status;
+            const idx = state.matches.findIndex(m => m.id === localMatch.id);
+            if (idx >= 0) state.matches[idx] = { ...state.matches[idx], status };
+            renderMatchesAdmin();
+            renderMatchSelector();
+          }
+
+          if (status === 'completed') {
+            if (state.poller) { state.poller.stop(); state.poller = null; }
+            $('#liveDot').classList.remove('on');
+            $('#liveLabel').textContent = 'Match ended — scorecard frozen (scraper)';
+            const fetchNowBtn = $('#fetchNowBtn');
+            if (fetchNowBtn) fetchNowBtn.style.display = 'none';
+            renderHistory();
+            toast('Match completed. Scraper polling stopped.');
+          } else {
+            $('#liveDot').classList.add('on');
+            $('#liveLabel').textContent = `Live — synced from scraper scorecard (checking every ~${pollMins} min) · no CricAPI calls used`;
+          }
+        },
+        onError: (e) => {
+          console.warn('[connectLiveViaScraper] poll error:', e.message);
+        },
+      });
+      state.poller.start();
+      const fetchNowBtn = $('#fetchNowBtn');
+      if (fetchNowBtn) fetchNowBtn.style.display = 'inline-block';
+      toast('Connected via scraper — reading live scorecard from the database. No CricAPI calls used.');
     }
 
     async function connectLive(){
@@ -6643,6 +6759,16 @@ p31,Sample Player,MI,bat,9.0,false
       // Never use a stale cached scorecard if the match might still be live —
       // matchLifecycle() on the cached payload is the authoritative check.
       const localMatch = state.matches.find(m => m.external_id === id);
+
+      // ── Scraper-enabled tournament: read live data from Postgres, never CricAPI ──
+      const matchTournament = localMatch
+        ? state.tournaments?.find(t => t.id === localMatch.tournament_id)
+        : null;
+      if (localMatch && state.db && matchTournament?.scraper_enabled) {
+        connectLiveViaScraper(localMatch);
+        return;
+      }
+
       if (localMatch && state.db) {
         try {
           const cached = await state.db.getMatchScorecard(localMatch.id);

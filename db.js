@@ -1093,6 +1093,16 @@ export function createDb(cfg = {}) {
       return data;
     },
 
+    /** Lightweight status read for one match — used by the scraper-backed live poller
+     *  to detect completion without re-fetching the whole matches table. */
+    async getMatchStatus(matchId) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('matches').select('status').eq('id', matchId).maybeSingle();
+      if (error) throw error;
+      return data?.status ?? null;
+    },
+
     async addMatch(input) {
       if (!input.format || !input.homeTeamId || !input.awayTeamId) throw new Error('addMatch: format, homeTeamId, awayTeamId required');
       const sb = await getClient();
