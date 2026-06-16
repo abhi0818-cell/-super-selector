@@ -11191,7 +11191,7 @@ p31,Sample Player,MI,bat,9.0,false
         if (groups[p.role]) groups[p.role].push(p);
         else groups['bat'].push(p);
       });
-      var svgOverlay = '<svg class="pitch-svg-overlay" viewBox="0 0 304 460" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" style="display:none">'
+      var svgOverlay = '<svg class="pitch-svg-overlay" viewBox="0 0 304 460" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg" style="overflow:hidden;background:transparent;">'
         + '<ellipse cx="152" cy="230" rx="145" ry="220" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="2" stroke-dasharray="7 5"/>'
         + '<rect x="134" y="140" width="36" height="180" rx="5" fill="url(#pitchGrad)" opacity="0.72"/>'
         + '<line x1="120" y1="165" x2="184" y2="165" stroke="rgba(255,255,255,0.6)" stroke-width="2"/>'
