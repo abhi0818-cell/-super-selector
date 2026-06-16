@@ -24,7 +24,17 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 // ─── Slug / URL helpers ───────────────────────────────────────────────────────
 
 function toSlug(s: string): string {
-  return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+  return s.toLowerCase().trim()
+    .replace(/['']/g, '')                 // CricketAddictor drops apostrophes entirely ("Women's" → "womens")
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+}
+
+/** Strip a trailing women's-team marker ("-w" / "-women") so our slugs line up
+ *  with CricketAddictor's convention of using the plain country/club code even
+ *  inside a women's tournament (e.g. our "NZ-W" → their "nz"). */
+function stripGenderSuffix(slug: string): string {
+  return slug.replace(/-(?:women|w)$/i, '')
 }
 
 function ordinal(n: number): string {
@@ -38,15 +48,19 @@ function ordinal(n: number): string {
   }
 }
 
-/** Convert match_type DB value → CricketAddictor URL slug fragment */
-function matchTypeSlug(matchType: string | null, matchNumber: number): string {
+/** Convert match_type DB value → CricketAddictor URL slug fragment(s) to try.
+ *  Different series use different conventions for ordinary (non-knockout)
+ *  matches — some use plain "match-7" (e.g. ICC World Cups), others use the
+ *  ordinal form "7th-match" (e.g. several domestic First Class series) — so we
+ *  try both rather than assuming one. */
+function matchTypeSlugVariants(matchType: string | null, matchNumber: number): string[] {
   switch (matchType) {
-    case 'final':       return 'final'
-    case 'semi_final':  return 'semi-final'
-    case 'qualifier_1': return 'qualifier-1'
-    case 'qualifier_2': return 'qualifier-2'
-    case 'eliminator':  return 'eliminator'
-    default:            return `${ordinal(matchNumber)}-match`
+    case 'final':       return ['final']
+    case 'semi_final':  return ['semi-final']
+    case 'qualifier_1': return ['qualifier-1']
+    case 'qualifier_2': return ['qualifier-2']
+    case 'eliminator':  return ['eliminator']
+    default:            return [`match-${matchNumber}`, `${ordinal(matchNumber)}-match`]
   }
 }
 
@@ -54,25 +68,141 @@ function cricketAddictorUrl(t1: string, t2: string, desc: string, series: string
   return `https://cricketaddictor.com/livescore/${t1}-vs-${t2}-${desc}-${series}/scorecard/`
 }
 
+// ─── Listing-page scan (team + start-time + tournament matching) ─────────────
+// CricketAddictor's live / upcoming / recent listing pages already contain the
+// real scorecard hrefs. Rather than only guessing a slug, we parse these
+// listings and score each entry by: team-code containment (gender-suffix
+// tolerant), proximity of the listed kickoff time to our match.start_time, and
+// how many tournament-name keywords appear near the entry. This is far more
+// robust than slug-guessing alone whenever a tournament's real slug doesn't
+// exactly mirror our `teams.name` / `tournaments.name` values.
+
+interface ListingMatch {
+  baseUrl: string
+  team1Slug: string
+  team2Slug: string
+  dateTimeText: string | null
+  contextText: string
+}
+
+function parseListingMatches(html: string): ListingMatch[] {
+  const out: ListingMatch[] = []
+  const re = /href="(https:\/\/cricketaddictor\.com\/livescore\/([a-z0-9-]+)\/)scorecard\/"/gi
+  let m: RegExpExecArray | null
+  while ((m = re.exec(html)) !== null) {
+    const baseUrl = m[1]
+    const slug    = m[2]
+    const vsIdx   = slug.indexOf('-vs-')
+    if (vsIdx === -1) continue
+    const team1Slug = slug.slice(0, vsIdx)
+    const rest      = slug.slice(vsIdx + 4)
+    // The team2 slug ends where the match-number / match-type segment begins.
+    const cut = rest.match(/-(?:\d+(?:st|nd|rd|th)?-match|match-\d+|final|semi-final|qualifier-\d|eliminator)-/)
+    const team2Slug = cut ? rest.slice(0, cut.index) : rest.split('-').slice(0, 3).join('-')
+
+    const windowStart = Math.max(0, m.index - 600)
+    const context      = html.slice(windowStart, m.index + 600)
+    const dateM         = context.match(/([A-Za-z]+ \d{1,2}, \d{4}\s+\d{1,2}:\d{2}\s*[AP]M)/)
+
+    out.push({ baseUrl, team1Slug, team2Slug, dateTimeText: dateM ? dateM[1] : null, contextText: context })
+  }
+  return out
+}
+
+function teamSlugMatches(ourSlug: string, theirSlug: string): boolean {
+  const a = stripGenderSuffix(ourSlug)
+  const b = stripGenderSuffix(theirSlug)
+  return a === b || a.startsWith(b) || b.startsWith(a) || a.includes(b) || b.includes(a)
+}
+
+// Cache parsed listing pages for the lifetime of one Edge Function invocation —
+// a single cron run processes every live match, so this avoids re-fetching the
+// same listing page once per match.
+const listingCache = new Map<string, ListingMatch[]>()
+
+async function getListing(url: string): Promise<ListingMatch[]> {
+  if (listingCache.has(url)) return listingCache.get(url)!
+  try {
+    const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SuperSelector/1.0)' } })
+    if (!r.ok) { listingCache.set(url, []); return [] }
+    const html   = await r.text()
+    const parsed = parseListingMatches(html)
+    listingCache.set(url, parsed)
+    return parsed
+  } catch {
+    listingCache.set(url, [])
+    return []
+  }
+}
+
+async function scanListingsForMatch(
+  homeSlug: string, awaySlug: string,
+  startTime: string | null, tournamentName: string,
+): Promise<string | null> {
+  const pages = [
+    'https://cricketaddictor.com/livescore/',
+    'https://cricketaddictor.com/livescore/upcoming-matches/',
+    'https://cricketaddictor.com/livescore/recent-matches/',
+  ]
+  const targetMs = startTime ? new Date(startTime).getTime() : NaN
+  const tWords   = tournamentName.toLowerCase().split(/\W+/).filter(w => w.length > 3)
+
+  let best: { url: string; score: number } | null = null
+
+  for (const page of pages) {
+    const listing = await getListing(page)
+    for (const lm of listing) {
+      const teamsMatch =
+        (teamSlugMatches(homeSlug, lm.team1Slug) && teamSlugMatches(awaySlug, lm.team2Slug)) ||
+        (teamSlugMatches(homeSlug, lm.team2Slug) && teamSlugMatches(awaySlug, lm.team1Slug))
+      if (!teamsMatch) continue
+
+      let score = 1
+      if (lm.dateTimeText && !isNaN(targetMs)) {
+        const parsed = Date.parse(lm.dateTimeText)
+        if (!isNaN(parsed)) {
+          const diffHrs = Math.abs(parsed - targetMs) / 36e5
+          if (diffHrs <= 48) score += (48 - diffHrs) / 48   // closer kickoff time → higher score
+        }
+      }
+      const ctxLower = lm.contextText.toLowerCase()
+      score += tWords.filter(w => ctxLower.includes(w)).length * 0.5  // tournament-name keyword overlap
+
+      if (!best || score > best.score) best = { url: lm.baseUrl + 'scorecard/', score }
+    }
+  }
+  return best ? best.url : null
+}
+
 /**
  * Try to discover the CricketAddictor scorecard URL for a match.
- * 1. Construct from slugs — try both team orderings.
- * 2. Fall back to scanning CricketAddictor's recent-matches page.
+ * 1. Construct candidate URLs from slugs — both team orderings, both
+ *    gender-suffix forms, and both match-number formats ("match-7" /
+ *    "7th-match") — and HEAD-check each.
+ * 2. Scan live / upcoming / recent listing pages, matching by team codes plus
+ *    start-time and tournament-name proximity as tie-breakers.
+ * 3. Last resort: regex-scan recent-matches for a link containing both
+ *    (gender-suffix-stripped) team slugs.
  */
 async function discoverUrl(
   homeTeam: string, awayTeam: string,
   matchType: string | null, matchNumber: number,
-  tournamentName: string,
+  tournamentName: string, startTime: string | null,
 ): Promise<string | null> {
   const t1     = toSlug(homeTeam)
   const t2     = toSlug(awayTeam)
+  const t1Bare = stripGenderSuffix(t1)
+  const t2Bare = stripGenderSuffix(t2)
   const series = toSlug(tournamentName)
-  const desc   = matchTypeSlug(matchType, matchNumber)
+  const descs  = matchTypeSlugVariants(matchType, matchNumber)
 
-  const candidates = [
-    cricketAddictorUrl(t1, t2, desc, series),
-    cricketAddictorUrl(t2, t1, desc, series),
-  ]
+  const teamPairs: Array<[string, string]> = [[t1, t2], [t2, t1]]
+  if (t1Bare !== t1 || t2Bare !== t2) teamPairs.push([t1Bare, t2Bare], [t2Bare, t1Bare])
+
+  const candidates: string[] = []
+  for (const desc of descs) {
+    for (const [a, b] of teamPairs) candidates.push(cricketAddictorUrl(a, b, desc, series))
+  }
 
   for (const url of candidates) {
     try {
@@ -84,16 +214,19 @@ async function discoverUrl(
     } catch { /* try next */ }
   }
 
-  // Fallback: scan CricketAddictor recent-matches for a link with both slugs
+  // Listing-page scan: match by team codes + start-time + tournament proximity
+  const scanned = await scanListingsForMatch(t1Bare, t2Bare, startTime, tournamentName)
+  if (scanned) return scanned
+
+  // Last-resort fallback: substring scan using gender-stripped slugs
   try {
     const r = await fetch('https://cricketaddictor.com/livescore/recent-matches/', {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SuperSelector/1.0)' },
     })
     if (r.ok) {
       const html = await r.text()
-      // Find any scorecard href containing both team slugs
       const re = new RegExp(
-        `href="(https://cricketaddictor\\.com/livescore/[^"]*(?:${t1}[^"]*${t2}|${t2}[^"]*${t1})[^"]*scorecard/)"`,
+        `href="(https://cricketaddictor\\.com/livescore/[^"]*(?:${t1Bare}[^"]*${t2Bare}|${t2Bare}[^"]*${t1Bare})[^"]*scorecard/)"`,
         'i',
       )
       const m = html.match(re)
@@ -404,6 +537,49 @@ async function scoreXIForMatch(matchId: string, pointsMap: Map<string, number>) 
   }
 }
 
+// ─── Daily XI (ad-hoc one-off teams) scoring distribution ───────────────────
+//
+// Daily teams live in user_teams (squad_id IS NULL) + user_team_players, and
+// their totals are stored in user_team_match_scores. Previously this table was
+// only ever updated by an admin-triggered client-side recompute; this mirrors
+// that same captain/VC multiplier logic so the cron scraper keeps Daily XI
+// leaderboards live, the same way it already does for Season Long squads.
+
+async function scoreDailyTeamsForMatch(matchId: string, pointsMap: Map<string, number>) {
+  const { data: teams, error } = await sb
+    .from('user_teams')
+    .select('id, captain_id, vice_captain_id, user_team_players(player_id)')
+    .eq('match_id', matchId)
+    .is('squad_id', null)
+
+  if (error || !teams?.length) return 0
+
+  const scoreRows = teams.map((t: any) => {
+    const playerIds = (t.user_team_players ?? []).map((p: any) => p.player_id)
+    let total = 0
+    for (const pid of playerIds) {
+      const raw  = pointsMap.get(pid) ?? 0
+      const mult = pid === t.captain_id ? 2 : pid === t.vice_captain_id ? 1.5 : 1
+      total += raw * mult
+    }
+    return {
+      user_team_id: t.id,
+      match_id    : matchId,
+      total_points: Math.round(total * 10) / 10,
+      computed_at : new Date().toISOString(),
+    }
+  })
+
+  const CHUNK = 100
+  for (let i = 0; i < scoreRows.length; i += CHUNK) {
+    await sb.from('user_team_match_scores').upsert(
+      scoreRows.slice(i, i + CHUNK),
+      { onConflict: 'user_team_id,match_id' },
+    )
+  }
+  return scoreRows.length
+}
+
 // ─── Main handler ─────────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
@@ -419,7 +595,7 @@ Deno.serve(async (req: Request) => {
     let query = sb
       .from('matches')
       .select(`
-        id, match_number, match_type, format, status, scorecard_url, tournament_id,
+        id, match_number, match_type, format, status, scorecard_url, tournament_id, start_time,
         home_team:teams!home_team_id(id, name),
         away_team:teams!away_team_id(id, name),
         tournament:tournaments!tournament_id(id, name, scraper_enabled, scoring_rules)
@@ -462,7 +638,10 @@ Deno.serve(async (req: Request) => {
       let url: string | null = match.scorecard_url ?? null
 
       if (!url) {
-        url = await discoverUrl(homeTeam, awayTeam, match.match_type, match.match_number, tournament.name)
+        url = await discoverUrl(
+          homeTeam, awayTeam, match.match_type, match.match_number,
+          tournament.name, (match as any).start_time ?? null,
+        )
         if (url) {
           await sb.from('matches').update({ scorecard_url: url }).eq('id', match.id)
         }
@@ -632,10 +811,11 @@ Deno.serve(async (req: Request) => {
         )
       }
 
-      // ── 10. Distribute raw_points to locked XI scores ──────────────────────
+      // ── 10. Distribute raw_points to locked XI scores (SL squads + Daily teams) ──
       const pointsMap = new Map<string, number>()
       for (const [pid, s] of statAccum) pointsMap.set(pid, s.rawPoints)
       await scoreXIForMatch(match.id, pointsMap)
+      const dailyTeamsScored = await scoreDailyTeamsForMatch(match.id, pointsMap)
 
       results.push({
         matchId : match.id,
@@ -645,6 +825,7 @@ Deno.serve(async (req: Request) => {
         matched : statRows.length,
         unmatched: unmatched.map(u => u.name),
         fuzzyAliasesCreated: fuzzyAliases.length,
+        dailyTeamsScored,
       })
     }
 

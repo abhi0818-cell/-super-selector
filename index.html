@@ -2300,7 +2300,11 @@ p31,Sample Player,MI,bat,9.0,false
 
     // lbState.tab = 'daily'  →  Daily XI leaderboard
     // lbState.tab = <contestId>  →  that SL / private-league leaderboard
-    const lbState = { tab: 'daily', profiles: {}, matchId: null };
+    // expandedKeys: stable per-row keys ('sl_<squadId>' / 'daily_<teamId>') that are
+    // currently expanded — re-opened automatically after each render so the detail
+    // view survives the periodic live-refresh poll.
+    const lbState = { tab: 'daily', profiles: {}, matchId: null, expandedKeys: new Set(), pollTimer: null };
+    const ROLE_ORDER_LB = { wk: 0, bat: 1, ar: 2, bowl: 3 };
 
     async function openLeaderboard() {
       $('#lbModal').classList.add('open');
@@ -2314,9 +2318,37 @@ p31,Sample Player,MI,bat,9.0,false
       syncModeTabs(state.sl.contests);
       renderLbTabs();
       renderLbPickers();
-      renderLeaderboard();
+      await renderLeaderboard();
+      maybeStartLbPolling();
     }
-    function closeLeaderboard() { $('#lbModal').classList.remove('open'); }
+    function closeLeaderboard() {
+      $('#lbModal').classList.remove('open');
+      stopLbPolling();
+    }
+
+    /**
+     * Daily XI scores are kept live by the 15-min cron scraper while a match is
+     * in_progress, so it's the only tab worth auto-refreshing — SL/private-league
+     * totals only change when an admin recomputes them. Self-stops once the match
+     * is no longer live or the modal is closed.
+     */
+    function maybeStartLbPolling() {
+      stopLbPolling();
+      if (lbState.tab !== 'daily') return;
+      const match = (state.matches || []).find(m => m.id === lbState.matchId);
+      if (!match || match.status !== 'in_progress') return;
+      lbState.pollTimer = setInterval(() => {
+        const m = (state.matches || []).find(mm => mm.id === lbState.matchId);
+        if (!$('#lbModal').classList.contains('open') || lbState.tab !== 'daily' || !m || m.status !== 'in_progress') {
+          stopLbPolling();
+          return;
+        }
+        renderLeaderboard({ silent: true });
+      }, 30000);
+    }
+    function stopLbPolling() {
+      if (lbState.pollTimer) { clearInterval(lbState.pollTimer); lbState.pollTimer = null; }
+    }
 
     /**
      * Build the tab pill row dynamically:
@@ -2366,11 +2398,12 @@ p31,Sample Player,MI,bat,9.0,false
 
       // Wire click handlers
       tabsRow.querySelectorAll('.lb-tab').forEach(t => {
-        t.addEventListener('click', () => {
+        t.addEventListener('click', async () => {
           lbState.tab = t.dataset.lbtab;
           renderLbTabs();
           renderLbPickers();
-          renderLeaderboard();
+          await renderLeaderboard();
+          maybeStartLbPolling();
         });
       });
     }
@@ -2397,18 +2430,138 @@ p31,Sample Player,MI,bat,9.0,false
       }
     }
 
-    async function renderLeaderboard() {
+    /** Renders the SL season-by-season detail panel (unchanged behaviour) into `cell`. */
+    async function loadSLDetailInto(cell, squadId, detailIdPrefix, el) {
+      cell.innerHTML = '<div style="padding:10px 8px;color:var(--muted);font-size:12px;">Loading…</div>';
+      try {
+        const season = await state.db.getSquadSeason(squadId);
+        if (!season.matches.length) {
+          cell.innerHTML = '<div style="padding:10px 8px;color:var(--muted);font-size:12px;">No scored matches yet.</div>';
+          return;
+        }
+        const penMap = {};
+        (season.transfers || []).forEach(t => {
+          penMap[t.match_id] = (penMap[t.match_id] || 0) + Number(t.points_deducted ?? 0);
+        });
+        let running = 0;
+        // Compute net + running totals in ascending order, then reverse for display
+        const matchRowData = [...season.matches]
+          .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0))
+          .map(m => {
+            const pen = penMap[m.match_id] || 0;
+            const net = m.xi_total - pen;
+            running  += net;
+            return { m, net, runningAtMatch: running };
+          });
+        const matchRows = [...matchRowData]
+          .reverse()
+          .map(({ m, net, runningAtMatch }) => {
+            const innerDetailId = detailIdPrefix + '_m' + (m.match_id || '').replace(/-/g, '');
+            const sortedPlayers = [...(m.players || [])].sort((a, b) => (ROLE_ORDER_LB[a.role] ?? 9) - (ROLE_ORDER_LB[b.role] ?? 9));
+            const playerRows = sortedPlayers.map(p => {
+              const badge = p.is_captain ? '<span class="cap-badge">C</span>' : p.is_vc ? '<span class="vc-badge">VC</span>' : '';
+              return `<tr>
+                <td style="padding:3px 8px;font-size:11px;">${escapeHtml(p.player_name)}${badge}</td>
+                <td style="padding:3px 8px;font-size:11px;color:var(--muted);">${p.team_id || '—'}</td>
+                <td style="padding:3px 8px;font-size:11px;text-align:right;color:var(--accent);">${Number(p.total_points).toFixed(1)}</td>
+              </tr>`;
+            }).join('');
+            return `
+              <tr class="sl-match-row" data-detail="${innerDetailId}" style="cursor:pointer;background:var(--panel-2);">
+                <td style="padding:5px 8px;font-size:12px;font-weight:600;">M${m.match_number ?? '?'} · ${m.home_team_id ?? '?'} vs ${m.away_team_id ?? '?'} <span style="font-size:10px;color:var(--muted);">▾</span></td>
+                <td style="padding:5px 8px;font-size:12px;text-align:right;">${net.toFixed(1)}</td>
+                <td style="padding:5px 8px;font-size:12px;text-align:right;color:var(--muted);">${runningAtMatch.toFixed(1)}</td>
+              </tr>
+              <tr id="${innerDetailId}" style="display:none;">
+                <td colspan="3" style="padding:0;">
+                  <table style="width:100%;border-collapse:collapse;">
+                    <thead><tr>
+                      <th style="padding:3px 8px;font-size:10px;color:var(--muted);text-align:left;background:var(--panel);">Player</th>
+                      <th style="padding:3px 8px;font-size:10px;color:var(--muted);background:var(--panel);">Team</th>
+                      <th style="padding:3px 8px;font-size:10px;color:var(--muted);text-align:right;background:var(--panel);">Pts</th>
+                    </tr></thead>
+                    <tbody>${playerRows}</tbody>
+                  </table>
+                </td>
+              </tr>`;
+          }).join('');
+        cell.innerHTML = `
+          <table style="width:100%;border-collapse:collapse;font-size:12px;border-top:1px solid var(--border);">
+            <thead><tr>
+              <th style="padding:5px 8px;text-align:left;color:var(--muted);font-size:10px;background:var(--panel-2);">Match</th>
+              <th style="padding:5px 8px;text-align:right;color:var(--muted);font-size:10px;background:var(--panel-2);">Net</th>
+              <th style="padding:5px 8px;text-align:right;color:var(--muted);font-size:10px;background:var(--panel-2);">Running</th>
+            </tr></thead>
+            <tbody>${matchRows}</tbody>
+          </table>`;
+        // Wire inner match expand/collapse
+        cell.querySelectorAll('.sl-match-row').forEach(mRow => {
+          mRow.addEventListener('click', () => {
+            const mid = el.querySelector('#' + mRow.dataset.detail);
+            if (!mid) return;
+            const open = mid.style.display !== 'none';
+            mid.style.display = open ? 'none' : '';
+            const c = mRow.querySelector('span[style*="▾"], span[style*="▴"]');
+            if (c) c.textContent = open ? '▾' : '▴';
+          });
+        });
+      } catch (e) {
+        cell.innerHTML = `<div style="padding:10px 8px;color:var(--bad);font-size:12px;">Failed: ${e.message}</div>`;
+      }
+    }
+
+    /**
+     * Renders the full 11-player breakdown for one Daily XI team into `cell`,
+     * with live per-player points (captain ×2 / VC ×1.5 already applied by
+     * db.getTeamMatchPlayers). Always re-fetches so re-opening or auto-refreshing
+     * during a live match shows the latest scraped totals.
+     */
+    async function loadDailyDetailInto(cell, teamId, matchId) {
+      cell.innerHTML = '<div style="padding:10px 8px;color:var(--muted);font-size:12px;">Loading…</div>';
+      try {
+        const detail = await state.db.getTeamMatchPlayers(teamId, matchId);
+        if (!detail.players.length) {
+          cell.innerHTML = '<div style="padding:10px 8px;color:var(--muted);font-size:12px;">No player data yet.</div>';
+          return;
+        }
+        const sortedPlayers = [...detail.players].sort((a, b) => (ROLE_ORDER_LB[a.role] ?? 9) - (ROLE_ORDER_LB[b.role] ?? 9));
+        const playerRows = sortedPlayers.map(p => {
+          const badge = p.is_captain ? '<span class="cap-badge">C</span>' : p.is_vc ? '<span class="vc-badge">VC</span>' : '';
+          const pts = p.total_points != null ? Number(p.total_points).toFixed(1) : '—';
+          return `<tr>
+            <td style="padding:3px 8px;font-size:11px;">${escapeHtml(p.name)}${badge}</td>
+            <td style="padding:3px 8px;font-size:11px;color:var(--muted);">${p.team_id || '—'}</td>
+            <td style="padding:3px 8px;font-size:11px;text-align:right;color:var(--accent);">${pts}</td>
+          </tr>`;
+        }).join('');
+        cell.innerHTML = `
+          <table style="width:100%;border-collapse:collapse;font-size:12px;border-top:1px solid var(--border);">
+            <thead><tr>
+              <th style="padding:5px 8px;text-align:left;color:var(--muted);font-size:10px;background:var(--panel-2);">Player</th>
+              <th style="padding:5px 8px;text-align:left;color:var(--muted);font-size:10px;background:var(--panel-2);">Team</th>
+              <th style="padding:5px 8px;text-align:right;color:var(--muted);font-size:10px;background:var(--panel-2);">Pts</th>
+            </tr></thead>
+            <tbody>${playerRows}</tbody>
+          </table>`;
+      } catch (e) {
+        cell.innerHTML = `<div style="padding:10px 8px;color:var(--bad);font-size:12px;">Failed: ${e.message}</div>`;
+      }
+    }
+
+    async function renderLeaderboard(opts = {}) {
+      const silent = !!opts.silent;
       const el = $('#lbContent');
       if (!state.db) { el.innerHTML = '<div class="lb-empty">Connect a database to view leaderboard.</div>'; return; }
-      el.innerHTML = '<div class="lb-empty">Loading…</div>';
+      if (!silent) el.innerHTML = '<div class="lb-empty">Loading…</div>';
       try {
         lbState.profiles = await state.db.getProfiles();
 
         let rows = [];
+        let dailyMatchId = null;
         if (lbState.tab === 'daily') {
-          const matchId = $('#lbMatchPicker').value;
-          if (!matchId) { el.innerHTML = '<div class="lb-empty">No completed matches yet.</div>'; return; }
-          rows = await state.db.getLeaderboardDaily(matchId);
+          dailyMatchId = $('#lbMatchPicker').value;
+          if (!dailyMatchId) { el.innerHTML = '<div class="lb-empty">No completed matches yet.</div>'; return; }
+          rows = await state.db.getLeaderboardDaily(dailyMatchId);
         } else {
           // lbState.tab holds the contest ID for all SL / private-league tabs
           const contestId = lbState.tab !== 'daily' ? lbState.tab : (state.sl?.seasonContest?.id ?? null);
@@ -2420,131 +2573,77 @@ p31,Sample Player,MI,bat,9.0,false
 
         const medals = ['🥇','🥈','🥉'];
         const isSL   = lbState.tab !== 'daily';
-        const roleOrder = { wk: 0, bat: 1, ar: 2, bowl: 3 };
 
         const tbody = rows.map((r, i) => {
-          const name     = lbState.profiles[r.userId] || 'Unknown';
-          const subLabel = isSL ? `${r.squadName} · ${r.matchCount} match${r.matchCount !== 1 ? 'es' : ''}` : r.teamName;
-          const rank     = medals[i] || `#${i + 1}`;
-          const pts      = r.totalPoints % 1 === 0 ? r.totalPoints : r.totalPoints.toFixed(1);
-          const detailId = isSL ? `lb_detail_${r.squadId?.replace(/-/g,'') ?? i}` : '';
-          const mainRow  = `<tr class="${isSL ? 'lb-expandable' : ''}" data-squad="${r.squadId || ''}" data-detail="${detailId}" style="${isSL ? 'cursor:pointer;' : ''}">
+          const name      = lbState.profiles[r.userId] || 'Unknown';
+          const subLabel  = isSL ? `${r.squadName} · ${r.matchCount} match${r.matchCount !== 1 ? 'es' : ''}` : r.teamName;
+          const rank      = medals[i] || `#${i + 1}`;
+          const pts       = r.totalPoints % 1 === 0 ? r.totalPoints : r.totalPoints.toFixed(1);
+          const entityId  = isSL ? r.squadId : r.teamId;
+          const entityKey = (isSL ? 'sl_' : 'daily_') + (entityId || i);
+          const detailId  = `lb_detail_${entityKey.replace(/[^a-zA-Z0-9]/g, '')}`;
+          const mainRow   = `<tr class="lb-expandable" data-kind="${isSL ? 'sl' : 'daily'}" data-entity="${entityId || ''}" data-key="${entityKey}" data-detail="${detailId}" style="cursor:pointer;">
             <td class="lb-rank">${rank}</td>
-            <td><div class="lb-name">${escapeHtml(name)} ${isSL ? '<span style="font-size:10px;color:var(--muted);">▾</span>' : ''}</div><div class="lb-sub">${escapeHtml(subLabel)}</div></td>
+            <td><div class="lb-name">${escapeHtml(name)} <span style="font-size:10px;color:var(--muted);">▾</span></div><div class="lb-sub">${escapeHtml(subLabel)}</div></td>
             <td class="r">${pts}</td>
           </tr>`;
-          const detailRow = isSL ? `<tr id="${detailId}" style="display:none;"><td colspan="3" style="padding:0;"></td></tr>` : '';
+          const detailRow  = `<tr id="${detailId}" style="display:none;"><td colspan="3" style="padding:0;"></td></tr>`;
           return mainRow + detailRow;
         }).join('');
 
         el.innerHTML = `<table class="lb-table">
           <thead><tr>
             <th style="width:36px">#</th>
-            <th>Player${isSL ? ' <span style="font-size:9px;color:var(--muted);font-weight:400;">(tap to expand)</span>' : ''}</th>
+            <th>Player <span style="font-size:9px;color:var(--muted);font-weight:400;">(tap to expand)</span></th>
             <th class="r">Pts</th>
           </tr></thead>
           <tbody>${tbody}</tbody>
         </table>`;
 
-        // Wire SL expand/collapse
-        if (isSL) {
-          el.querySelectorAll('.lb-expandable').forEach(row => {
-            row.addEventListener('click', async () => {
-              const detailId  = row.dataset.detail;
-              const squadId   = row.dataset.squad;
-              const detailRow = el.querySelector('#' + detailId);
-              if (!detailRow) return;
-              const isOpen = detailRow.style.display !== 'none';
-              // Toggle caret
-              const caret = row.querySelector('span[style*="▾"], span[style*="▴"]');
-              if (isOpen) {
-                detailRow.style.display = 'none';
-                if (caret) caret.textContent = '▾';
-                return;
-              }
-              if (caret) caret.textContent = '▴';
-              detailRow.style.display = '';
-              const cell = detailRow.querySelector('td');
-              // If already loaded, just show
-              if (cell.innerHTML.trim()) return;
-              cell.innerHTML = '<div style="padding:10px 8px;color:var(--muted);font-size:12px;">Loading…</div>';
-              try {
-                const season = await state.db.getSquadSeason(squadId);
-                if (!season.matches.length) {
-                  cell.innerHTML = '<div style="padding:10px 8px;color:var(--muted);font-size:12px;">No scored matches yet.</div>';
-                  return;
-                }
-                const penMap = {};
-                (season.transfers || []).forEach(t => {
-                  penMap[t.match_id] = (penMap[t.match_id] || 0) + Number(t.points_deducted ?? 0);
-                });
-                let running = 0;
-                // Compute net + running totals in ascending order, then reverse for display
-                const matchRowData = [...season.matches]
-                  .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0))
-                  .map(m => {
-                    const pen = penMap[m.match_id] || 0;
-                    const net = m.xi_total - pen;
-                    running  += net;
-                    return { m, net, runningAtMatch: running };
-                  });
-                const matchRows = [...matchRowData]
-                  .reverse()
-                  .map(({ m, net, runningAtMatch }) => {
-                    const innerDetailId = detailId + '_m' + (m.match_id || '').replace(/-/g, '');
-                    const sortedPlayers = [...(m.players || [])].sort((a, b) => (roleOrder[a.role] ?? 9) - (roleOrder[b.role] ?? 9));
-                    const playerRows = sortedPlayers.map(p => {
-                      const badge = p.is_captain ? '<span class="cap-badge">C</span>' : p.is_vc ? '<span class="vc-badge">VC</span>' : '';
-                      return `<tr>
-                        <td style="padding:3px 8px;font-size:11px;">${escapeHtml(p.player_name)}${badge}</td>
-                        <td style="padding:3px 8px;font-size:11px;color:var(--muted);">${p.team_id || '—'}</td>
-                        <td style="padding:3px 8px;font-size:11px;text-align:right;color:var(--accent);">${Number(p.total_points).toFixed(1)}</td>
-                      </tr>`;
-                    }).join('');
-                    return `
-                      <tr class="sl-match-row" data-detail="${innerDetailId}" style="cursor:pointer;background:var(--panel-2);">
-                        <td style="padding:5px 8px;font-size:12px;font-weight:600;">M${m.match_number ?? '?'} · ${m.home_team_id ?? '?'} vs ${m.away_team_id ?? '?'} <span style="font-size:10px;color:var(--muted);">▾</span></td>
-                        <td style="padding:5px 8px;font-size:12px;text-align:right;">${net.toFixed(1)}</td>
-                        <td style="padding:5px 8px;font-size:12px;text-align:right;color:var(--muted);">${runningAtMatch.toFixed(1)}</td>
-                      </tr>
-                      <tr id="${innerDetailId}" style="display:none;">
-                        <td colspan="3" style="padding:0;">
-                          <table style="width:100%;border-collapse:collapse;">
-                            <thead><tr>
-                              <th style="padding:3px 8px;font-size:10px;color:var(--muted);text-align:left;background:var(--panel);">Player</th>
-                              <th style="padding:3px 8px;font-size:10px;color:var(--muted);background:var(--panel);">Team</th>
-                              <th style="padding:3px 8px;font-size:10px;color:var(--muted);text-align:right;background:var(--panel);">Pts</th>
-                            </tr></thead>
-                            <tbody>${playerRows}</tbody>
-                          </table>
-                        </td>
-                      </tr>`;
-                  }).join('');
-                cell.innerHTML = `
-                  <table style="width:100%;border-collapse:collapse;font-size:12px;border-top:1px solid var(--border);">
-                    <thead><tr>
-                      <th style="padding:5px 8px;text-align:left;color:var(--muted);font-size:10px;background:var(--panel-2);">Match</th>
-                      <th style="padding:5px 8px;text-align:right;color:var(--muted);font-size:10px;background:var(--panel-2);">Net</th>
-                      <th style="padding:5px 8px;text-align:right;color:var(--muted);font-size:10px;background:var(--panel-2);">Running</th>
-                    </tr></thead>
-                    <tbody>${matchRows}</tbody>
-                  </table>`;
-                // Wire inner match expand/collapse
-                cell.querySelectorAll('.sl-match-row').forEach(mRow => {
-                  mRow.addEventListener('click', () => {
-                    const mid = el.querySelector('#' + mRow.dataset.detail);
-                    if (!mid) return;
-                    const open = mid.style.display !== 'none';
-                    mid.style.display = open ? 'none' : '';
-                    const c = mRow.querySelector('span[style*="▾"], span[style*="▴"]');
-                    if (c) c.textContent = open ? '▾' : '▴';
-                  });
-                });
-              } catch (e) {
-                cell.innerHTML = `<div style="padding:10px 8px;color:var(--bad);font-size:12px;">Failed: ${e.message}</div>`;
-              }
-            });
+        // Wire expand/collapse for both SL and Daily rows.
+        const expandRows = el.querySelectorAll('.lb-expandable');
+        expandRows.forEach(row => {
+          row.addEventListener('click', async () => {
+            const key       = row.dataset.key;
+            const isOpen    = lbState.expandedKeys.has(key);
+            const detailRow = el.querySelector('#' + row.dataset.detail);
+            if (!detailRow) return;
+            const caret = row.querySelector('span[style*="▾"], span[style*="▴"]');
+            if (isOpen) {
+              lbState.expandedKeys.delete(key);
+              detailRow.style.display = 'none';
+              if (caret) caret.textContent = '▾';
+              return;
+            }
+            lbState.expandedKeys.add(key);
+            if (caret) caret.textContent = '▴';
+            detailRow.style.display = '';
+            const cell = detailRow.querySelector('td');
+            if (row.dataset.kind === 'sl') {
+              await loadSLDetailInto(cell, row.dataset.entity, row.dataset.detail, el);
+            } else {
+              await loadDailyDetailInto(cell, row.dataset.entity, dailyMatchId);
+            }
           });
+        });
+
+        // Re-open + refresh any rows the user had expanded before this render
+        // (e.g. on the 30s live-refresh poll), so the detail panel keeps showing
+        // up-to-date per-player points without the user losing their place.
+        for (const row of expandRows) {
+          const key = row.dataset.key;
+          if (!lbState.expandedKeys.has(key)) continue;
+          const detailRow = el.querySelector('#' + row.dataset.detail);
+          if (!detailRow) continue;
+          detailRow.style.display = '';
+          const caret = row.querySelector('span[style*="▾"], span[style*="▴"]');
+          if (caret) caret.textContent = '▴';
+          const cell = detailRow.querySelector('td');
+          if (row.dataset.kind === 'sl') {
+            await loadSLDetailInto(cell, row.dataset.entity, row.dataset.detail, el);
+          } else {
+            await loadDailyDetailInto(cell, row.dataset.entity, dailyMatchId);
+          }
         }
       } catch (e) {
         el.innerHTML = `<div class="lb-empty">Failed to load: ${e.message}</div>`;
@@ -10268,9 +10367,10 @@ p31,Sample Player,MI,bat,9.0,false
     $('#lbModal').addEventListener('click', e => { if (e.target.id === 'lbModal') closeLeaderboard(); });
     // Note: .lb-tab click handlers are wired dynamically inside renderLbTabs()
     // because tabs are rebuilt each time the leaderboard opens (private leagues vary per user).
-    $('#lbMatchPicker').addEventListener('change', e => {
+    $('#lbMatchPicker').addEventListener('change', async e => {
       lbState.matchId = e.target.value;
-      renderLeaderboard();
+      await renderLeaderboard();
+      maybeStartLbPolling();
     });
 
     // ─── Page-level tabs (Contest / My Team / Season) ────────────────────────

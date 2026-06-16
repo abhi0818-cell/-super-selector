@@ -1553,41 +1553,64 @@ export function createDb(cfg = {}) {
     },
 
     /**
-     * Fetch players + stats for one daily team in one match.
-     * Returns { captainId, viceCaptainId, players: [{player_id, name, role, raw_points, batting, bowling, fielding}] }
+     * Fetch full XI + live stats for one daily team in one match — powers the
+     * "Full view" expand row on the Contest tab leaderboard.
+     * Returns {
+     *   teamId, teamName, captainId, viceCaptainId, totalPoints,
+     *   players: [{ player_id, name, role, team_id, raw_points, batting, bowling,
+     *               fielding, is_captain, is_vc, multiplier, total_points }]
+     * }
+     * total_points already has the captain (x2) / vice-captain (x1.5) multiplier
+     * applied, matching the scoring logic used by computeAndSaveXIScoresForMatch
+     * (client) and scoreDailyTeamsForMatch (cron Edge Function).
      */
     async getTeamMatchPlayers(teamId, matchId) {
       const sb = await getClient();
       const [{ data: team }, { data: tp }] = await Promise.all([
-        sb.from('user_teams').select('captain_id, vice_captain_id').eq('id', teamId).single(),
+        sb.from('user_teams').select('name, captain_id, vice_captain_id').eq('id', teamId).single(),
         sb.from('user_team_players').select('player_id').eq('user_team_id', teamId),
       ]);
       const pids = (tp || []).map(r => r.player_id);
-      if (!pids.length) return { captainId: null, viceCaptainId: null, players: [] };
+      const base = {
+        teamId       : teamId,
+        teamName     : team?.name ?? '',
+        captainId    : team?.captain_id     ?? null,
+        viceCaptainId: team?.vice_captain_id ?? null,
+      };
+      if (!pids.length) return { ...base, totalPoints: 0, players: [] };
       const [{ data: players }, { data: stats }] = await Promise.all([
-        sb.from('players').select('id, name, role').in('id', pids),
+        sb.from('players').select('id, name, role, team_id').in('id', pids),
         sb.from('player_match_stats').select('player_id, raw_points, batting, bowling, fielding')
           .eq('match_id', matchId).in('player_id', pids),
       ]);
       const playerMap = Object.fromEntries((players || []).map(p => [p.id, p]));
       const statsMap  = Object.fromEntries((stats  || []).map(s => [s.player_id, s]));
-      return {
-        captainId    : team?.captain_id     ?? null,
-        viceCaptainId: team?.vice_captain_id ?? null,
-        players: pids.map(pid => {
-          const p = playerMap[pid] || {};
-          const s = statsMap[pid]  || {};
-          return {
-            player_id : pid,
-            name      : p.name || pid,
-            role      : p.role || '',
-            raw_points: s.raw_points ?? null,
-            batting   : s.batting   ?? null,
-            bowling   : s.bowling   ?? null,
-            fielding  : s.fielding  ?? null,
-          };
-        }),
-      };
+      let totalPoints = 0;
+      const playerRows = pids.map(pid => {
+        const p = playerMap[pid] || {};
+        const s = statsMap[pid]  || {};
+        const isCaptain = pid === base.captainId;
+        const isVc      = pid === base.viceCaptainId;
+        const raw        = s.raw_points != null ? Number(s.raw_points) : null;
+        const multiplier = isCaptain ? 2 : isVc ? 1.5 : 1;
+        const totalPts   = raw != null ? Math.round(raw * multiplier * 10) / 10 : null;
+        if (totalPts != null) totalPoints += totalPts;
+        return {
+          player_id   : pid,
+          name        : p.name || pid,
+          role        : p.role || '',
+          team_id     : p.team_id ?? null,
+          raw_points  : raw,
+          batting     : s.batting   ?? null,
+          bowling     : s.bowling   ?? null,
+          fielding    : s.fielding  ?? null,
+          is_captain  : isCaptain,
+          is_vc       : isVc,
+          multiplier,
+          total_points: totalPts,
+        };
+      });
+      return { ...base, totalPoints: Math.round(totalPoints * 10) / 10, players: playerRows };
     },
 
     /**
