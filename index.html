@@ -1632,6 +1632,8 @@
               <th class="col-team">Away</th>
               <th class="col-role">Format</th>
               <th>Start (local)</th>
+              <th>Type</th>
+              <th>Source</th>
               <th>Status</th>
               <th>Lock Time</th>
               <th class="col-actions"></th>
@@ -6920,7 +6922,12 @@ p31,Sample Player,MI,bat,9.0,false
       // scrape-scorecard's cron keeps these tournaments' player_match_stats fresh
       // on its own schedule — no CricAPI key needed or used here, ever.
       const matchTournament    = state.tournaments?.find(t => t.id === localMatch?.tournament_id);
-      const isScraperTournament = !!matchTournament?.scraper_enabled;
+      // Mirrors scrape-scorecard/poll-cricapi's eligibility logic: a per-match
+      // data_source override ('scraper'/'cricapi') wins over the tournament
+      // default; 'auto' (or unset) falls back to scraper_enabled.
+      const matchDataSource    = localMatch?.data_source || 'auto';
+      const isScraperTournament = matchDataSource === 'scraper'
+        || (matchDataSource === 'auto' && !!matchTournament?.scraper_enabled);
       if (localMatch && state.db && isScraperTournament) {
         connectLiveViaScraper(localMatch);
         return;
@@ -8258,6 +8265,11 @@ p31,Sample Player,MI,bat,9.0,false
             <option value="semi_final">SF</option>
             <option value="final">Final</option>
           </select></td>
+          <td><select data-f="data_source" style="font-size:11px;">
+            <option value="auto" selected>Auto</option>
+            <option value="cricapi">CricAPI</option>
+            <option value="scraper">Scraper</option>
+          </select></td>
           <td><input data-f="lock_time" type="datetime-local" /></td>
           <td class="col-actions"><button class="row-add" id="addMatchBtn" title="Add">+</button></td>
         </tr>
@@ -8296,6 +8308,12 @@ p31,Sample Player,MI,bat,9.0,false
             <option value="semi_final"  ${m.match_type==='semi_final'?'selected':''}>SF</option>
             <option value="final"       ${m.match_type==='final'?'selected':''}>Final</option>
           </select></td>
+          <td><select data-f="data_source" style="font-size:11px;"
+              title="Force this match onto a specific data source, overriding the tournament's default. Auto = inherit the tournament's Scraper Enabled setting.">
+            <option value="auto"    ${(!m.data_source||m.data_source==='auto')?'selected':''}>Auto</option>
+            <option value="cricapi" ${m.data_source==='cricapi'?'selected':''}>CricAPI</option>
+            <option value="scraper" ${m.data_source==='scraper'?'selected':''}>Scraper</option>
+          </select></td>
           <td style="white-space:nowrap;">
             ${(() => {
               const isDelayed = m.status === 'delayed';
@@ -8326,7 +8344,11 @@ p31,Sample Player,MI,bat,9.0,false
               const isInPlay    = isPastStart && m.status !== 'completed' && m.status !== 'delayed';
               const isFinished  = m.status === 'completed';
               const matchTournament = state.tournaments?.find(t => t.id === m.tournament_id);
-              const isCricApiDriven = m.external_id && !matchTournament?.scraper_enabled;
+              // Mirrors the eligibility logic in poll-cricapi/index.ts: a per-match
+              // data_source override ('cricapi'/'scraper') wins over the tournament
+              // default; 'auto' (or unset) falls back to scraper_enabled.
+              const src = m.data_source || 'auto';
+              const isCricApiDriven = m.external_id && (src === 'cricapi' || (src !== 'scraper' && !matchTournament?.scraper_enabled));
               return `
                 ${(isFinished || isInPlay) && m.external_id
                   ? `<button class="row-finalize" data-act="finalize" title="Fetch scorecard &amp; save fantasy points">Finalize</button>
@@ -8542,6 +8564,7 @@ p31,Sample Player,MI,bat,9.0,false
       const playedOn = startTime ? startTime.slice(0, 10) : null;
       const status    = row.querySelector('[data-f="status"]').value;
       const matchType = row.querySelector('[data-f="match_type"]')?.value || null;
+      const dataSource = row.querySelector('[data-f="data_source"]')?.value || 'auto';
       const lockTime  = localInputToIso(row.querySelector('[data-f="lock_time"]').value) || null;
       if (home === away) { toast('Home and away teams must differ.'); return; }
       try {
@@ -8549,7 +8572,7 @@ p31,Sample Player,MI,bat,9.0,false
           const m = await state.db.addMatch({
             tournamentId: state.activeTournamentId,
             matchNumber, format, homeTeamId: home, awayTeamId: away,
-            playedOn, startTime, lockTime, status, matchType,
+            playedOn, startTime, lockTime, status, matchType, dataSource,
           });
           state.matches.push(m);
         } else {
@@ -8572,6 +8595,7 @@ p31,Sample Player,MI,bat,9.0,false
       // Fall back to the current status stored in state to avoid overwriting it.
       const statusEl      = tr.querySelector('[data-f="status"]');
       const matchTypeEl   = tr.querySelector('[data-f="match_type"]');
+      const dataSourceEl  = tr.querySelector('[data-f="data_source"]');
       const currentStatus = state.matches.find(m => m.id === id)?.status ?? 'scheduled';
       const patch = {
         matchNumber: parseInt(tr.querySelector('[data-f="match_number"]').value, 10),
@@ -8579,6 +8603,7 @@ p31,Sample Player,MI,bat,9.0,false
         awayTeamId : tr.querySelector('[data-f="away_team_id"]').value || null,
         format     : tr.querySelector('[data-f="format"]').value,
         matchType  : matchTypeEl ? (matchTypeEl.value || null) : undefined,
+        dataSource : dataSourceEl ? (dataSourceEl.value || 'auto') : undefined,
         startTime  : startTime,
         playedOn   : startTime ? startTime.slice(0, 10) : null,
         lockTime   : lockTime,

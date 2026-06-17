@@ -1136,6 +1136,7 @@ export function createDb(cfg = {}) {
         match_type   : input.matchType  ?? null,
         notes        : input.notes      ?? null,
         external_id  : input.externalId ?? null,
+        data_source  : input.dataSource ?? 'auto',
       };
       const { data, error } = await sb.from('matches').insert(row).select().single();
       if (error) throw error;
@@ -1157,6 +1158,7 @@ export function createDb(cfg = {}) {
       if (patch.matchType    !== undefined) row.match_type    = patch.matchType ?? null;
       if (patch.notes        !== undefined) row.notes         = patch.notes;
       if (patch.externalId   !== undefined) row.external_id   = patch.externalId;
+      if (patch.dataSource   !== undefined) row.data_source   = patch.dataSource ?? 'auto';
       const { data, error } = await sb.from('matches').update(row).eq('id', id).select().single();
       if (error) throw error;
       return data;

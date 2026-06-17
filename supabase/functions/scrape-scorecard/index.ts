@@ -667,7 +667,7 @@ Deno.serve(async (req: Request) => {
     let query = sb
       .from('matches')
       .select(`
-        id, match_number, match_type, format, status, scorecard_url, tournament_id, start_time,
+        id, match_number, match_type, format, status, scorecard_url, tournament_id, start_time, data_source,
         home_team:teams!home_team_id(id, name),
         away_team:teams!away_team_id(id, name),
         tournament:tournaments!tournament_id(id, name, scraper_enabled, scoring_rules)
@@ -675,21 +675,32 @@ Deno.serve(async (req: Request) => {
       .lte('start_time', now)
       .not('status', 'in', '("completed","delayed")')
 
-    if (matchId) {
-      query = query.eq('id', matchId)
-    } else {
-      // When called by cron, only process scraper-enabled tournaments
-      query = query.eq('tournaments.scraper_enabled', true)
-    }
+    if (matchId) query = query.eq('id', matchId)
 
+    // No DB-level scraper_enabled filter here — mirrors poll-cricapi's
+    // reasoning: eligibility also depends on matches.data_source (a per-match
+    // override), which can't be expressed as one PostgREST filter alongside
+    // the joined tournament flag. Filtered in JS below instead.
     const { data: matches, error: mErr } = await query
     if (mErr) throw mErr
 
-    // Manual scrapes (matchId provided) bypass the scraper_enabled gate —
-    // the admin is explicitly asking to scrape this match.
-    const liveMatches = (matches ?? []).filter(
-      (m: any) => matchId ? true : m.tournament?.scraper_enabled === true,
-    )
+    // Manual scrapes (matchId provided) bypass all source gating — the admin
+    // is explicitly asking to scrape this match regardless of its tournament
+    // default or its own data_source override.
+    //
+    // Otherwise (cron call): data_source='scraper' forces this match onto the
+    // scraper even if its tournament defaults to CricAPI; data_source=
+    // 'cricapi' forces it away from the scraper even if the tournament
+    // defaults here (poll-cricapi's cron owns it instead); data_source='auto'
+    // (or unset) falls back to the tournament-wide scraper_enabled flag, same
+    // behaviour as before this override existed.
+    const liveMatches = (matches ?? []).filter((m: any) => {
+      if (matchId) return true
+      const src = m.data_source || 'auto'
+      if (src === 'cricapi') return false
+      if (src === 'scraper') return true
+      return m.tournament?.scraper_enabled === true
+    })
 
     if (!liveMatches.length) {
       return new Response(
