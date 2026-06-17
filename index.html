@@ -368,11 +368,10 @@
     .admin-table .col-color input { padding: 0; height: 24px; }
     .admin-table .col-color2 { width: 80px; }
     .admin-table .col-color2 input { padding: 0; height: 24px; }
-    /* Schedule (matches) tab — Home/Away team codes can be longer than the IPL
-       3-4 letter codes the generic .col-team width was sized for, so give this
-       table's team columns more breathing room. */
-    #adminMatchesTable .col-team { width: 240px; }
-    #adminMatchesTable .col-team select { font-size: 12px; }
+    /* Schedule (matches) tab — Home/Away now show the full team name, which
+       needs much more room than the generic 3-4 letter .col-team width. */
+    #adminMatchesTable .col-team { width: 320px; }
+    #adminMatchesTable .col-team select { font-size: 12px; width: 100%; text-overflow: ellipsis; }
     .admin-toolbar { display: flex; gap: 8px; padding: 0 12px 10px; align-items: center; }
     .admin-toolbar input.admin-search-inp { flex: 1; }
     .admin-toolbar button { font-size: 12px; padding: 6px 12px; }
@@ -1625,7 +1624,7 @@
           <span id="syncStatus" style="font-size:11px; color:var(--muted);">Sync pulls schedules + start times. Finalize fetches scorecards for completed matches and saves fantasy points.</span>
         </div>
         <div style="overflow-x:auto;">
-        <table class="admin-table" id="adminMatchesTable" style="min-width:880px;">
+        <table class="admin-table" id="adminMatchesTable" style="min-width:1300px;">
           <thead>
             <tr>
               <th class="col-id">#</th>
@@ -8207,12 +8206,15 @@ p31,Sample Player,MI,bat,9.0,false
 
     function renderMatchesAdmin() {
       const matches = [...state.matches].sort((a,b) => (a.match_number||0) - (b.match_number||0));
-      const teamOpts = teamCodes().map(t => `<option value="${t}">${t}</option>`).join('');
+      // Show the full team name in the dropdown (code stays the underlying value) —
+      // codes alone aren't always readable, especially for custom/international teams.
+      const teamLabel = t => { const tm = teamByCode(t); return tm?.name ? `${tm.name} (${t})` : t; };
+      const teamOpts = teamCodes().map(t => `<option value="${t}">${escapeHtml(teamLabel(t))}</option>`).join('');
       // Include a placeholder when the field is unset (NULL home/away from sync).
       const teamOptsFor = sel => {
         const isNull = sel == null || sel === '';
         const placeholder = `<option value="" ${isNull?'selected':''}>—</option>`;
-        return placeholder + teamCodes().map(t => `<option value="${t}" ${t===sel?'selected':''}>${t}</option>`).join('');
+        return placeholder + teamCodes().map(t => `<option value="${t}" ${t===sel?'selected':''}>${escapeHtml(teamLabel(t))}</option>`).join('');
       };
 
       // Convert ISO/Z UTC string → datetime-local input value (YYYY-MM-DDTHH:MM in LOCAL tz)
