@@ -390,7 +390,17 @@ async function fetchScorecard(externalId: string): Promise<any> {
   let lastErr: Error | null = null
   for (const key of CRICAPI_KEYS) {
     try {
-      const res = await fetch(`https://api.cricapi.com/v1/match_scorecard?apikey=${encodeURIComponent(key)}&id=${encodeURIComponent(externalId)}`)
+      // CricAPI (or a WAF in front of it) appears to reset bare server-to-server
+      // requests with no User-Agent/Accept headers — confirmed the same key/id
+      // works fine from a regular browser but gets "Connection reset by peer"
+      // from this Edge Function. Send browser-like headers to rule that out
+      // before assuming it's a hard IP-range block on Supabase's egress.
+      const res = await fetch(`https://api.cricapi.com/v1/match_scorecard?apikey=${encodeURIComponent(key)}&id=${encodeURIComponent(externalId)}`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept': 'application/json, text/plain, */*',
+        },
+      })
       const json = await res.json().catch(() => null)
       if (!res.ok) {
         const msg = json?.message || `HTTP ${res.status}`
