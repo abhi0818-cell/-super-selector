@@ -9970,6 +9970,11 @@ p31,Sample Player,MI,bat,9.0,false
     function renderBatRow(b) {
       const apiName = b.batsman?.name || b.batsman || b.name || b.player?.name || 'Unknown';
       const local = findLocalByName(apiName);
+      // CricAPI's own feed sometimes sends a broken placeholder (e.g. literally
+      // "Player Not Found") as the player's name. findLocalByName() already
+      // resolves through NAME_ALIASES, so once an admin has linked that name,
+      // show the resolved local player's real name instead of CricAPI's text.
+      const displayName = local ? local.name : apiName;
       const inXi = local && state.selected.includes(local.id);
       const runs  = b.r ?? b.runs ?? 0;
       const balls = b.b ?? b.balls ?? 0;
@@ -9980,7 +9985,7 @@ p31,Sample Player,MI,bat,9.0,false
       const showDismissal = dismissalText && dismissalText !== 'not out';
       return `
         <tr class="${inXi?'mine':''}">
-          <td class="name">${escapeHtml(apiName)}${showDismissal ? `<div class="dismissal">${escapeHtml(dismissalText)}</div>` : ''}</td>
+          <td class="name">${escapeHtml(displayName)}${showDismissal ? `<div class="dismissal">${escapeHtml(dismissalText)}</div>` : ''}</td>
           <td>${runs}</td><td>${balls}</td><td>${fours}</td><td>${sixes}</td><td>${sr}</td>
         </tr>
       `;
@@ -9989,6 +9994,9 @@ p31,Sample Player,MI,bat,9.0,false
     function renderBowlRow(b) {
       const apiName = b.bowler?.name || b.bowler || b.name || b.player?.name || 'Unknown';
       const local = findLocalByName(apiName);
+      // Same fallback as renderBatRow — prefer the resolved/aliased local name
+      // over whatever raw (possibly broken) name CricAPI sent.
+      const displayName = local ? local.name : apiName;
       const inXi = local && state.selected.includes(local.id);
       const o = b.o ?? b.overs ?? 0;
       const m = b.m ?? b.maidens ?? 0;
@@ -9999,7 +10007,7 @@ p31,Sample Player,MI,bat,9.0,false
       const econ = balls ? ((r / balls) * 6).toFixed(2) : '–';
       return `
         <tr class="${inXi?'mine':''}">
-          <td class="name">${escapeHtml(apiName)}</td>
+          <td class="name">${escapeHtml(displayName)}</td>
           <td>${o}</td><td>${m}</td><td>${r}</td><td>${w}</td><td>${econ}</td>
         </tr>
       `;
