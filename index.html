@@ -5269,6 +5269,47 @@ p31,Sample Player,MI,bat,9.0,false
       if (anyUpdated) state.sl.seasonData = null;
     }
 
+    /**
+     * Write current in-memory state.stats scores to user_team_match_scores for
+     * every Daily team locked into this match. Mirrors persistLiveSlScores()
+     * but for Daily teams instead of Season Long squads — called from the live
+     * poller onUpdate so the History/Daily tab shows live points without
+     * waiting for Finalize.
+     *
+     * Uses the same flat captain 2x / vice-captain 1.5x multiplier as
+     * computeAndSaveXIScoresForMatch (Daily teams don't support boosters).
+     * Only fires while a connected browser is actively polling this match in
+     * Daily mode — same caveat as the SL counterpart.
+     */
+    async function persistLiveDailyScores(liveMatchId) {
+      if (!state.db || !liveMatchId) return;
+
+      // Score ALL daily teams for this match, not just the current user's —
+      // keeps History/leaderboard live for everyone while any user is watching.
+      let teams;
+      try { teams = await state.db.getAllDailyTeamsForMatch(liveMatchId); }
+      catch (e) { console.warn('[Daily live] getAllDailyTeamsForMatch failed:', e.message); return; }
+      if (!teams.length) return;
+
+      const scores = teams.map(t => {
+        let total = 0;
+        for (const pid of t.playerIds) {
+          const p = PLAYERS.find(x => x.id === pid); if (!p) continue;
+          const stats  = state.stats[pid] || {};
+          const result = calculateScore({ name: p.name, role: p.role, captaincy: 'normal', is_overseas: !!p.is_overseas, ...stats }, state.format);
+          const mult   = pid === t.captainId      ? XI_MULTIPLIERS.captain
+                       : pid === t.viceCaptainId  ? XI_MULTIPLIERS.vice_captain
+                       : XI_MULTIPLIERS.normal;
+          total += result.rawPoints * mult;
+        }
+        return { userTeamId: t.id, totalPoints: Math.round(total * 10) / 10 };
+      }).filter(s => Number.isFinite(s.totalPoints));
+      if (!scores.length) return;
+
+      try { await state.db.upsertUserTeamMatchScores(liveMatchId, scores); }
+      catch (e) { console.warn('[Daily live] upsertUserTeamMatchScores failed:', e.message); }
+    }
+
     // ─── DAILY LIVE SCORE TAB ───────────────────────────────────────────────
 
     /**
@@ -7029,7 +7070,12 @@ p31,Sample Player,MI,bat,9.0,false
             .map(p => p.name);
           console.log('[live]', { matched, unmatchedFromAPI: unmatched, xiWithoutLiveData: xiWithoutData });
           render();
-          if (state.activeDailyTab === 'live' && state.mode === 'daily') renderDailyLiveTab();
+          if (state.mode === 'daily') {
+            if (state.activeDailyTab === 'live') renderDailyLiveTab();
+            // Persist live scores so History/Daily tab stays current during the match
+            const lmIdDaily = state.matches.find(m => m.external_id === id)?.id;
+            if (lmIdDaily) persistLiveDailyScores(lmIdDaily).catch(() => {});
+          }
           if (state.mode === 'season_long') {
             renderSlXiTab(); renderSlLiveTab();
             // Persist live scores so Season tab stays current during the match
