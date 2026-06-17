@@ -546,17 +546,27 @@ Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS })
 
   try {
-    const body    = await req.json().catch(() => ({})) as { matchId?: string }
-    const matchId = body.matchId ?? null
-    const now     = new Date().toISOString()
+    const body     = await req.json().catch(() => ({})) as { matchId?: string }
+    const matchId  = body.matchId ?? null
+    const nowDate  = new Date()
+    const now      = nowDate.toISOString()
+
+    // Cron calls only consider matches whose start_time is at least 30
+    // minutes in the past — the scraper (running every 15 min, gated to
+    // start_time+5min) owns the early part of the match; CricAPI joins in
+    // as the slower cross-check once things have settled. Manual "Poll Now"
+    // (matchId provided) is unaffected — the admin is explicitly asking
+    // right now, regardless of how recently the match started.
+    const cutoff = matchId ? now : new Date(nowDate.getTime() - 30 * 60 * 1000).toISOString()
 
     let query = sb
       .from('matches')
       .select(`
         id, match_number, format, status, external_id, tournament_id, start_time, data_source,
+        progress_innings, progress_balls,
         tournament:tournaments!tournament_id(id, name, scraper_enabled, scoring_rules)
       `)
-      .lte('start_time', now)
+      .lte('start_time', cutoff)
       .not('status', 'in', '("completed","delayed")')
       .not('external_id', 'is', null)
 
@@ -621,6 +631,26 @@ Deno.serve(async (req: Request) => {
 
       if (stage === 'upcoming') {
         results.push({ matchId: match.id, status: 'upcoming' })
+        continue
+      }
+
+      // ── 1b. Staleness guard ───────────────────────────────────────────
+      // Mirrors scrape-scorecard's guard: compare this read's progress
+      // against the furthest progress seen so far for this match (across
+      // either source). If this read is BEHIND that, it's almost certainly
+      // a stale/cached payload — skip the write (including the status
+      // flip below) entirely rather than regressing good data.
+      const dataForProgress = (payload as any)?.data ?? payload ?? {}
+      const inningsArr: any[] = dataForProgress.scorecard ?? dataForProgress.innings ?? dataForProgress.scores ?? []
+      const lastInnEntry = Array.isArray(inningsArr) ? inningsArr[inningsArr.length - 1] : null
+      const lastOvers = Number(lastInnEntry?.o ?? 0) || 0
+      const newProgress    = { innings: Array.isArray(inningsArr) ? inningsArr.length : 0, balls: Math.floor(lastOvers) * 6 + Math.round((lastOvers % 1) * 10) }
+      const storedProgress = { innings: (match as any).progress_innings ?? 0, balls: (match as any).progress_balls ?? 0 }
+      const isStale = newProgress.innings < storedProgress.innings
+        || (newProgress.innings === storedProgress.innings && newProgress.balls < storedProgress.balls)
+
+      if (isStale) {
+        results.push({ matchId: match.id, status: 'stale_skipped', stage, read: newProgress, stored: storedProgress })
         continue
       }
 
@@ -717,6 +747,13 @@ Deno.serve(async (req: Request) => {
       const apiStatus = stage === 'completed' ? 'completed' : stage === 'live' ? 'in_progress' : null
       if (apiStatus && match.status !== apiStatus) {
         await sb.from('matches').update({ status: apiStatus }).eq('id', match.id)
+      }
+
+      // ── 9. Bump the progress watermark now that this read has landed ────
+      if (newProgress.innings !== storedProgress.innings || newProgress.balls !== storedProgress.balls) {
+        await sb.from('matches')
+          .update({ progress_innings: newProgress.innings, progress_balls: newProgress.balls })
+          .eq('id', match.id)
       }
 
       results.push({

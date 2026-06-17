@@ -662,17 +662,26 @@ Deno.serve(async (req: Request) => {
     // A match is considered "in play" when its start_time has passed and it is
     // neither completed nor delayed.  Admin does NOT need to manually flip status
     // to 'live' — the scraper treats past-start-time as implicitly live.
-    const now = new Date().toISOString()
+    const nowDate = new Date()
+    const now     = nowDate.toISOString()
+
+    // Cron calls only consider matches whose start_time is at least 5 minutes
+    // in the past — gives the official scorecard page a few minutes to
+    // actually populate before the scraper's first attempt. Manual "Scrape
+    // Now" (matchId provided) is unaffected — the admin is explicitly asking
+    // right now, regardless of how recently the match started.
+    const cutoff = matchId ? now : new Date(nowDate.getTime() - 5 * 60 * 1000).toISOString()
 
     let query = sb
       .from('matches')
       .select(`
         id, match_number, match_type, format, status, scorecard_url, tournament_id, start_time, data_source,
+        progress_innings, progress_balls,
         home_team:teams!home_team_id(id, name),
         away_team:teams!away_team_id(id, name),
         tournament:tournaments!tournament_id(id, name, scraper_enabled, scoring_rules)
       `)
-      .lte('start_time', now)
+      .lte('start_time', cutoff)
       .not('status', 'in', '("completed","delayed")')
 
     if (matchId) query = query.eq('id', matchId)
@@ -786,6 +795,27 @@ Deno.serve(async (req: Request) => {
           tableCount: (html.match(/<table/gi) ?? []).length,
           h2StrippedTexts: h2Texts,
         })
+        continue
+      }
+
+      // ── 3b. Staleness guard ─────────────────────────────────────────────
+      // Compare this read's progress against the furthest progress seen so
+      // far for this match (across either source — see poll-cricapi for the
+      // CricAPI side of the same guard). If this read is BEHIND that, it's
+      // almost certainly a stale/cached page — skip the write entirely
+      // rather than regressing good data with a worse read.
+      const lastInn = innings[innings.length - 1]
+      const inningsBalls = lastInn.bowling.reduce(
+        (sum, b) => sum + (Math.round(b.overs) * 6 + Math.round((b.overs % 1) * 10)),
+        0,
+      )
+      const newProgress    = { innings: innings.length, balls: inningsBalls }
+      const storedProgress = { innings: (match as any).progress_innings ?? 0, balls: (match as any).progress_balls ?? 0 }
+      const isStale = newProgress.innings < storedProgress.innings
+        || (newProgress.innings === storedProgress.innings && newProgress.balls < storedProgress.balls)
+
+      if (isStale) {
+        results.push({ matchId: match.id, status: 'stale_skipped', url, read: newProgress, stored: storedProgress })
         continue
       }
 
@@ -927,6 +957,13 @@ Deno.serve(async (req: Request) => {
       for (const [pid, s] of statAccum) pointsMap.set(pid, s.rawPoints)
       await scoreXIForMatch(match.id, pointsMap)
       const dailyTeamsScored = await scoreDailyTeamsForMatch(match.id, pointsMap)
+
+      // ── 11. Bump the progress watermark now that this read has landed ─────
+      if (newProgress.innings !== storedProgress.innings || newProgress.balls !== storedProgress.balls) {
+        await sb.from('matches')
+          .update({ progress_innings: newProgress.innings, progress_balls: newProgress.balls })
+          .eq('id', match.id)
+      }
 
       results.push({
         matchId : match.id,
