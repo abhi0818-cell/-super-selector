@@ -368,6 +368,10 @@
     .admin-table .col-color input { padding: 0; height: 24px; }
     .admin-table .col-color2 { width: 80px; }
     .admin-table .col-color2 input { padding: 0; height: 24px; }
+    /* Schedule (matches) tab — Home/Away team codes can be longer than the IPL
+       3-4 letter codes the generic .col-team width was sized for, so give this
+       table's team columns more breathing room. */
+    #adminMatchesTable .col-team { width: 170px; }
     .admin-toolbar { display: flex; gap: 8px; padding: 0 12px 10px; align-items: center; }
     .admin-toolbar input.admin-search-inp { flex: 1; }
     .admin-toolbar button { font-size: 12px; padding: 6px 12px; }
