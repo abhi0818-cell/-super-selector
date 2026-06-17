@@ -5811,13 +5811,11 @@ p31,Sample Player,MI,bat,9.0,false
       if (state.autoConnected.has(m.id)) return;             // tried this one already
       if (!m.external_id) return;                            // no CricAPI link
 
-      // Scraper-enabled tournaments don't need a CricAPI key — connectLive()
-      // will route to the DB-backed scraper poller instead of CricAPI.
-      const matchTournament = state.tournaments?.find(t => t.id === m.tournament_id);
-      const scraperOn = !!matchTournament?.scraper_enabled;
-      const apiKey = $('#apiKey').value.trim();
-      if (!scraperOn && !apiKey) return;                     // need a key (unless scraper handles it)
-
+      // No CricAPI key needed to auto-connect anymore — connectLive() always
+      // routes to the DB-backed poller now (DbScorePoller), which reads
+      // whatever the relevant cron job (scrape-scorecard or poll-cricapi)
+      // last wrote to player_match_stats. The browser never calls CricAPI
+      // directly during normal viewing.
       state.autoConnected.add(m.id);
 
       // Try to load the saved XI for this match (web table first, then mobile fallback)
@@ -6742,9 +6740,12 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     /**
-     * Live view for scraper-enabled tournaments — reads player_match_stats from
-     * Postgres (kept fresh by the scrape-scorecard cron job, every 15 min) instead
-     * of polling CricAPI. No CricAPI calls are made anywhere in this path.
+     * DB-only live view — reads player_match_stats straight from Postgres instead
+     * of polling any external API from the browser. Used for every tournament now:
+     * scraper-enabled tournaments are kept fresh by the scrape-scorecard cron job;
+     * CricAPI-driven tournaments are kept fresh by the poll-cricapi cron job (which
+     * also captures fielding stats the HTML scraper can't see). No CricAPI calls
+     * are made anywhere in this path — the browser is purely a read-only viewer.
      */
     async function connectLiveViaScraper(localMatch){
       if (state.poller) { state.poller.stop(); state.poller = null; }
@@ -6799,14 +6800,14 @@ p31,Sample Player,MI,bat,9.0,false
           if (status === 'completed') {
             if (state.poller) { state.poller.stop(); state.poller = null; }
             $('#liveDot').classList.remove('on');
-            $('#liveLabel').textContent = 'Match ended — scorecard frozen (scraper)';
+            $('#liveLabel').textContent = 'Match ended — scorecard frozen';
             const fetchNowBtn = $('#fetchNowBtn');
             if (fetchNowBtn) fetchNowBtn.style.display = 'none';
             renderHistory();
-            toast('Match completed. Scraper polling stopped.');
+            toast('Match completed. Polling stopped.');
           } else {
             $('#liveDot').classList.add('on');
-            $('#liveLabel').textContent = `Live — synced from scraper scorecard (checking every ~${pollMins} min) · no CricAPI calls used`;
+            $('#liveLabel').textContent = `Live — synced from database (checking every ~${pollMins} min) · no CricAPI calls from this browser`;
           }
         },
         onError: (e) => {
@@ -6816,7 +6817,7 @@ p31,Sample Player,MI,bat,9.0,false
       state.poller.start();
       const fetchNowBtn = $('#fetchNowBtn');
       if (fetchNowBtn) fetchNowBtn.style.display = 'inline-block';
-      toast('Connected via scraper — reading live scorecard from the database. No CricAPI calls used.');
+      toast('Connected — reading live scorecard from the database. No CricAPI calls from this browser.');
     }
 
     async function connectLive(){
@@ -6850,11 +6851,14 @@ p31,Sample Player,MI,bat,9.0,false
       // matchLifecycle() on the cached payload is the authoritative check.
       const localMatch = state.matches.find(m => m.external_id === id);
 
-      // ── Scraper-enabled tournament: read live data from Postgres, never CricAPI ──
-      const matchTournament = localMatch
-        ? state.tournaments?.find(t => t.id === localMatch.tournament_id)
-        : null;
-      if (localMatch && state.db && matchTournament?.scraper_enabled) {
+      // ── DB-only reads for every tournament now, not just scraper-enabled ones ──
+      // scrape-scorecard's cron keeps scraper-enabled tournaments' player_match_stats
+      // fresh; poll-cricapi's cron does the same for CricAPI-driven tournaments
+      // (including fielding stats, which the HTML scraper can't see). Either way,
+      // the browser itself never calls CricAPI directly anymore — it just reads
+      // whatever the relevant cron job last wrote to Postgres, same as the scraper
+      // flow always has. No API key is required for this path.
+      if (localMatch && state.db) {
         connectLiveViaScraper(localMatch);
         return;
       }
@@ -8244,6 +8248,8 @@ p31,Sample Player,MI,bat,9.0,false
               const isPastStart = m.start_time && new Date(m.start_time) <= new Date();
               const isInPlay    = isPastStart && m.status !== 'completed' && m.status !== 'delayed';
               const isFinished  = m.status === 'completed';
+              const matchTournament = state.tournaments?.find(t => t.id === m.tournament_id);
+              const isCricApiDriven = m.external_id && !matchTournament?.scraper_enabled;
               return `
                 ${(isFinished || isInPlay) && m.external_id
                   ? `<button class="row-finalize" data-act="finalize" title="Fetch scorecard &amp; save fantasy points">Finalize</button>
@@ -8255,6 +8261,13 @@ p31,Sample Player,MI,bat,9.0,false
                               background:rgba(80,160,255,0.10);border:1px solid rgba(80,160,255,0.4);
                               color:rgba(80,160,255,0.9);cursor:pointer;"
                        title="Delete locked XIs so users can re-pick after the delay">🔓 Revert Lock</button>`
+                  : ''}
+                ${isInPlay && isCricApiDriven
+                  ? `<button class="row-poll" data-act="poll"
+                       style="font-size:11px;padding:2px 7px;border-radius:4px;
+                              background:rgba(80,160,255,0.10);border:1px solid rgba(80,160,255,0.4);
+                              color:rgba(80,160,255,0.95);cursor:pointer;"
+                       title="Poll CricAPI now — fetch scorecard, score it, write to the database (same as the cron job)">📡 Poll</button>`
                   : ''}
                 ${isInPlay
                   ? `<button class="row-scrape" data-act="scrape"
@@ -8284,6 +8297,37 @@ p31,Sample Player,MI,bat,9.0,false
         tr.querySelector('[data-act="del"]').addEventListener('click', () => deleteMatchHandler(id));
         tr.querySelector('[data-act="finalize"]')?.addEventListener('click', () => finalizeMatchById(id));
         tr.querySelector('[data-act="recalc"]')?.addEventListener('click',  () => forceRefinalizeMatch(id));
+        tr.querySelector('[data-act="poll"]')?.addEventListener('click', async (e) => {
+          const btn = e.currentTarget;
+          btn.disabled = true; btn.textContent = '⏳';
+          try {
+            const supabaseUrl = state.db._supabaseUrl?.() ?? '';
+            const anonKey     = state.db._anonKey?.() ?? '';
+            const edgeFnUrl   = supabaseUrl.replace('.supabase.co', '.supabase.co/functions/v1') + '/poll-cricapi';
+            const res = await fetch(edgeFnUrl, {
+              method : 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${anonKey}` },
+              body   : JSON.stringify({ matchId: id }),
+            });
+            const json = await res.json();
+            if (!json.ok) throw new Error(json.error ?? 'Poll failed');
+            const r = json.results?.[0];
+            if (r?.status === 'ok') {
+              toast(`📡 Polled CricAPI — ${r.matched} player${r.matched===1?'':'s'} scored. ` +
+                `Unmatched: ${r.unmatched?.length ?? 0}.` +
+                (r.matchCompleted ? ' Match completed — finalized.' : ''), 5000);
+              renderMatchesAdmin();
+              // Refresh whatever's currently on screen for this match
+              if (state.activeMatchId === id || $('#matchId')?.value === state.matches.find(x => x.id===id)?.external_id) {
+                connectLive().catch(() => {});
+              }
+            } else {
+              toast(`Poll: ${r?.status ?? json.message ?? 'no live matches'} — ${r?.error ?? ''}`, 6000);
+            }
+          } catch (err) {
+            toast('Poll failed: ' + err.message, 5000);
+          } finally { btn.disabled = false; btn.textContent = '📡 Poll'; }
+        });
         tr.querySelector('[data-act="scrape"]')?.addEventListener('click', async (e) => {
           const btn = e.currentTarget;
           btn.disabled = true; btn.textContent = '⏳';
@@ -9465,9 +9509,12 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     /**
-     * Links an unmatched API player name to a local player by storing a persistent
-     * alias in localStorage (non-destructive — the local player's DB name is unchanged).
-     * The alias is merged into NAME_ALIASES immediately and persists across reloads.
+     * Links an unmatched API player name to a local player. Stores the alias in
+     * two places: (1) localStorage + in-memory NAME_ALIASES, for an instant effect
+     * in this browser tab, and (2) the DB-backed player_name_aliases table
+     * (source='cricapi'), so the server-side poll-cricapi cron also picks it up on
+     * its next run — this is the one piece of CricAPI name-matching that still
+     * needs a human, so it has to actually reach the database, not just this tab.
      */
     async function linkPlayerAndRescore(apiName, playerId) {
       if (!playerId) { toast('Pick a player first.'); return; }
@@ -9483,9 +9530,20 @@ p31,Sample Player,MI,bat,9.0,false
         saved[key] = localPlayer.name;
         localStorage.setItem('cricapi_name_aliases', JSON.stringify(saved));
 
+        // 2. Persist server-side so poll-cricapi's cron resolves it too, not just this tab.
+        const externalId = $('#matchId')?.value?.trim();
+        const localMatch = state.matches.find(m => m.external_id === externalId);
+        if (state.db && localMatch?.tournament_id) {
+          try {
+            await state.db.upsertNameAlias(playerId, localMatch.tournament_id, apiName, 'cricapi');
+          } catch (aliasErr) {
+            console.warn('[linkPlayerAndRescore] DB alias upsert failed (browser-local alias still applied):', aliasErr.message);
+          }
+        }
+
         toast(`Linked "${apiName}" → "${localPlayer.name}". Rescoring…`, 3000);
 
-        // 2. Rescore the current match with the updated alias in effect
+        // 3. Rescore the current match with the updated alias in effect
         if (state.db) await rescoreCurrentMatch();
         else renderFantasyScorecard(); // local mode: just re-render
 

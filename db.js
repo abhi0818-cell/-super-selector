@@ -1024,6 +1024,23 @@ export function createDb(cfg = {}) {
     },
 
     /**
+     * Standalone alias upsert — no scraper_unmatched row required. Used by the
+     * browser's inline "Link" flow on the live/fantasy scorecard (linkPlayerAndRescore
+     * in index.html), so a name fixed there is visible to the server-side
+     * poll-cricapi/scrape-scorecard cron jobs too, not just this browser tab.
+     */
+    async upsertNameAlias(playerId, tournamentId, alias, source = 'cricapi') {
+      const sb = await getClient();
+      const { error } = await sb.from('player_name_aliases').upsert({
+        player_id    : playerId,
+        tournament_id: tournamentId,
+        alias        : alias.toLowerCase().trim(),
+        source,
+      }, { onConflict: 'alias,source,tournament_id', ignoreDuplicates: true });
+      if (error) throw error;
+    },
+
+    /**
      * Resolve an unmatched name by adding the player to the global pool + tournament roster.
      * Also creates an alias for future auto-resolution.
      *
