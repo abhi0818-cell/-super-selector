@@ -371,7 +371,8 @@
     /* Schedule (matches) tab — Home/Away team codes can be longer than the IPL
        3-4 letter codes the generic .col-team width was sized for, so give this
        table's team columns more breathing room. */
-    #adminMatchesTable .col-team { width: 170px; }
+    #adminMatchesTable .col-team { width: 240px; }
+    #adminMatchesTable .col-team select { font-size: 12px; }
     .admin-toolbar { display: flex; gap: 8px; padding: 0 12px 10px; align-items: center; }
     .admin-toolbar input.admin-search-inp { flex: 1; }
     .admin-toolbar button { font-size: 12px; padding: 6px 12px; }
@@ -1623,7 +1624,8 @@
           </select>
           <span id="syncStatus" style="font-size:11px; color:var(--muted);">Sync pulls schedules + start times. Finalize fetches scorecards for completed matches and saves fantasy points.</span>
         </div>
-        <table class="admin-table" id="adminMatchesTable">
+        <div style="overflow-x:auto;">
+        <table class="admin-table" id="adminMatchesTable" style="min-width:880px;">
           <thead>
             <tr>
               <th class="col-id">#</th>
@@ -1638,6 +1640,7 @@
           </thead>
           <tbody id="adminMatchesBody"></tbody>
         </table>
+        </div>
       </div>
       <div class="modal-body csv-panel" id="adminCsvView" style="display:none;">
         <div class="row">
