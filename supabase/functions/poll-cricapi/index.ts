@@ -377,7 +377,12 @@ function resolvePlayerName(name: string, exactMap: Map<string, string>, aliasMap
 // ─────────────────────────────────────────────────────────────────────────────
 
 function isKeyExhaustedError(msg: string): boolean {
-  return /blocked|daily.limit|quota|too.many|429|invalid.*key|unauthori[sz]/i.test(String(msg))
+  // Some CricAPI quota/auth failures don't come back as a clean HTTP error —
+  // a key that's hit its daily cap can get its connection reset at the LB
+  // before a JSON error is ever produced. Treat connection-level failures
+  // the same as a recognized quota error so rotation still kicks in and
+  // tries the next configured key instead of giving up on the first one.
+  return /blocked|daily.limit|quota|too.many|429|invalid.*key|unauthori[sz]|connection reset|econnreset|client error \(connect\)|timed? ?out/i.test(String(msg))
 }
 
 async function fetchScorecard(externalId: string): Promise<any> {
