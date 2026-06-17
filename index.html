@@ -6622,8 +6622,12 @@ p31,Sample Player,MI,bat,9.0,false
      * @returns {number}             interval in milliseconds
      */
     function calcPollInterval(format, startTimeIso) {
-      // Fixed 3-minute polling interval — ~100 calls for a 5-hour match.
-      return 3 * 60_000;
+      // Fixed 20-minute polling interval, direct from this browser to CricAPI
+      // using the key entered in Settings — bypasses the Supabase poll-cricapi
+      // cron entirely (CricAPI has been resetting connections from Supabase's
+      // egress IP; this browser's own network isn't affected).
+      // ~15 calls for a 5-hour match.
+      return 20 * 60_000;
     }
 
     // localStorage key for persisting last poll time per match (survives reloads)
@@ -7126,7 +7130,7 @@ p31,Sample Player,MI,bat,9.0,false
       // Show the "Fetch now" button once connected
       const fetchNowBtn = $('#fetchNowBtn');
       if (fetchNowBtn) fetchNowBtn.style.display = 'inline-block';
-      toast(`Connected. Polling every ~${pollMins} min (3 calls across match), auto-stops at end.`);
+      toast(`Connected. Polling CricAPI directly every ~${pollMins} min, auto-stops at end.`);
     }
 
     /** Force an immediate scorecard fetch — visible in the UI as the "Fetch now" button. */
