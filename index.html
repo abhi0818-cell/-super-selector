@@ -5959,7 +5959,16 @@ p31,Sample Player,MI,bat,9.0,false
     function renderCountdown() {
       const chip = $('#nextMatchCountdown');
       const text = $('#countdownText');
-      const m = findNextMatch();
+      let m = findNextMatch();
+      // On the Pick XI screen, a live match is already locked and can't be edited —
+      // a "Live" pill there is just noise. Point the countdown at the next schedulable
+      // match instead, since that's the one the user is actually picking for.
+      const onPickXi = activePageTab === 'team' &&
+        ((state.mode === 'daily'       && state.activeDailyTab  === 'xi') ||
+         (state.mode === 'season_long' && state.sl.activeSlTab  === 'xi'));
+      if (onPickXi && m && hasMatchStarted(m)) {
+        m = findNextScheduledMatch() || m;
+      }
       if (!m) { chip.style.display = 'none'; return; }
       chip.style.display = 'inline-flex';
       const t = new Date(effectiveLockTime(m)).getTime();
