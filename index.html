@@ -584,6 +584,15 @@
     .sl-season-table td.pen { color: var(--bad); }
     .sl-season-table tfoot td { font-weight: 700; border-top: 1px solid var(--border); background: var(--panel-2); }
     .sl-empty { padding: 28px 16px; text-align: center; color: var(--muted); font-size: 13px; }
+    /* History tab: each match is its own mini single-row table + sibling detail panel,
+       so the expanded content nests directly under its own row instead of all
+       panels stacking together after one shared table. table-layout:fixed + a
+       matching <colgroup> on every table keeps columns aligned with the header. */
+    #historyList .sl-season-table { table-layout: fixed; }
+    #historyList .hist-match-table { margin: 0; }
+    #historyList .hist-match-table td { border-bottom: 1px dashed rgba(214,207,168,0.7); }
+    #historyList .hist-match-block:last-child .hist-match-table td { border-bottom: none; }
+    #historyList .hist-match-block.open .hist-match-table td { border-bottom-color: transparent; }
 
     /* ── Leaderboard ──────────────────────────────────────── */
     #lbModal {
@@ -878,7 +887,7 @@
       object-fit:contain; filter:drop-shadow(0 1px 4px rgba(0,0,0,0.9));
     }
     /* ── History pitch view ─────────────────────────────────────────────────── */
-    .hist-pitch-wrap { background:#1a5c1a; max-width:360px; margin:0 auto; border-radius:12px; }
+    .hist-pitch-wrap { background:#1a5c1a; max-width:390px; margin:0 auto; border-radius:12px; }
     .pitch-oval-hist {
       position:relative; margin:10px 14px; height:460px;
       border-radius:50%; overflow:hidden;
@@ -894,10 +903,10 @@
     .hist-pitch-pts-lbl { font-size:11px; font-weight:700; color:rgba(255,255,255,0.6); text-transform:uppercase; letter-spacing:.5px; }
     .hist-pitch-pts-val { font-size:13px; font-weight:800; color:#FFD966; text-shadow:0 1px 4px rgba(0,0,0,.8); }
     /* ── History points breakdown panel ─────────────────────────────────────── */
-    .hist-team-panel { display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap; justify-content:center; }
+    .hist-team-panel { display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap; justify-content:flex-start; }
     .hist-team-panel .hist-pitch-wrap { flex:0 0 auto; margin:0; }
     .hist-breakdown-panel {
-      flex:1 1 280px; min-width:260px; max-width:420px;
+      flex:1 1 320px; min-width:260px;
       background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:hidden;
     }
     .hist-breakdown-hdr {
@@ -6232,6 +6241,9 @@ p31,Sample Player,MI,bat,9.0,false
         const grandTotalSeason = ascending.reduce((s, m) =>
           s + m.teams.reduce((t2, t) => t2 + Number(t.total_points || 0), 0), 0);
 
+        // Shared colgroup so every match's mini table lines up with the header table's columns
+        const COLGROUP = '<colgroup><col><col style="width:70px"><col style="width:90px"></colgroup>';
+
         // Build rows ascending (so running total accumulates correctly), then reverse for display
         const matchData = ascending.map(m => {
           const homeAway  = [m.home_team_id, m.away_team_id].filter(Boolean).join(' vs ') || 'Match';
@@ -6260,17 +6272,22 @@ p31,Sample Player,MI,bat,9.0,false
             '<td' + (hasXI ? '' : ' style="color:var(--muted);"') + '>' + running.toFixed(1) + '</td>' +
             '</tr>';
 
-          // Thin spacer row stays in table just to anchor position visually
-          const detailRow = '<tr id="' + detailId + '" style="display:none;"><td colspan="3" style="padding:0;"></td></tr>';
-
-          // Pitch panel is a plain div sibling to the table, keyed by pitchPanelId
+          // Each match gets its OWN mini single-row table (sharing the same colgroup
+          // widths as the header table so columns stay aligned), immediately followed
+          // by its own sibling pitch-panel <div>. This keeps a match's expanded detail
+          // visually nested right under its own row, instead of every match's panel
+          // being flattened into one block trailing the whole season table.
+          // Pitch panel stays OUTSIDE any <table>/<td> to avoid the Safari compositor
+          // bug where gradient backgrounds inside <td> render as black.
+          const matchTable =
+            '<table class="sl-season-table hist-match-table">' + COLGROUP +
+            '<tbody>' + matchRow + '</tbody>' +
+            '</table>';
           const pitchPanel = '<div id="' + pitchPanelId + '" style="display:none;">' + pitchDetailHtml + '</div>';
+          const block = '<div class="hist-match-block" data-detail="' + detailId + '" data-pitch="' + pitchPanelId + '">' + matchTable + pitchPanel + '</div>';
 
-          return { matchRow, detailRow, pitchPanel };
+          return { block };
         }).reverse();
-
-        const tableRows = matchData.map(d => d.matchRow + d.detailRow).join('');
-        const pitchPanels = matchData.map(d => d.pitchPanel).join('');
 
         const totalRow =
           '<tr style="background:var(--panel-2);font-weight:700;border-bottom:1px solid var(--border);">' +
@@ -6279,26 +6296,35 @@ p31,Sample Player,MI,bat,9.0,false
           '<td style="padding:6px 8px;"></td>' +
           '</tr>';
 
-        // Table for match rows + pitch panels as plain divs AFTER the table (outside any <td>)
-        wrap.innerHTML =
-          '<table class="sl-season-table">' +
+        const headerTable =
+          '<table class="sl-season-table hist-header-table">' + COLGROUP +
           '<thead>' +
           '<tr><th class="l">Match</th><th>Pts</th><th>Running</th></tr>' +
           totalRow +
           '</thead>' +
-          '<tbody>' + tableRows + '</tbody>' +
-          '</table>' +
-          pitchPanels;
+          '</table>';
 
-        // Wire expand/collapse: toggle both the spacer <tr> and the pitch <div>
+        wrap.innerHTML = headerTable + matchData.map(d => d.block).join('');
+
+        // Wire expand/collapse, accordion-style: opening a match's detail
+        // auto-collapses whichever other match's detail was previously open.
         wrap.querySelectorAll('.sl-match-row').forEach(row => {
           row.addEventListener('click', () => {
-            const detail = wrap.querySelector('#' + row.dataset.detail);
             const pitchPanel = wrap.querySelector('#' + row.dataset.pitch);
             if (!pitchPanel) return;
             const opening = pitchPanel.style.display === 'none';
-            if (detail) detail.style.display = opening ? '' : 'none';
+
+            wrap.querySelectorAll('.sl-match-row').forEach(otherRow => {
+              if (otherRow === row) return;
+              const otherPanel = wrap.querySelector('#' + otherRow.dataset.pitch);
+              if (otherPanel) otherPanel.style.display = 'none';
+              otherRow.closest('.hist-match-block')?.classList.remove('open');
+              const otherCaret = otherRow.querySelector('span[style*="▾"], span[style*="▴"]');
+              if (otherCaret) otherCaret.textContent = '▾';
+            });
+
             pitchPanel.style.display = opening ? '' : 'none';
+            row.closest('.hist-match-block')?.classList.toggle('open', opening);
             const caret = row.querySelector('span[style*="▾"], span[style*="▴"]');
             if (caret) caret.textContent = opening ? '▴' : '▾';
             if (opening) {
