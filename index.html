@@ -5316,28 +5316,69 @@ p31,Sample Player,MI,bat,9.0,false
      * Renders the Daily "Live Score" tab — current selected XI with live fantasy points.
      * Read-only view; mirrors renderSlLiveTab but uses state.selected / state.captain.
      */
+    /**
+     * Resolve the Daily XI that should drive the Live Score tab.
+     *
+     * Deliberately decoupled from state.activeMatchId/state.selected/state.captain/
+     * state.viceCaptain — those track whatever match is currently being *edited* in
+     * Pick XI, which (via saveTargetMatch()) can legitimately point at a future match
+     * once the live match has locked. Live Score must instead always show the most
+     * recently *started* match the user has a saved Daily team for — mirrors how
+     * state.sl.lastLockedXI works for Season Long (db.js getLastLockedXI).
+     */
+    function getLockedDailyXI() {
+      const byMatch = {};
+      for (const t of state.savedTeams) {
+        if (t.squadId) continue;                 // SL teams only carry a squadId — skip
+        if (!byMatch[t.matchId]) byMatch[t.matchId] = t; // listUserTeams() is created_at desc → first wins
+      }
+      const best = Object.keys(byMatch)
+        .map(mid => {
+          const match = state.matches.find(m => m.id === mid);
+          return { mid, num: match?.match_number ?? -1, started: match ? hasMatchStarted(match) : false };
+        })
+        .filter(x => x.num >= 0 && x.started)
+        .sort((a, b) => b.num - a.num)[0];
+      if (!best) return null;
+      const t = byMatch[best.mid];
+      return {
+        playerIds  : t.playerIds,
+        captainId  : t.captainId,
+        vcId       : t.viceCaptainId,
+        matchNumber: best.num,
+        matchId    : best.mid,
+      };
+    }
+
     function renderDailyLiveTab() {
       const el = $('#dailyLiveTab');
       if (!el) return;
 
-      if (!state.selected.length) {
+      const locked = getLockedDailyXI();
+      if (!locked?.playerIds?.length) {
         el.innerHTML = '<div class="sl-empty" style="padding:24px 16px;">No XI selected yet — go to Pick XI to build your team for the current match.</div>';
         return;
       }
 
-      const match      = state.activeMatchId ? state.matches.find(m => m.id === state.activeMatchId) : null;
+      const { playerIds, captainId, vcId, matchId } = locked;
+      const match      = state.matches.find(m => m.id === matchId) ?? null;
       const matchLabel = match?.match_number != null ? `M${match.match_number}` : 'Current Match';
       const vsLabel    = match ? ` · ${match.home_team_id ?? '?'} vs ${match.away_team_id ?? '?'}` : '';
       const statusText = match?.status
         ? `<span style="margin-left:6px;font-size:10px;text-transform:uppercase;letter-spacing:0.4px;padding:2px 7px;border-radius:10px;background:var(--panel-2);color:var(--muted);">${match.status}</span>` : '';
 
-      const scoreInputs = state.selected.map(id => buildPlayerForScoring(id)).filter(Boolean);
+      const scoreInputs = playerIds.map(id => {
+        const p = playerById(id); if (!p) return null;
+        const stats = state.stats[id] || {};
+        const captaincy = id === captainId ? 'captain' : id === vcId ? 'vice_captain' : 'normal';
+        return { name: p.name, role: p.role, captaincy, ...stats };
+      }).filter(Boolean);
       const scored      = scoreTeam(scoreInputs, state.format);
       const byName      = Object.fromEntries(scored.map(s => [s.name, s]));
       const total       = scored.reduce((a, s) => a + s.totalPoints, 0);
 
-      const capName = playerById(state.captain)?.name?.split(' ').pop() ?? '--';
-      const vcName  = playerById(state.viceCaptain)?.name?.split(' ').pop() ?? '--';
+      const capName = playerById(captainId)?.name?.split(' ').pop() ?? '--';
+      const vcName  = playerById(vcId)?.name?.split(' ').pop() ?? '--';
 
       let html = `
         <div style="padding:10px 16px 10px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
@@ -5352,10 +5393,10 @@ p31,Sample Player,MI,bat,9.0,false
         </div>
         <div style="padding:8px 0 12px;">`;
 
-      html += sortByRole(state.selected).map(id => {
+      html += sortByRole(playerIds).map(id => {
         const p = playerById(id); if (!p) return '';
-        const isCap = id === state.captain;
-        const isVc  = id === state.viceCaptain;
+        const isCap = id === captainId;
+        const isVc  = id === vcId;
         const badge = isCap
           ? '<span class="cap-badge">C</span>'
           : isVc ? '<span class="vc-badge">VC</span>' : '';
