@@ -6916,15 +6916,27 @@ p31,Sample Player,MI,bat,9.0,false
       // matchLifecycle() on the cached payload is the authoritative check.
       const localMatch = state.matches.find(m => m.external_id === id);
 
-      // ── DB-only reads for every tournament now, not just scraper-enabled ones ──
-      // scrape-scorecard's cron keeps scraper-enabled tournaments' player_match_stats
-      // fresh; poll-cricapi's cron does the same for CricAPI-driven tournaments
-      // (including fielding stats, which the HTML scraper can't see). Either way,
-      // the browser itself never calls CricAPI directly anymore — it just reads
-      // whatever the relevant cron job last wrote to Postgres, same as the scraper
-      // flow always has. No API key is required for this path.
-      if (localMatch && state.db) {
+      // ── Scraper-enabled tournaments: always DB-only ─────────────────────────
+      // scrape-scorecard's cron keeps these tournaments' player_match_stats fresh
+      // on its own schedule — no CricAPI key needed or used here, ever.
+      const matchTournament    = state.tournaments?.find(t => t.id === localMatch?.tournament_id);
+      const isScraperTournament = !!matchTournament?.scraper_enabled;
+      if (localMatch && state.db && isScraperTournament) {
         connectLiveViaScraper(localMatch);
+        return;
+      }
+
+      // ── CricAPI-driven tournaments without a key on hand: DB-only fallback ──
+      // poll-cricapi's server-side cron is *supposed* to keep these fresh, but
+      // CricAPI has been resetting connections from Supabase's Edge Function
+      // egress (network-level block, not a quota/key issue — confirmed the same
+      // key/match works fine called directly). Until that's resolved upstream,
+      // reading the DB here will show nothing for CricAPI tournaments unless a
+      // key is entered below, in which case we fall through and poll CricAPI
+      // directly from this browser instead — your own network isn't blocked.
+      if (localMatch && state.db && !key) {
+        connectLiveViaScraper(localMatch);
+        toast('Reading from database — CricAPI\'s cron poll is currently being blocked server-side. Enter a CricAPI key above and reconnect for live data from this browser instead.', 7000);
         return;
       }
 
