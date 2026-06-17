@@ -11202,6 +11202,8 @@ p31,Sample Player,MI,bat,9.0,false
       try {
         if (!state.db) throw new Error('Not connected');
 
+        const medals = ['🥇','🥈','🥉'];
+
         if (contestType === 'season_long') {
           const rows = await state.db.getLeaderboardSL(contestId);
           if (!rows?.length) {
@@ -11210,7 +11212,7 @@ p31,Sample Player,MI,bat,9.0,false
           }
           content.innerHTML = `<div style="display:grid;grid-template-columns:32px 1fr 80px 60px;gap:0;background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
             <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">#</div>
-            <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">Squad</div>
+            <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">Squad <span style="font-size:9px;">(tap to expand)</span></div>
             <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Points</div>
             <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Xfers</div>
             ${rows.map((r, i) => {
@@ -11218,14 +11220,20 @@ p31,Sample Player,MI,bat,9.0,false
               const bg   = isMe ? 'background:rgba(201,168,76,0.12);' : '';
               const squadName = escapeHtml(r.squadName || 'Squad');
               const sub = r.displayName ? `<div style="font-size:10px;color:var(--muted);margin-top:1px;">${escapeHtml(r.displayName)}</div>` : '';
-              return `<div style="padding:8px 10px;font-size:12px;${bg}border-bottom:1px solid var(--border);">${i+1}</div>
-                <div style="padding:8px 10px;font-size:12px;font-weight:${isMe?'600':'400'};${bg}border-bottom:1px solid var(--border);">
-                  ${isMe ? `<span style="color:var(--accent);">★</span> ` : ''}${squadName}${sub}
+              const rank = medals[i] || `#${i + 1}`;
+              const entityId = r.squadId;
+              const key = 'sl_' + (entityId || i);
+              const detailId = `inlineLbDetail_${key.replace(/[^a-zA-Z0-9]/g, '')}`;
+              return `<div style="padding:8px 10px;font-size:12px;${bg}border-bottom:1px solid var(--border);">${rank}</div>
+                <div class="inline-lb-row" data-kind="sl" data-entity="${entityId || ''}" data-key="${key}" data-detail="${detailId}" style="cursor:pointer;padding:8px 10px;font-size:12px;font-weight:${isMe?'600':'400'};${bg}border-bottom:1px solid var(--border);">
+                  ${isMe ? `<span style="color:var(--accent);">★</span> ` : ''}${squadName}${sub} <span class="inline-lb-caret" style="font-size:10px;color:var(--muted);">▾</span>
                 </div>
                 <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${r.totalPoints ?? '—'}</div>
-                <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${r.transferCount ?? 0}</div>`;
+                <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${r.transferCount ?? 0}</div>
+                <div id="${detailId}" style="grid-column:1/-1;display:none;border-bottom:1px solid var(--border);"></div>`;
             }).join('')}
           </div>`;
+          wireInlineLbExpand(content, null);
           return;
         }
 
@@ -11264,7 +11272,7 @@ p31,Sample Player,MI,bat,9.0,false
         } else {
           content.innerHTML = `${pickerHtml}<div style="display:grid;grid-template-columns:32px 1fr 80px;gap:0;background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
             <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">#</div>
-            <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">Team</div>
+            <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">Team <span style="font-size:9px;">(tap to expand)</span></div>
             <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Points</div>
             ${rows.map((r, i) => {
               const isMe = r.userId === state.currentUser?.id;
@@ -11272,13 +11280,19 @@ p31,Sample Player,MI,bat,9.0,false
               const name = escapeHtml(lbState.profiles[r.userId] || 'Unknown');
               const teamName = escapeHtml(r.teamName || 'Team');
               const pts = r.totalPoints % 1 === 0 ? r.totalPoints : r.totalPoints.toFixed(1);
-              return `<div style="padding:8px 10px;font-size:12px;${bg}border-bottom:1px solid var(--border);">${i+1}</div>
-                <div style="padding:8px 10px;font-size:12px;font-weight:${isMe?'600':'400'};${bg}border-bottom:1px solid var(--border);">
-                  ${isMe ? `<span style="color:var(--accent);">★</span> ` : ''}${name}<div style="font-size:10px;color:var(--muted);margin-top:1px;">${teamName}</div>
+              const rank = medals[i] || `#${i + 1}`;
+              const entityId = r.teamId;
+              const key = 'daily_' + (entityId || i);
+              const detailId = `inlineLbDetail_${key.replace(/[^a-zA-Z0-9]/g, '')}`;
+              return `<div style="padding:8px 10px;font-size:12px;${bg}border-bottom:1px solid var(--border);">${rank}</div>
+                <div class="inline-lb-row" data-kind="daily" data-entity="${entityId || ''}" data-key="${key}" data-detail="${detailId}" style="cursor:pointer;padding:8px 10px;font-size:12px;font-weight:${isMe?'600':'400'};${bg}border-bottom:1px solid var(--border);">
+                  ${isMe ? `<span style="color:var(--accent);">★</span> ` : ''}${name}<div style="font-size:10px;color:var(--muted);margin-top:1px;">${teamName} <span class="inline-lb-caret" style="font-size:10px;">▾</span></div>
                 </div>
-                <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${pts}</div>`;
+                <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${pts}</div>
+                <div id="${detailId}" style="grid-column:1/-1;display:none;border-bottom:1px solid var(--border);"></div>`;
             }).join('')}
           </div>`;
+          wireInlineLbExpand(content, dailyMatchId);
         }
 
         $('#inlineLbMatchPicker')?.addEventListener('change', e => {
@@ -11288,6 +11302,38 @@ p31,Sample Player,MI,bat,9.0,false
       } catch(e) {
         content.innerHTML = `<div style="color:var(--muted);font-size:13px;">${escapeHtml(e.message)}</div>`;
       }
+    }
+
+    /**
+     * Wires click-to-expand behaviour on the inline Contest-tab leaderboard rows,
+     * mirroring the full leaderboard popup's `.lb-expandable` rows: clicking a
+     * squad/team name toggles a detail panel showing per-player points. `dailyMatchId`
+     * is only needed for the 'daily' kind (squad detail lookups don't need a match id).
+     */
+    function wireInlineLbExpand(content, dailyMatchId) {
+      content.querySelectorAll('.inline-lb-row').forEach(row => {
+        row.addEventListener('click', async () => {
+          const key       = row.dataset.key;
+          const isOpen    = lbState.expandedKeys.has(key);
+          const detailRow = content.querySelector('#' + row.dataset.detail);
+          if (!detailRow) return;
+          const caret = row.querySelector('.inline-lb-caret');
+          if (isOpen) {
+            lbState.expandedKeys.delete(key);
+            detailRow.style.display = 'none';
+            if (caret) caret.textContent = '▾';
+            return;
+          }
+          lbState.expandedKeys.add(key);
+          if (caret) caret.textContent = '▴';
+          detailRow.style.display = '';
+          if (row.dataset.kind === 'sl') {
+            await loadSLDetailInto(detailRow, row.dataset.entity, row.dataset.detail, content);
+          } else {
+            await loadDailyDetailInto(detailRow, row.dataset.entity, dailyMatchId);
+          }
+        });
+      });
     }
 
     // ─── Season tab renderer ──────────────────────────────────────────────────
