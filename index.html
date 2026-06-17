@@ -1913,8 +1913,12 @@ p31,Sample Player,MI,bat,9.0,false
         return { type: 'hit_wicket', bowler: bowlerName, fielder: null };
       }
       if (/^run\s*out/.test(d)) {
-        // Extract fielder(s) from "run out (Fielder)" or "run out (Fielder1 / Fielder2)"
-        const parenMatch = d.match(/run\s*out\s*\(([^)]+)\)/i);
+        // Extract fielder(s) from "run out (Fielder)" or "run out (Fielder1 / Fielder2)".
+        // CricAPI sometimes puts the parenthesized name(s) in the short `dismissal`
+        // field (d), but for run-outs it's often only present in the longer
+        // `dismissal-text` (dText) — try both before falling back to the
+        // Shape-A catch/fielder/catcher fields, which run-outs frequently leave empty.
+        const parenMatch = d.match(/run\s*out\s*\(([^)]+)\)/i) || dText.match(/run\s*out\s*\(([^)]+)\)/i);
         const parts = parenMatch
           ? parenMatch[1].split(/\s*[/\\&]\s*/).map(n => n.trim()).filter(Boolean)
           : fielderName ? [fielderName] : [];
@@ -9832,7 +9836,7 @@ p31,Sample Player,MI,bat,9.0,false
       render();
       if (state.mode === 'season_long') { renderSlXiTab(); renderSlLiveTab(); }
       renderMatchesAdmin();
-      toast(`Rescored: ${n} player rows saved, ${unmatched} still unmatched${xiSaved ? `, ${xiSaved} XI total${xiSaved===1?'':'s'} updated` : ''}.`);
+      toast(`Rescored: ${n} player rows saved, ${unmatchedNames.length} still unmatched${xiSaved ? `, ${xiSaved} XI total${xiSaved===1?'':'s'} updated` : ''}.`);
     }
 
     async function saveFantasyScorecard() {
