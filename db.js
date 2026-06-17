@@ -1840,6 +1840,7 @@ export function createDb(cfg = {}) {
               raw_points: ps?.raw_points ?? null,
               batting   : ps?.batting   ?? null,
               bowling   : ps?.bowling   ?? null,
+              fielding  : ps?.fielding  ?? null,
             };
           }).sort((a, b) => (b.raw_points ?? -Infinity) - (a.raw_points ?? -Infinity));
 

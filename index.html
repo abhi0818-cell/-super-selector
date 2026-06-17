@@ -893,6 +893,39 @@
     .hist-pitch-pts-bar { display:flex; justify-content:space-between; align-items:center; padding:4px 14px 10px; }
     .hist-pitch-pts-lbl { font-size:11px; font-weight:700; color:rgba(255,255,255,0.6); text-transform:uppercase; letter-spacing:.5px; }
     .hist-pitch-pts-val { font-size:13px; font-weight:800; color:#FFD966; text-shadow:0 1px 4px rgba(0,0,0,.8); }
+    /* ── History points breakdown panel ─────────────────────────────────────── */
+    .hist-team-panel { display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap; justify-content:center; }
+    .hist-team-panel .hist-pitch-wrap { flex:0 0 auto; margin:0; }
+    .hist-breakdown-panel {
+      flex:1 1 280px; min-width:260px; max-width:420px;
+      background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:hidden;
+    }
+    .hist-breakdown-hdr {
+      padding:9px 14px; border-bottom:1px solid var(--border);
+      font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.5px;
+    }
+    .hist-bd-row { border-bottom:1px solid var(--panel-2); }
+    .hist-bd-row:last-child { border-bottom:none; }
+    .hist-bd-row > summary {
+      list-style:none; cursor:pointer; padding:9px 14px;
+      display:flex; align-items:center; gap:10px;
+    }
+    .hist-bd-row > summary::-webkit-details-marker { display:none; }
+    .hist-bd-row > summary:hover { background:var(--panel-2); }
+    .hist-bd-avatar { width:26px; flex-shrink:0; }
+    .hist-bd-avatar svg { width:26px; height:auto; display:block; }
+    .hist-bd-name { flex:1; min-width:0; font-size:13px; font-weight:700; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .hist-bd-meta { font-size:11px; color:var(--muted); margin-top:1px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .hist-bd-cbadge { font-size:10px; font-weight:800; border-radius:4px; padding:1px 5px; margin-left:4px; }
+    .hist-bd-cbadge.c  { color:var(--accent-2); background:rgba(201,168,76,0.15); }
+    .hist-bd-cbadge.vc { color:#7a5500; background:var(--panel-2); }
+    .hist-bd-pts { font-size:14px; font-weight:800; color:var(--accent-2); flex-shrink:0; }
+    .hist-bd-chev { font-size:12px; color:var(--muted); flex-shrink:0; transition:transform 0.15s; }
+    .hist-bd-row[open] .hist-bd-chev { transform:rotate(180deg); }
+    .hist-bd-detail { padding:0 14px 10px 50px; font-size:12px; }
+    .hist-bd-line { display:flex; justify-content:space-between; gap:10px; padding:2px 0; color:var(--muted); }
+    .hist-bd-line.total { font-weight:700; color:var(--text); border-top:1px solid var(--panel-2); margin-top:4px; padding-top:5px; }
+    .hist-bd-line.mult { color:var(--accent-2); font-weight:700; }
     /* ═══════════════════════════════════════════════════════════════════════════ */
 </style>
 </head>
@@ -6216,7 +6249,7 @@ p31,Sample Player,MI,bat,9.0,false
             ? m.teams.map(t => {
                 const sorted = [...t.players].sort((a, b) =>
                   (roleOrder[a.role] ?? 9) - (roleOrder[b.role] ?? 9));
-                return histPitchHtml({ ...t, players: sorted });
+                return histTeamPanelHtml({ ...t, players: sorted }, m.format);
               }).join('')
             : '<div style="padding:12px 0 6px;text-align:center;font-size:12px;color:var(--muted);font-style:italic;">No XI picked for this match</div>';
 
@@ -11647,6 +11680,126 @@ p31,Sample Player,MI,bat,9.0,false
         + '<span class="hist-pitch-pts-lbl">Total points</span>'
         + '<span class="hist-pitch-pts-val">' + totalPts + '</span>'
         + '</div>'
+        + '</div>';
+    }
+
+    // ── History points breakdown panel ───────────────────────────────────────
+    // Builds one click-to-expand row for a single player, reusing calcBatting/
+    // calcBowling/calcFielding against the stored batting/bowling/fielding stat
+    // objects (under the CURRENT SCORING_RULES[fmt]) purely to itemize how the
+    // points were earned. The always-visible total ('hist-bd-pts') is derived
+    // from the player's stored raw_points (same source histPitchToken's jersey
+    // points-tag uses), so the panel's headline number can never contradict the
+    // pitch view — only the itemized lines underneath are a recompute.
+    function histBreakdownRowHtml(p, fmt, captainId, vcId, isFirst) {
+      var isCap = String(p.player_id) === String(captainId);
+      var isVc  = String(p.player_id) === String(vcId);
+      var mult  = isCap ? MULTIPLIERS.captain : isVc ? MULTIPLIERS.vice_captain : MULTIPLIERS.normal;
+      var rules = SCORING_RULES[fmt] || SCORING_RULES.T20;
+      var tm = teamByCode(p.team_id);
+      var c1 = (tm && tm.color)  || '#888888';
+      var c2 = (tm && tm.color2) || '#333333';
+      var badge = isCap ? '<span class="hist-bd-cbadge c">C</span>'
+                : isVc  ? '<span class="hist-bd-cbadge vc">VC</span>' : '';
+      var roleKey = p.role || 'bat';
+      var RLBL = {wk:'WK', bat:'BAT', ar:'AR', bowl:'BOWL'};
+
+      var lines = [];
+      var bat = p.batting || null, bowl = p.bowling || null, fld = p.fielding || null;
+      var metaParts = [];
+
+      if (bat) {
+        var br = calcBatting(Object.assign({}, bat, {role: roleKey}), fmt);
+        if (br.breakdown.runs)              lines.push(['Runs (' + (bat.runs||0) + ' × ' + rules.run + ')', br.breakdown.runs]);
+        if (br.breakdown.boundary4)         lines.push(['Fours (' + (bat.fours||0) + ' × ' + rules.boundary4 + ')', br.breakdown.boundary4]);
+        if (br.breakdown.boundary6)         lines.push(['Sixes (' + (bat.sixes||0) + ' × ' + rules.boundary6 + ')', br.breakdown.boundary6]);
+        if (br.breakdown.century)           lines.push(['100+ bonus', br.breakdown.century]);
+        else if (br.breakdown.half_century) lines.push(['50+ bonus', br.breakdown.half_century]);
+        if (br.breakdown.duck)              lines.push(['Duck penalty', br.breakdown.duck]);
+        if (br.breakdown.strikeRateBonus)   lines.push(['Strike-rate bonus', br.breakdown.strikeRateBonus]);
+        metaParts.push((bat.runs||0) + ' (' + (bat.ballsFaced||0) + ')');
+      }
+      if (bowl) {
+        var bwr = calcBowling(bowl, fmt);
+        if (bwr.breakdown.wickets)          lines.push(['Wickets (' + (bowl.wickets||0) + ' × ' + rules.wicket + ')', bwr.breakdown.wickets]);
+        if (bwr.breakdown.lbwBowledBonus) {
+          var prem = (bowl.wicketTypes||[]).filter(function(x){ return ['lbw','bowled'].indexOf(String(x).toLowerCase()) !== -1; }).length;
+          lines.push(['LBW/Bowled bonus (' + prem + ')', bwr.breakdown.lbwBowledBonus]);
+        }
+        if (bwr.breakdown.fiveWicket)       lines.push(['5-wicket haul bonus', bwr.breakdown.fiveWicket]);
+        else if (bwr.breakdown.fourWicket)  lines.push(['4-wicket haul bonus', bwr.breakdown.fourWicket]);
+        if (bwr.breakdown.maidens)          lines.push(['Maidens (' + (bowl.maidens||0) + ' × ' + rules.maiden_over + ')', bwr.breakdown.maidens]);
+        if (bwr.breakdown.dotBalls)         lines.push(['Dot balls (' + (bowl.dotBalls||0) + ' × ' + (rules.dot_ball||0) + ')', bwr.breakdown.dotBalls]);
+        if (bwr.breakdown.economyBonus)     lines.push(['Economy bonus', bwr.breakdown.economyBonus]);
+        if (bwr.breakdown.noBalls)          lines.push(['No-ball penalty', bwr.breakdown.noBalls]);
+        if (bwr.breakdown.wides)            lines.push(['Wide penalty', bwr.breakdown.wides]);
+        var ballsBowled = bowl.ballsBowled || 0;
+        var oversStr = Math.floor(ballsBowled/6) + '.' + (ballsBowled%6);
+        metaParts.push((bowl.wickets||0) + '/' + (bowl.runsConceded||0) + ' (' + oversStr + ')');
+      }
+      if (fld) {
+        var fr = calcFielding(fld, fmt);
+        if (fr.breakdown.catches)           lines.push(['Catches (' + (fld.catches||0) + ' × ' + rules.catch + ')', fr.breakdown.catches]);
+        if (fr.breakdown.stumpings)         lines.push(['Stumpings (' + (fld.stumpings||0) + ' × ' + rules.stumping + ')', fr.breakdown.stumpings]);
+        if (fr.breakdown.runOutDirect)      lines.push(['Direct run-outs (' + (fld.runOutDirect||0) + ' × ' + rules.run_out_direct + ')', fr.breakdown.runOutDirect]);
+        if (fr.breakdown.runOutIndirect)    lines.push(['Indirect run-outs (' + (fld.runOutIndirect||0) + ' × ' + rules.run_out_indirect + ')', fr.breakdown.runOutIndirect]);
+        var fcount = (fld.catches||0) + (fld.stumpings||0) + (fld.runOutDirect||0) + (fld.runOutIndirect||0);
+        if (fcount) metaParts.push(fcount + ' field' + (fcount>1?'ings':'ing'));
+      }
+
+      var rawStored = (p.raw_points !== null && p.raw_points !== undefined) ? Number(p.raw_points) : null;
+      var finalStr  = rawStored !== null ? (rawStored * mult).toFixed(1) : '—';
+      var multLabel = isCap ? ('×' + MULTIPLIERS.captain + ' (Captain)')
+                    : isVc  ? ('×' + MULTIPLIERS.vice_captain + ' (Vice-Captain)') : null;
+
+      var linesHtml = lines.map(function(l) {
+        return '<div class="hist-bd-line"><span>' + escapeHtml(l[0]) + '</span><span>' + (l[1]>=0?'+':'') + l[1].toFixed(1) + '</span></div>';
+      }).join('');
+      if (!linesHtml) linesHtml = '<div class="hist-bd-line"><span>No stats recorded</span><span>—</span></div>';
+      var totalLine = '<div class="hist-bd-line total"><span>Raw total</span><span>' + (rawStored!==null ? rawStored.toFixed(1) : '—') + '</span></div>';
+      var multLine  = multLabel ? ('<div class="hist-bd-line mult"><span>' + multLabel + '</span><span>' + finalStr + '</span></div>') : '';
+
+      return '<details class="hist-bd-row"' + (isFirst ? ' open' : '') + '>'
+        + '<summary>'
+        + '<div class="hist-bd-avatar">' + pitchJerseyHtml(pitchInits(p.name), c1, c2) + '</div>'
+        + '<div style="flex:1;min-width:0;">'
+        + '<div class="hist-bd-name">' + escapeHtml(p.name) + badge + '</div>'
+        + '<div class="hist-bd-meta">' + RLBL[roleKey] + (metaParts.length ? (' · ' + metaParts.join(' · ')) : '') + '</div>'
+        + '</div>'
+        + '<div class="hist-bd-pts">' + finalStr + '</div>'
+        + '<div class="hist-bd-chev">▼</div>'
+        + '</summary>'
+        + '<div class="hist-bd-detail">' + linesHtml + totalLine + multLine + '</div>'
+        + '</details>';
+    }
+
+    // Builds the full right-side breakdown panel (header + one row per player, role order).
+    function histBreakdownPanelHtml(t, fmt) {
+      var ROLES_ORDER = ['wk','bat','ar','bowl'];
+      var groups = {wk:[], bat:[], ar:[], bowl:[]};
+      (t.players || []).forEach(function(p) {
+        if (groups[p.role]) groups[p.role].push(p);
+        else groups['bat'].push(p);
+      });
+      var rowsHtml = '';
+      var first = true;
+      ROLES_ORDER.forEach(function(role) {
+        groups[role].forEach(function(p) {
+          rowsHtml += histBreakdownRowHtml(p, fmt, t.captain_id, t.vice_captain_id, first);
+          first = false;
+        });
+      });
+      return '<div class="hist-breakdown-panel">'
+        + '<div class="hist-breakdown-hdr">Points breakdown</div>'
+        + rowsHtml
+        + '</div>';
+    }
+
+    // Wraps the pitch view and the new breakdown panel side by side for the History tab.
+    function histTeamPanelHtml(t, fmt) {
+      return '<div class="hist-team-panel">'
+        + histPitchHtml(t)
+        + histBreakdownPanelHtml(t, fmt)
         + '</div>';
     }
 
