@@ -2998,6 +2998,9 @@ p31,Sample Player,MI,bat,9.0,false
         try {
           state.matches = await db.listMatches(state.activeTournamentId);
         } catch (e) { console.warn('Matches table empty / not migrated yet.', e); state.matches = []; }
+        // Matches just landed — refresh the Home tab so "Next match" shows immediately
+        // instead of "No upcoming matches" until the user happens to switch tabs.
+        renderPageHomeTab();
         try {
           const all = await db.getAllUserTeamMatchScores();
           state.xiScoresByMatch = {};
