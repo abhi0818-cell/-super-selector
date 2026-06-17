@@ -1458,9 +1458,13 @@ export function createDb(cfg = {}) {
      *
      * @param {string[]} playerIds
      * @param {number} [matchLimit=3]
+     * @param {string} [tournamentId] - when given, only matches from this tournament count.
+     *   Without this, a player who has stats rows from another tournament (e.g. the same
+     *   global player_id reused/shared across competitions) would leak those into the form
+     *   strip. Always pass the active tournament's id from the caller.
      * @returns {Promise<Object<string, number[]>>} playerId → [pts most-recent..older]
      */
-    async getRecentFormForPlayers(playerIds, matchLimit = 3) {
+    async getRecentFormForPlayers(playerIds, matchLimit = 3, tournamentId = null) {
       if (!playerIds?.length) return {};
       const sb = await getClient();
       const { data: stats, error: statsErr } = await sb
@@ -1471,15 +1475,18 @@ export function createDb(cfg = {}) {
       if (!stats?.length) return {};
 
       const matchIds = [...new Set(stats.map(s => s.match_id))];
-      const { data: matches, error: matchErr } = await sb
+      let matchQuery = sb
         .from('matches')
-        .select('id, match_number')
+        .select('id, match_number, tournament_id')
         .in('id', matchIds);
+      if (tournamentId) matchQuery = matchQuery.eq('tournament_id', tournamentId);
+      const { data: matches, error: matchErr } = await matchQuery;
       if (matchErr) throw matchErr;
       const matchNumMap = Object.fromEntries((matches || []).map(m => [m.id, m.match_number || 0]));
+      const validMatchIds = new Set((matches || []).map(m => m.id));
 
       const byPlayer = {};
-      stats.forEach(s => {
+      stats.filter(s => validMatchIds.has(s.match_id)).forEach(s => {
         (byPlayer[s.player_id] = byPlayer[s.player_id] || []).push({
           matchNumber: matchNumMap[s.match_id] ?? 0,
           points: s.raw_points != null ? Number(s.raw_points) : null,
@@ -1503,8 +1510,12 @@ export function createDb(cfg = {}) {
      *
      * @param {string} playerId
      * @param {number} [limit=8]
+     * @param {string} [tournamentId] - when given, only matches from this tournament are
+     *   returned. Without this, a player whose global id has stats rows from another
+     *   tournament would show unrelated matches (e.g. a women's-tournament player showing
+     *   up with IPL points). Always pass the active tournament's id from the caller.
      */
-    async getPlayerMatchHistory(playerId, limit = 8) {
+    async getPlayerMatchHistory(playerId, limit = 8, tournamentId = null) {
       const sb = await getClient();
       const { data: stats, error: statsErr } = await sb
         .from('player_match_stats')
@@ -1514,10 +1525,12 @@ export function createDb(cfg = {}) {
       if (!stats?.length) return [];
 
       const matchIds = stats.map(s => s.match_id);
-      const { data: matches, error: matchErr } = await sb
+      let matchQuery = sb
         .from('matches')
-        .select('id, match_number, home_team_id, away_team_id, start_time, status')
+        .select('id, match_number, home_team_id, away_team_id, start_time, status, tournament_id')
         .in('id', matchIds);
+      if (tournamentId) matchQuery = matchQuery.eq('tournament_id', tournamentId);
+      const { data: matches, error: matchErr } = await matchQuery;
       if (matchErr) throw matchErr;
       const matchMap = Object.fromEntries((matches || []).map(m => [m.id, m]));
 

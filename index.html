@@ -3222,6 +3222,7 @@ p31,Sample Player,MI,bat,9.0,false
           if (pls.length) PLAYERS = pls;
           playersSource = pls.length ? 'global' : 'none';
         }
+        refreshRecentForm(); // fire-and-forget: re-keys on tournament id, refetches form strips
       } catch (e) { console.warn('Player load failed, keeping current pool.', e); }
     }
 
@@ -6097,10 +6098,10 @@ p31,Sample Player,MI,bat,9.0,false
       if (!state.db || typeof state.db.getRecentFormForPlayers !== 'function') return;
       const ids = PLAYERS.map(p => p.id);
       if (!ids.length) return;
-      const key = ids.length + ':' + ids[0] + ':' + ids[ids.length - 1];
+      const key = state.activeTournamentId + ':' + ids.length + ':' + ids[0] + ':' + ids[ids.length - 1];
       if (state.recentFormKey === key) return;
       try {
-        const form = await state.db.getRecentFormForPlayers(ids, 3);
+        const form = await state.db.getRecentFormForPlayers(ids, 3, state.activeTournamentId);
         state.recentForm    = form || {};
         state.recentFormKey = key;
         renderPool();
@@ -6115,7 +6116,7 @@ p31,Sample Player,MI,bat,9.0,false
       body.innerHTML = '<div class="sc-empty">Loading…</div>';
       $('#playerStatsModal').classList.add('open');
       try {
-        const rows = await state.db.getPlayerMatchHistory(playerId, 8);
+        const rows = await state.db.getPlayerMatchHistory(playerId, 8, state.activeTournamentId);
         if (!rows.length) {
           body.innerHTML = '<div class="sc-empty">No match history yet for this player.</div>';
           return;
