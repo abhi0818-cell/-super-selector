@@ -7041,13 +7041,23 @@ p31,Sample Player,MI,bat,9.0,false
         onUpdate: (players, payload) => {
           state.lastScorecard = payload;
           const matched = [], unmatched = [];
+          const statRows = [];
           // Populate stats for ALL matched players — both daily and SL XIs use state.stats
           players.forEach(pl => {
             const mine = findLocalByName(pl.name);
             if (!mine) { unmatched.push(pl.name); return; }
             matched.push(`${pl.name} → ${mine.name}`);
             state.stats[mine.id] = { batting: pl.batting, bowling: pl.bowling, fielding: pl.fielding };
+            const s = calculateScore({ ...pl, captaincy: 'normal' }, state.format);
+            statRows.push({ playerId: mine.id, batting: pl.batting ?? null, bowling: pl.bowling ?? null, fielding: pl.fielding ?? null, rawPoints: s.rawPoints });
           });
+          // Persist per-player raw stats too — History/Leaderboard breakdown panels
+          // read from player_match_stats (not state.stats), so without this they
+          // stay empty during live play even though totals/Live Score update fine.
+          if (state.db && statRows.length) {
+            const lmIdStats = state.matches.find(m => m.external_id === id)?.id;
+            if (lmIdStats) state.db.bulkUpsertPlayerMatchStats(lmIdStats, statRows).catch(() => {});
+          }
           // Player data arriving = match is definitely in progress.
           // Flip status immediately so the admin schedule and SL lock logic
           // see the correct state without waiting for the next onPoll cycle.
