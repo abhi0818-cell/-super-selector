@@ -11734,7 +11734,9 @@ p31,Sample Player,MI,bat,9.0,false
     initAuth();
     renderApiPill();
     window.__SS = { state, get PLAYERS(){ return PLAYERS; }, scoreTeam, calculateScore, fromCricAPI,
-      testConnect: () => connectDb(SB_URL, SB_ANON, { silent: false }) };
+      testConnect: () => connectDb(SB_URL, SB_ANON, { silent: false }),
+      // Debug helpers for the live-poller/Pick-XI decoupling work
+      getLockedDailyXI, resolveSquadForMatch, findNextMatch, connectLive, maybeAutoConnect };
   
 
   
