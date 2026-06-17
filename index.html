@@ -5942,44 +5942,29 @@ p31,Sample Player,MI,bat,9.0,false
       if (m.status === 'completed') return;
       if (state.autoConnected.has(m.id)) return;             // tried this one already
       if (!m.external_id) return;                            // no CricAPI link
-
-      // No CricAPI key needed to auto-connect anymore — connectLive() always
-      // routes to the DB-backed poller now (DbScorePoller), which reads
-      // whatever the relevant cron job (scrape-scorecard or poll-cricapi)
-      // last wrote to player_match_stats. The browser never calls CricAPI
-      // directly during normal viewing.
-      state.autoConnected.add(m.id);
-
-      // Try to load the saved XI for this match (web table first, then mobile fallback)
       if (!state.db) return;
-      let xi = null;
-      try {
-        xi = await state.db.getUserTeamForMatch(m.id);
-        if (!xi || xi.playerIds.length !== 11) {
-          xi = await state.db.getUserMatchXI(m.id);
-        }
-      } catch (e) { console.warn('auto-connect: could not load saved XI', e); return; }
-      if (!xi || xi.playerIds.length !== 11) {
+
+      // Confirm a saved XI exists for this match before attempting to connect.
+      // IMPORTANT: only mark it "tried" (state.autoConnected) once this check has
+      // actually passed — this ticker re-runs every second, so a transient lookup
+      // failure (or a save still in flight) must not permanently lock out retries
+      // for the rest of the session.
+      let liveXI = null;
+      try { liveXI = await resolveSquadForMatch(m.id); }
+      catch (e) { console.warn('auto-connect: could not load saved XI', e); return; }
+      if (!liveXI) {
         console.log(`[auto-connect] skipping M${m.match_number}: no saved XI`);
         return;
       }
+      state.autoConnected.add(m.id);
 
-      // Switch the UI to this match
-      state.activeMatchId = m.id;
-      state.format = m.format;
-      const fmtPill = $('#formatPill'); if (fmtPill) fmtPill.textContent = m.format;
-      state.rulesEditing = m.format;
-      renderRulesEditor();
-
-      state.selected = xi.playerIds.filter(pid => playerById(pid));
-      state.captain = xi.captainId;
-      state.viceCaptain = xi.viceCaptainId;
-      state.activeSavedTeamId = xi.id;
-      state.stats = {};
-
-      // Set the live match dropdown so connectLive() picks it
-      $('#matchId').value = m.external_id;
-      render();
+      // Deliberately do NOT touch state.activeMatchId/selected/captain/viceCaptain
+      // here — those track whatever match is currently being *edited* in Pick XI
+      // (which may legitimately be a different, future match once saves redirect
+      // there). connectLive() resolves its own squad from the saved XI above via
+      // resolveSquadForMatch(), so auto-connecting the live poller no longer needs
+      // to hijack the Pick XI editing state to do it.
+      $('#matchId').value = m.external_id;        // so connectLive() picks this match
       // Wait a tick for the dropdown DOM to settle, then connect
       setTimeout(() => {
         connectLive()
@@ -6973,6 +6958,38 @@ p31,Sample Player,MI,bat,9.0,false
       toast('Connected — reading live scorecard from the database. No CricAPI calls from this browser.');
     }
 
+    /**
+     * Resolve the XI to use for live polling/matching of a given match, sourced
+     * from that match's own SAVED team — never from state.selected/captain/
+     * viceCaptain, which track whatever match is currently being *edited* in
+     * Pick XI/SL and can legitimately point at a different (future) match once
+     * saves redirect there (see saveTargetMatch()). This is what lets connectLive()
+     * run independently of whatever's on-screen in Pick XI.
+     */
+    async function resolveSquadForMatch(matchInternalId) {
+      if (!matchInternalId) return null;
+      // 1. Already-loaded Daily team for this match (fast path, no DB round-trip).
+      const cachedDaily = state.savedTeams.find(t => !t.squadId && t.matchId === matchInternalId);
+      if (cachedDaily?.playerIds?.length === 11) {
+        return { playerIds: cachedDaily.playerIds, captainId: cachedDaily.captainId, vcId: cachedDaily.viceCaptainId };
+      }
+      // 2. Already-loaded SL locked XI for this match.
+      if (state.sl.lastLockedXI?.matchId === matchInternalId && state.sl.lastLockedXI.playerIds?.length === 11) {
+        return { playerIds: state.sl.lastLockedXI.playerIds, captainId: state.sl.lastLockedXI.captainId, vcId: state.sl.lastLockedXI.vcId };
+      }
+      // 3. Fresh DB lookup — covers the case where state.savedTeams/state.sl haven't
+      //    been (re)loaded yet, e.g. right after boot.
+      if (!state.db) return null;
+      try {
+        let xi = await state.db.getUserTeamForMatch(matchInternalId);
+        if (!xi || xi.playerIds.length !== 11) xi = await state.db.getUserMatchXI(matchInternalId);
+        if (xi && xi.playerIds.length === 11) {
+          return { playerIds: xi.playerIds, captainId: xi.captainId, vcId: xi.viceCaptainId };
+        }
+      } catch (e) { console.warn('resolveSquadForMatch: lookup failed', e); }
+      return null;
+    }
+
     async function connectLive(){
       const key = $('#apiKey').value.trim();
       const matchSel = $('#matchId');
@@ -6986,23 +7003,28 @@ p31,Sample Player,MI,bat,9.0,false
         state.rulesEditing = fmt;
         renderRulesEditor();
       }
-      if (state.selected.length !== 11) { toast('Pick a full XI first.'); return; }
-      const squad = state.selected.map(pid => {
-        const p = playerById(pid);
-        return {
-          id       : pid,
-          name     : p?.name ?? '',
-          captaincy: state.captain === pid ? 'captain' : state.viceCaptain === pid ? 'vice_captain' : 'normal',
-        };
-      });
-      stopSim();
-      state.stats = {};
-      render();
 
       // ── DB-first: use cache ONLY when the stored scorecard confirms match is done ──
       // Never use a stale cached scorecard if the match might still be live —
       // matchLifecycle() on the cached payload is the authoritative check.
       const localMatch = state.matches.find(m => m.external_id === id);
+
+      // Squad for matching/captaincy comes from THIS match's own saved team —
+      // not from state.selected, which may currently hold a different match's
+      // in-progress edit (e.g. the next match, once saves redirect there).
+      const liveXI = await resolveSquadForMatch(localMatch?.id);
+      if (!liveXI) { toast('No saved XI found for this match — save a team first.'); return; }
+      const squad = liveXI.playerIds.map(pid => {
+        const p = playerById(pid);
+        return {
+          id       : pid,
+          name     : p?.name ?? '',
+          captaincy: liveXI.captainId === pid ? 'captain' : liveXI.vcId === pid ? 'vice_captain' : 'normal',
+        };
+      });
+      stopSim();
+      state.stats = {};
+      render();
 
       // ── Scraper-enabled tournaments: always DB-only ─────────────────────────
       // scrape-scorecard's cron keeps these tournaments' player_match_stats fresh
@@ -7113,9 +7135,9 @@ p31,Sample Player,MI,bat,9.0,false
               })
               .catch(() => {});
           }
-          // Diagnostic: daily XI players with no data from the API
+          // Diagnostic: this match's XI players with no data from the API
           const apiNames = new Set(players.map(p => p.name));
-          const xiWithoutData = state.selected
+          const xiWithoutData = liveXI.playerIds
             .map(playerById)
             .filter(p => p && ![...apiNames].some(n => findLocalByName(n)?.id === p.id))
             .map(p => p.name);
