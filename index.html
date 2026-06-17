@@ -11201,36 +11201,90 @@ p31,Sample Player,MI,bat,9.0,false
       content.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:16px 0;">Loading leaderboard…</div>';
       try {
         if (!state.db) throw new Error('Not connected');
-        let rows;
+
         if (contestType === 'season_long') {
-          rows = await state.db.getLeaderboardSL(contestId);
-        } else {
-          // Daily leaderboard — reuse existing lb rendering
-          content.innerHTML = '<div style="color:var(--muted);font-size:13px;">Use the full leaderboard view for daily contests.</div>';
+          const rows = await state.db.getLeaderboardSL(contestId);
+          if (!rows?.length) {
+            content.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:16px 0;">No scores yet.</div>';
+            return;
+          }
+          content.innerHTML = `<div style="display:grid;grid-template-columns:32px 1fr 80px 60px;gap:0;background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+            <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">#</div>
+            <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">Squad</div>
+            <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Points</div>
+            <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Xfers</div>
+            ${rows.map((r, i) => {
+              const isMe = r.squadId === state.sl?.squad?.id;
+              const bg   = isMe ? 'background:rgba(201,168,76,0.12);' : '';
+              const squadName = escapeHtml(r.squadName || 'Squad');
+              const sub = r.displayName ? `<div style="font-size:10px;color:var(--muted);margin-top:1px;">${escapeHtml(r.displayName)}</div>` : '';
+              return `<div style="padding:8px 10px;font-size:12px;${bg}border-bottom:1px solid var(--border);">${i+1}</div>
+                <div style="padding:8px 10px;font-size:12px;font-weight:${isMe?'600':'400'};${bg}border-bottom:1px solid var(--border);">
+                  ${isMe ? `<span style="color:var(--accent);">★</span> ` : ''}${squadName}${sub}
+                </div>
+                <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${r.totalPoints ?? '—'}</div>
+                <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${r.transferCount ?? 0}</div>`;
+            }).join('')}
+          </div>`;
           return;
         }
-        if (!rows?.length) {
-          content.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:16px 0;">No scores yet.</div>';
+
+        // Daily XI — per-match leaderboard. Mirrors the popup's #lbMatchPicker:
+        // default to the most recent scored (completed/in_progress) match, but
+        // let the user switch matches with an inline picker.
+        const scoredMatches = (state.matches || [])
+          .filter(m => m.status === 'completed' || m.status === 'in_progress')
+          .sort((a, b) => (b.match_number || 0) - (a.match_number || 0));
+
+        if (!scoredMatches.length) {
+          content.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:16px 0;">No completed matches yet.</div>';
           return;
         }
-        content.innerHTML = `<div style="display:grid;grid-template-columns:32px 1fr 80px 60px;gap:0;background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
-          <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">#</div>
-          <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">Squad</div>
-          <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Points</div>
-          <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Xfers</div>
-          ${rows.map((r, i) => {
-            const isMe = r.squadId === state.sl?.squad?.id;
-            const bg   = isMe ? 'background:rgba(201,168,76,0.12);' : '';
-            const squadName = escapeHtml(r.squadName || 'Squad');
-            const sub = r.displayName ? `<div style="font-size:10px;color:var(--muted);margin-top:1px;">${escapeHtml(r.displayName)}</div>` : '';
-            return `<div style="padding:8px 10px;font-size:12px;${bg}border-bottom:1px solid var(--border);">${i+1}</div>
-              <div style="padding:8px 10px;font-size:12px;font-weight:${isMe?'600':'400'};${bg}border-bottom:1px solid var(--border);">
-                ${isMe ? `<span style="color:var(--accent);">★</span> ` : ''}${squadName}${sub}
-              </div>
-              <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${r.totalPoints ?? '—'}</div>
-              <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${r.transferCount ?? 0}</div>`;
+
+        if (!lbState.matchId || !scoredMatches.some(m => m.id === lbState.matchId)) {
+          lbState.matchId = scoredMatches[0].id;
+        }
+        const dailyMatchId = lbState.matchId;
+
+        if (!lbState.profiles || !Object.keys(lbState.profiles).length) {
+          lbState.profiles = await state.db.getProfiles();
+        }
+
+        const rows = await state.db.getLeaderboardDaily(dailyMatchId);
+
+        const pickerHtml = `<select id="inlineLbMatchPicker" style="margin-bottom:8px;padding:6px 8px;font-size:12px;border-radius:6px;border:1px solid var(--border);background:var(--panel);color:var(--text);">
+          ${scoredMatches.map(m => {
+            const live = m.status === 'in_progress' ? ' 🔴' : '';
+            return `<option value="${m.id}"${m.id === dailyMatchId ? ' selected' : ''}>M${m.match_number} — ${escapeHtml(m.home_team||'')} vs ${escapeHtml(m.away_team||'')}${live}</option>`;
           }).join('')}
-        </div>`;
+        </select>`;
+
+        if (!rows?.length) {
+          content.innerHTML = `${pickerHtml}<div style="color:var(--muted);font-size:13px;padding:16px 0;">No teams saved yet for this match.</div>`;
+        } else {
+          content.innerHTML = `${pickerHtml}<div style="display:grid;grid-template-columns:32px 1fr 80px;gap:0;background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+            <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">#</div>
+            <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">Team</div>
+            <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Points</div>
+            ${rows.map((r, i) => {
+              const isMe = r.userId === state.currentUser?.id;
+              const bg   = isMe ? 'background:rgba(201,168,76,0.12);' : '';
+              const name = escapeHtml(lbState.profiles[r.userId] || 'Unknown');
+              const teamName = escapeHtml(r.teamName || 'Team');
+              const pts = r.totalPoints % 1 === 0 ? r.totalPoints : r.totalPoints.toFixed(1);
+              return `<div style="padding:8px 10px;font-size:12px;${bg}border-bottom:1px solid var(--border);">${i+1}</div>
+                <div style="padding:8px 10px;font-size:12px;font-weight:${isMe?'600':'400'};${bg}border-bottom:1px solid var(--border);">
+                  ${isMe ? `<span style="color:var(--accent);">★</span> ` : ''}${name}<div style="font-size:10px;color:var(--muted);margin-top:1px;">${teamName}</div>
+                </div>
+                <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${pts}</div>`;
+            }).join('')}
+          </div>`;
+        }
+
+        $('#inlineLbMatchPicker')?.addEventListener('change', e => {
+          lbState.matchId = e.target.value;
+          renderInlineLeaderboard(contestId, contestType);
+        });
       } catch(e) {
         content.innerHTML = `<div style="color:var(--muted);font-size:13px;">${escapeHtml(e.message)}</div>`;
       }
