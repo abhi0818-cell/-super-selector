@@ -175,6 +175,25 @@
     .player-card .name { font-weight: 600; font-size: 14px; line-height: 1.2; }
     .player-card .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
     .player-card .credit { font-size: 13px; font-weight: 700; color: var(--accent-2); }
+    .form-strip { display: flex; gap: 3px; align-items: center; }
+    .form-pip {
+      width: 16px; height: 16px; border-radius: 4px; font-size: 9px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center; color: white;
+    }
+    .form-pip.f-hi  { background: #1d8a4a; }
+    .form-pip.f-mid { background: #b8860b; }
+    .form-pip.f-lo  { background: #b03a3a; }
+    .form-pip.f-na  { background: rgba(120,120,120,0.35); color: var(--muted); }
+    .stats-icon-btn {
+      background: transparent; border: none; cursor: pointer; font-size: 13px; padding: 1px 3px;
+      line-height: 1; border-radius: 4px; color: var(--muted);
+    }
+    .stats-icon-btn:hover { background: rgba(201,168,76,0.18); color: var(--accent-2); }
+    .ph-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .ph-table th { text-align: left; padding: 6px 6px; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; font-size: 10px; }
+    .ph-table td { padding: 5px 6px; border-bottom: 1px dashed var(--border); vertical-align: top; }
+    .ph-table .ph-pts { font-weight: 700; color: var(--accent-2); }
+    .ph-line { font-size: 11px; color: var(--muted); }
     .role-tag {
       display: inline-block; font-size: 9px; padding: 2px 6px; border-radius: 4px; margin-right: 4px;
       text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700;
@@ -1708,6 +1727,19 @@ p31,Sample Player,MI,bat,9.0,false
 
   <div id="toast" class="toast"></div>
 
+  <!-- Player stats modal: match-by-match history for one player, opened from picker grid -->
+  <div id="playerStatsModal" class="modal-backdrop">
+    <div class="modal" style="max-width:640px;">
+      <header>
+        <h2 id="playerStatsTitle">Player History</h2>
+        <button class="modal-close" id="playerStatsCloseBtn" title="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <div id="playerStatsBody"><div class="sc-empty">Loading…</div></div>
+      </div>
+    </div>
+  </div>
+
   <!-- Supabase SDK loaded as a global (avoids file:// dynamic-import errors) -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"
           onerror="window.__supabaseLoadErr = 'cdn.jsdelivr.net blocked or unreachable'"></script>
@@ -2180,6 +2212,8 @@ p31,Sample Player,MI,bat,9.0,false
       lastScorecard: null,
       matches: [],              // loaded from DB
       activeMatchId: null,      // currently-selected match for pool filter
+      recentForm: {},           // playerId → [recent fantasy pts, newest first] — picker form strip
+      recentFormKey: null,      // signature of player ids last fetched, to avoid refetching
       xiScoresByMatch: {},      // match_id → [{ userTeamId, totalPoints }]
       tournaments: [],          // all tournaments from DB
       activeTournamentId: null, // currently-selected tournament UUID
@@ -3066,6 +3100,7 @@ p31,Sample Player,MI,bat,9.0,false
           });
         } catch (e) { console.warn('Could not load scoring rules from DB', e); }
         renderPool(); renderSavedTeams(); renderHistory(); renderRulesEditor(); render();
+        refreshRecentForm(); // fire-and-forget: populates form strips once loaded, then re-renders pool
         // Restore persisted scorecard so page reloads don't wipe the live view.
         // Try localStorage first (instant), fall back to DB (handles localStorage clears).
         const liveMatchId = $('#matchId')?.value?.trim();
@@ -6006,6 +6041,112 @@ p31,Sample Player,MI,bat,9.0,false
       </svg>`;
     }
 
+    // ── Player stats by match: formatters + recent-form cache ──────────────
+
+    function formatBattingLine(b) {
+      if (!b) return 'Did not bat';
+      const runs = b.runs ?? 0, balls = b.ballsFaced ?? 0;
+      const out  = b.isDismissed === false ? '*' : '';
+      let line = `${runs}${out} (${balls}b)`;
+      const extras = [];
+      if (b.fours) extras.push(`${b.fours}x4`);
+      if (b.sixes) extras.push(`${b.sixes}x6`);
+      if (extras.length) line += ` · ${extras.join(', ')}`;
+      return line;
+    }
+
+    function formatBowlingLine(b) {
+      if (!b || (!b.ballsBowled && !b.wickets && !b.runsConceded)) return null;
+      const overs = b.ballsBowled ? (Math.floor(b.ballsBowled / 6) + (b.ballsBowled % 6) / 10).toFixed(1) : '0.0';
+      let line = `${b.wickets ?? 0}/${b.runsConceded ?? 0} (${overs}ov)`;
+      const extras = [];
+      if (b.maidens) extras.push(`${b.maidens}m`);
+      if (b.dotBalls) extras.push(`${b.dotBalls} dots`);
+      if (extras.length) line += ` · ${extras.join(', ')}`;
+      return line;
+    }
+
+    function formatFieldingLine(f) {
+      if (!f) return null;
+      const bits = [];
+      if (f.catches) bits.push(`${f.catches} ct`);
+      if (f.stumpings) bits.push(`${f.stumpings} st`);
+      const runOuts = (f.runOutDirect || 0) + (f.runOutIndirect || 0);
+      if (runOuts) bits.push(`${runOuts} ro`);
+      return bits.length ? bits.join(', ') : null;
+    }
+
+    function formPipClass(pts) {
+      if (pts == null) return 'f-na';
+      if (pts >= 50) return 'f-hi';
+      if (pts >= 25) return 'f-mid';
+      return 'f-lo';
+    }
+
+    function formStripHtml(playerId) {
+      const pts = state.recentForm[playerId];
+      const cells = [0, 1, 2].map(i => {
+        const v = pts && pts[i] != null ? pts[i] : null;
+        const label = v == null ? '-' : Math.round(v);
+        return `<span class="form-pip ${formPipClass(v)}" title="${v == null ? 'No data' : v + ' pts'}">${label}</span>`;
+      });
+      return `<div class="form-strip">${cells.join('')}</div>`;
+    }
+
+    async function refreshRecentForm() {
+      if (!state.db || typeof state.db.getRecentFormForPlayers !== 'function') return;
+      const ids = PLAYERS.map(p => p.id);
+      if (!ids.length) return;
+      const key = ids.length + ':' + ids[0] + ':' + ids[ids.length - 1];
+      if (state.recentFormKey === key) return;
+      try {
+        const form = await state.db.getRecentFormForPlayers(ids, 3);
+        state.recentForm    = form || {};
+        state.recentFormKey = key;
+        renderPool();
+      } catch (e) { console.warn('[form] Could not load recent form', e); }
+    }
+
+    async function openPlayerStatsModal(playerId) {
+      const p = playerById(playerId);
+      if (!p) return;
+      $('#playerStatsTitle').textContent = `${p.name} — Match History`;
+      const body = $('#playerStatsBody');
+      body.innerHTML = '<div class="sc-empty">Loading…</div>';
+      $('#playerStatsModal').classList.add('open');
+      try {
+        const rows = await state.db.getPlayerMatchHistory(playerId, 8);
+        if (!rows.length) {
+          body.innerHTML = '<div class="sc-empty">No match history yet for this player.</div>';
+          return;
+        }
+        const trs = rows.map(r => {
+          const oppCode = r.homeTeam === p.team ? r.awayTeam : r.homeTeam;
+          const opp     = teamByCode(oppCode);
+          const battingLine  = formatBattingLine(r.batting);
+          const bowlingLine  = formatBowlingLine(r.bowling);
+          const fieldingLine = formatFieldingLine(r.fielding);
+          const lines = [battingLine, bowlingLine, fieldingLine].filter(Boolean).join('<br>');
+          return `
+            <tr>
+              <td>M${r.matchNumber ?? '?'}<br><span class="ph-line">vs ${opp?.name || oppCode || '?'}</span></td>
+              <td><span class="ph-line">${lines}</span></td>
+              <td class="ph-pts">${r.rawPoints != null ? r.rawPoints : '-'}</td>
+            </tr>`;
+        }).join('');
+        body.innerHTML = `
+          <table class="ph-table">
+            <thead><tr><th>Match</th><th>Performance</th><th>Pts</th></tr></thead>
+            <tbody>${trs}</tbody>
+          </table>`;
+      } catch (e) {
+        console.warn('[form] Could not load player history', e);
+        body.innerHTML = '<div class="sc-empty">Could not load match history.</div>';
+      }
+    }
+
+    function closePlayerStatsModal() { $('#playerStatsModal').classList.remove('open'); }
+
     function renderPool(){
       renderTeamFilter();
       renderMatchSelector();
@@ -6078,12 +6219,19 @@ p31,Sample Player,MI,bat,9.0,false
               <span class="sel-tick">✓</span>
               ${jersey}
               <div class="credit">${p.credits.toFixed(1)}</div>
+              <div style="display:flex;align-items:center;gap:4px;">
+                ${formStripHtml(p.id)}
+                <button class="stats-icon-btn" data-stats="${p.id}" title="Match-by-match history">📊</button>
+              </div>
             </div>
           </div>
         `;
       }).join('');
       grid.querySelectorAll('.player-card').forEach(card => {
         card.addEventListener('click', () => togglePlayer(card.dataset.id));
+      });
+      grid.querySelectorAll('[data-stats]').forEach(btn => {
+        btn.addEventListener('click', e => { e.stopPropagation(); openPlayerStatsModal(btn.dataset.stats); });
       });
       // Wire C/V buttons in SL mode
       if (isSL) {
@@ -11628,6 +11776,9 @@ p31,Sample Player,MI,bat,9.0,false
     $('#adminSearch').addEventListener('input', e => { state.adminSearch = e.target.value; renderAdmin(); });
     document.querySelectorAll('.admin-tabs .a-tab').forEach(t => t.addEventListener('click', () => setAdminTab(t.dataset.tab)));
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#adminModal').classList.contains('open')) closeAdmin(); });
+    $('#playerStatsCloseBtn').addEventListener('click', closePlayerStatsModal);
+    $('#playerStatsModal').addEventListener('click', e => { if (e.target.id === 'playerStatsModal') closePlayerStatsModal(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#playerStatsModal').classList.contains('open')) closePlayerStatsModal(); });
     // Team filter is now chip-based (rendered by renderTeamFilter) — no select listener needed.
     // Note: #matchFilter select replaced with #matchFilterChips chip UI — no select listener needed.
     $('#csvOpenBtn').addEventListener('click', openCsvView);

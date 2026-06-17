@@ -1451,6 +1451,96 @@ export function createDb(cfg = {}) {
     },
 
     /**
+     * Batched "recent form" lookup for many players at once — last `matchLimit`
+     * fantasy-point totals per player, newest match first. Used by the XI picker
+     * grid so showing a form strip on every card costs one round trip instead of
+     * one query per player.
+     *
+     * @param {string[]} playerIds
+     * @param {number} [matchLimit=3]
+     * @returns {Promise<Object<string, number[]>>} playerId → [pts most-recent..older]
+     */
+    async getRecentFormForPlayers(playerIds, matchLimit = 3) {
+      if (!playerIds?.length) return {};
+      const sb = await getClient();
+      const { data: stats, error: statsErr } = await sb
+        .from('player_match_stats')
+        .select('player_id, match_id, raw_points')
+        .in('player_id', playerIds);
+      if (statsErr) throw statsErr;
+      if (!stats?.length) return {};
+
+      const matchIds = [...new Set(stats.map(s => s.match_id))];
+      const { data: matches, error: matchErr } = await sb
+        .from('matches')
+        .select('id, match_number')
+        .in('id', matchIds);
+      if (matchErr) throw matchErr;
+      const matchNumMap = Object.fromEntries((matches || []).map(m => [m.id, m.match_number || 0]));
+
+      const byPlayer = {};
+      stats.forEach(s => {
+        (byPlayer[s.player_id] = byPlayer[s.player_id] || []).push({
+          matchNumber: matchNumMap[s.match_id] ?? 0,
+          points: s.raw_points != null ? Number(s.raw_points) : null,
+        });
+      });
+      const out = {};
+      Object.entries(byPlayer).forEach(([pid, rows]) => {
+        out[pid] = rows
+          .sort((a, b) => b.matchNumber - a.matchNumber)
+          .slice(0, matchLimit)
+          .map(r => r.points);
+      });
+      return out;
+    },
+
+    /**
+     * Match-by-match fantasy history for one player — powers the picker's
+     * "stats" popup so users can see exactly how a player has performed
+     * (opponent, batting/bowling/fielding line, fantasy points) before
+     * adding them to their XI. Returns rows newest-match first.
+     *
+     * @param {string} playerId
+     * @param {number} [limit=8]
+     */
+    async getPlayerMatchHistory(playerId, limit = 8) {
+      const sb = await getClient();
+      const { data: stats, error: statsErr } = await sb
+        .from('player_match_stats')
+        .select('match_id, raw_points, batting, bowling, fielding')
+        .eq('player_id', playerId);
+      if (statsErr) throw statsErr;
+      if (!stats?.length) return [];
+
+      const matchIds = stats.map(s => s.match_id);
+      const { data: matches, error: matchErr } = await sb
+        .from('matches')
+        .select('id, match_number, home_team_id, away_team_id, start_time, status')
+        .in('id', matchIds);
+      if (matchErr) throw matchErr;
+      const matchMap = Object.fromEntries((matches || []).map(m => [m.id, m]));
+
+      return stats
+        .map(s => ({ ...s, match: matchMap[s.match_id] || null }))
+        .filter(s => s.match)
+        .sort((a, b) => (b.match.match_number || 0) - (a.match.match_number || 0))
+        .slice(0, limit)
+        .map(s => ({
+          matchId    : s.match_id,
+          matchNumber: s.match.match_number,
+          homeTeam   : s.match.home_team_id,
+          awayTeam   : s.match.away_team_id,
+          startTime  : s.match.start_time,
+          status     : s.match.status,
+          rawPoints  : s.raw_points != null ? Number(s.raw_points) : null,
+          batting    : s.batting  ?? null,
+          bowling    : s.bowling  ?? null,
+          fielding   : s.fielding ?? null,
+        }));
+    },
+
+    /**
      * Return the contest_id for a squad.
      * Used by the scoring pipeline to resolve per-contest rules.
      *
