@@ -4686,6 +4686,8 @@ p31,Sample Player,MI,bat,9.0,false
           ? `Draft saved — no changes from last locked XI.${lockNote}`
           : `Draft saved — ${changes} pending transfer${changes !== 1 ? 's' : ''}.${lockNote}`,
           3500);
+        // Jump to the Contest tab instead of leaving the user on the picker.
+        switchPageTab('contest');
       } catch (e) {
         toast('Save failed: ' + e.message, 5000);
       } finally {
@@ -6665,8 +6667,10 @@ p31,Sample Player,MI,bat,9.0,false
         state.savedTeams = await state.db.listUserTeams();
         renderSavedTeams();
         toast(`Saved: ${name}`);
-        // Close the editor and drop back to the read-only Pick XI view.
+        // Close the editor, then jump to the Contest tab instead of leaving the
+        // user on the read-only Pick XI view.
         if ($('#poolPanel').style.display !== 'none') setPoolOpen(false);
+        switchPageTab('contest');
       } catch (e) { toast('Save failed: ' + e.message, 4000); }
     }
 
