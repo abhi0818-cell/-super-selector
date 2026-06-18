@@ -911,7 +911,7 @@
       object-fit:contain; filter:drop-shadow(0 1px 4px rgba(0,0,0,0.9));
     }
     /* ── History pitch view ─────────────────────────────────────────────────── */
-    .hist-pitch-wrap { background:#1a5c1a; max-width:390px; margin:0 auto; border-radius:12px; }
+    .hist-pitch-wrap { background:#1a5c1a; width:100%; max-width:390px; margin:0 auto; border-radius:12px; }
     .pitch-oval-hist {
       position:relative; margin:10px 14px; height:460px;
       border-radius:50%; overflow:hidden;
@@ -930,7 +930,7 @@
     .hist-team-panel { display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap; justify-content:flex-start; }
     .hist-team-panel .hist-pitch-wrap { flex:0 0 auto; margin:0; }
     .hist-breakdown-panel {
-      flex:1 1 320px; min-width:260px;
+      flex:0 1 280px; min-width:240px;
       background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:hidden;
     }
     .hist-breakdown-hdr {
@@ -5414,61 +5414,49 @@ p31,Sample Player,MI,bat,9.0,false
         const p = playerById(id); if (!p) return null;
         const stats = state.stats[id] || {};
         const captaincy = id === captainId ? 'captain' : id === vcId ? 'vice_captain' : 'normal';
-        return { name: p.name, role: p.role, captaincy, ...stats };
+        return { id, name: p.name, role: p.role, team: p.team, captaincy, ...stats };
       }).filter(Boolean);
-      const scored      = scoreTeam(scoreInputs, state.format);
-      const byName      = Object.fromEntries(scored.map(s => [s.name, s]));
-      const total       = scored.reduce((a, s) => a + s.totalPoints, 0);
+      const scored = scoreTeam(scoreInputs, state.format);
+      const byName = Object.fromEntries(scored.map(s => [s.name, s]));
+      const total  = scored.reduce((a, s) => a + s.totalPoints, 0);
 
       const capName = playerById(captainId)?.name?.split(' ').pop() ?? '--';
       const vcName  = playerById(vcId)?.name?.split(' ').pop() ?? '--';
 
-      let html = `
-        <div style="padding:10px 16px 10px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
-          <div>
-            <div style="font-weight:600; font-size:14px;">${matchLabel}${vsLabel}${statusText}</div>
-            <div style="font-size:11px; color:var(--muted); margin-top:3px;">${capName} (C) · ${vcName} (VC)</div>
-          </div>
-          <div style="text-align:right;">
-            <div style="font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:0.4px;">Total</div>
-            <div style="font-size:24px; font-weight:700; color:var(--accent);">${total.toFixed(1)}</div>
-          </div>
+      // Reuse the same pitch + points-breakdown component as the History tab —
+      // build a "history-shaped" team object so histTeamPanelHtml / histPitchToken /
+      // histBreakdownRowHtml (which read player_id / team_id / raw_points / batting /
+      // bowling / fielding) work unmodified against live state.stats data instead of
+      // a DB row. raw_points comes from calculateScore's pre-multiplier rawPoints,
+      // matching how histPitchToken itself re-applies the C/VC multiplier on top.
+      const livePlayers = scoreInputs.map(p => ({
+        player_id : p.id,
+        name      : p.name,
+        role      : p.role,
+        team_id   : p.team,
+        batting   : p.batting,
+        bowling   : p.bowling,
+        fielding  : p.fielding,
+        raw_points: byName[p.name]?.rawPoints ?? null,
+      }));
+      const liveTeam = {
+        captain_id     : captainId,
+        vice_captain_id: vcId,
+        total_points   : total,
+        players        : livePlayers,
+      };
+
+      el.innerHTML = `
+        <div style="padding:10px 16px 8px; border-bottom:1px solid var(--border);">
+          <div style="font-weight:600; font-size:14px;">${matchLabel}${vsLabel}${statusText}</div>
+          <div style="font-size:11px; color:var(--muted); margin-top:3px;">${capName} (C) · ${vcName} (VC)</div>
         </div>
-        <div style="padding:8px 0 12px;">`;
+        <div style="padding:12px 16px 14px;">${histTeamPanelHtml(liveTeam, state.format)}</div>
+      `;
 
-      html += sortByRole(playerIds).map(id => {
-        const p = playerById(id); if (!p) return '';
-        const isCap = id === captainId;
-        const isVc  = id === vcId;
-        const badge = isCap
-          ? '<span class="cap-badge">C</span>'
-          : isVc ? '<span class="vc-badge">VC</span>' : '';
-        const score     = byName[p.name];
-        const pts       = score ? score.totalPoints.toFixed(1) : '0.0';
-        const breakdown = score && Object.keys(score.breakdown).length
-          ? Object.entries(score.breakdown).map(([cat, vals]) => {
-              const items = Object.entries(vals)
-                .filter(([, v]) => v !== 0)
-                .map(([k, v]) => `${k}: ${v > 0 ? '+' : ''}${v}`)
-                .join(', ');
-              return items ? `<span class="b-cat">${cat}</span>${items}` : '';
-            }).filter(Boolean).join(' &nbsp;|&nbsp; ')
-          : '<em>no events yet</em>';
-        return `<div class="squad-row" data-liveid="${id}" style="cursor:pointer;">
-          <div>
-            <div class="name">${p.name}${badge}${p.overseas ? ' <span class="os-tag">✈️</span>' : ''}</div>
-            <div class="meta"><span class="role-tag role-${p.role}">${roleLabel[p.role]}</span> ${p.team} · ${p.credits.toFixed(1)} cr</div>
-          </div>
-          <span class="pts">${pts}</span>
-          <div class="breakdown">${breakdown}</div>
-        </div>`;
-      }).join('');
-
-      html += '</div>';
-      el.innerHTML = html;
-
-      el.querySelectorAll('.squad-row').forEach(row =>
-        row.addEventListener('click', () => row.classList.toggle('expanded')));
+      requestAnimationFrame(() => {
+        el.querySelectorAll('.pitch-oval-hist').forEach(ov => fitHistOval(ov));
+      });
     }
 
     // ─── SL LIVE SCORE TAB ───────────────────────────────────────────────────
