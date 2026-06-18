@@ -6634,7 +6634,12 @@ p31,Sample Player,MI,bat,9.0,false
         state.selected.splice(idx, 1);
         if (state.captain === id)     state.captain = null;
         if (state.viceCaptain === id) state.viceCaptain = null;
-        delete state.stats[id];
+        // Only clear this player's cached live stat if they aren't part of the
+        // currently-locked live XI. state.stats is shared with the Live Score
+        // tab, so wiping it for someone who's actually live would zero their
+        // displayed points until the poller happens to refresh again.
+        const locked = getLockedDailyXI();
+        if (!locked?.playerIds?.includes(id)) delete state.stats[id];
       } else {
         if (!canAdd(p)) { toast('Cannot add — check budget, role limits, or team cap.'); return; }
         state.selected.push(id);
@@ -6657,9 +6662,20 @@ p31,Sample Player,MI,bat,9.0,false
 
     function resetXI(){
       if (isXILocked()) { toast(lockReason()); return; }
-      state.selected = []; state.captain = null; state.viceCaptain = null; state.stats = {};
+      state.selected = []; state.captain = null; state.viceCaptain = null;
       state.activeSavedTeamId = null;
-      stopSim(); render();
+      // Deliberately do NOT clear state.stats or touch state.poller here.
+      // Both belong to whichever match is actually live right now — not to
+      // the draft being reset, which may be for a different (future) match.
+      // Only stop the mock-match simulator if one happens to be running;
+      // a real live poller for another match must keep running untouched.
+      if (state.simRunning) {
+        state.simRunning = false;
+        clearInterval(state.simTimer);
+        state.simTimer = null;
+        const simBtn = $('#simBtn'); if (simBtn) simBtn.textContent = 'Start mock match';
+      }
+      render();
     }
 
     // ─── SAVED TEAMS ─────────────────────────────────────────────────────────
