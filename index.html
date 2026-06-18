@@ -6303,7 +6303,21 @@ p31,Sample Player,MI,bat,9.0,false
       if (maxTeam > RULES.maxPerTeam) msgs.push({ t:'err', m:`More than ${RULES.maxPerTeam} players from one real team.` });
       if (overseasCount > overseasCap) msgs.push({ t:'err', m:`Too many overseas players — ${state.format} caps the XI at ${overseasCap}.` });
       if (sel.length === 11 && (!state.captain || !state.viceCaptain)) msgs.push({ t:'warn', m:'Pick a Captain (C) and Vice-Captain (V).' });
-      if (sel.length === 11 && state.captain && state.viceCaptain && msgs.length===0) msgs.push({ t:'ok', m:'Squad is valid. Start the match or save your XI below.' });
+      if (sel.length === 11 && state.captain && state.viceCaptain && msgs.length===0) {
+        // Distinguish "built but not saved yet" from "this exact XI is already
+        // saved against the target match" — the latter happens whenever the
+        // user revisits Pick XI after saving (the saved squad reloads as-is).
+        const tm = saveTargetMatch();
+        const existing = tm ? (state.savedTeams || []).find(t => t.matchId === tm.id && !t.squadId) : null;
+        const alreadySaved = existing
+          && existing.captainId === state.captain
+          && existing.viceCaptainId === state.viceCaptain
+          && existing.playerIds.length === sel.length
+          && existing.playerIds.every(id => state.selected.includes(id));
+        msgs.push(alreadySaved
+          ? { t:'ok', m:'Squad is saved. You can edit your XI for the next game.' }
+          : { t:'ok', m:'Squad is valid. Start the match or save your XI below.' });
+      }
 
       $('#messages').innerHTML = msgs.map(x => `<div class="msg ${x.t}">${x.m}</div>`).join('');
     }
