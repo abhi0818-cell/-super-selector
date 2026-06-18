@@ -2127,24 +2127,41 @@ p31,Sample Player,MI,bat,9.0,false
         });
       });
 
+      // Resolve a raw fielder name to exactly one player. Checks three tiers in order
+      // (exact name, full-name-ends-with-rawName, rawName-ends-with-surname) and stops
+      // at the first tier that has ANY candidates. Critically, if that tier has more
+      // than one candidate (e.g. two squad members share a surname — "Bryce" matches
+      // both Sarah Bryce and Katherine Bryce), this returns ambiguous:true instead of
+      // silently picking whichever one happens to come first in the array. The old
+      // .find()-chain behaviour did exactly that silent pick, which is how fielding
+      // points for one player got credited to a same-surnamed teammate with zero error.
+      function resolveFielder(norm) {
+        const tiers = [
+          players.filter(p => p.name.toLowerCase() === norm),
+          players.filter(p => p.name.toLowerCase().endsWith(' ' + norm)),
+          players.filter(p => norm.endsWith(' ' + p.name.toLowerCase().split(' ').pop())),
+        ];
+        for (const tier of tiers) {
+          if (tier.length === 1) return { player: tier[0], candidates: null };
+          if (tier.length > 1)  return { player: null, candidates: tier.map(p => p.name) };
+        }
+        // Not in batting/bowling rows — check squad list (fielders who didn't bat/bowl).
+        const sqTiers = [
+          squad.filter(s => s.name && s.name.toLowerCase() === norm),
+          squad.filter(s => s.name && s.name.toLowerCase().endsWith(' ' + norm)),
+          squad.filter(s => s.name && norm.endsWith(' ' + s.name.toLowerCase().split(' ').pop())),
+        ];
+        for (const tier of sqTiers) {
+          if (tier.length === 1) return { player: ensure(String(tier[0].id ?? tier[0].name), tier[0].name), candidates: null };
+          if (tier.length > 1)  return { player: null, candidates: tier.map(s => s.name) };
+        }
+        return { player: null, candidates: null };
+      }
+
       // Assign fielding stats to matched players by name.
       Object.values(fieldingMap).forEach(({ rawName, catches, stumpings, runOutDirect, runOutIndirect }) => {
         const norm = rawName.toLowerCase().trim();
-        // Try exact match first, then last-name/suffix match.
-        let player = players.find(p => p.name.toLowerCase() === norm)
-          || players.find(p => p.name.toLowerCase().endsWith(' ' + norm))
-          || players.find(p => norm.endsWith(' ' + p.name.toLowerCase().split(' ').pop()));
-        // If not in batting/bowling rows, check squad list.
-        if (!player) {
-          const sq = squad.find(s =>
-            s.name && (
-              s.name.toLowerCase() === norm ||
-              s.name.toLowerCase().endsWith(' ' + norm) ||
-              norm.endsWith(' ' + s.name.toLowerCase().split(' ').pop())
-            )
-          );
-          if (sq) player = ensure(String(sq.id ?? sq.name), sq.name);
-        }
+        const { player, candidates } = resolveFielder(norm);
         if (player) {
           // Accumulate rather than overwrite — a scorecard can spell the same fielder's
           // name two different ways across separate dismissals in the same match (e.g.
@@ -2158,6 +2175,9 @@ p31,Sample Player,MI,bat,9.0,false
             runOutDirect:   prev.runOutDirect + runOutDirect,
             runOutIndirect: prev.runOutIndirect + runOutIndirect,
           };
+        } else if (candidates) {
+          console.warn('[fromCricAPI] fielding: ambiguous match for', rawName, '— candidates:', candidates);
+          fieldingIssues.push({ stage: 'ambiguous', rawName, candidates, catches, stumpings, runOutDirect, runOutIndirect, reason: `matches multiple players (${candidates.join(', ')}) — not credited to any of them` });
         } else {
           console.warn('[fromCricAPI] fielding: no player matched for:', rawName);
           fieldingIssues.push({ stage: 'match', rawName, catches, stumpings, runOutDirect, runOutIndirect, reason: 'name did not match any player in the match or squad' });
@@ -2174,10 +2194,11 @@ p31,Sample Player,MI,bat,9.0,false
     // Human-readable summary of fromCricAPI's fieldingIssues, for status text / toasts.
     function summarizeFieldingIssues(issues) {
       if (!issues?.length) return '';
-      return issues.map(it => it.stage === 'parse'
-        ? `${it.batter}'s ${it.dismissalType.replace('_',' ')} ("${it.dismissalRaw}") — no fielder name in scorecard`
-        : `"${it.rawName}" — fielding credit not matched to any player`
-      ).join('; ');
+      return issues.map(it => {
+        if (it.stage === 'parse')     return `${it.batter}'s ${it.dismissalType.replace('_',' ')} ("${it.dismissalRaw}") — no fielder name in scorecard`;
+        if (it.stage === 'ambiguous') return `"${it.rawName}" — matches ${it.candidates.join(' / ')}, could not tell which one (not credited to either)`;
+        return `"${it.rawName}" — fielding credit not matched to any player`;
+      }).join('; ');
     }
 
     // ─── FALLBACK MOCK POOL (used when DB isn't configured) ──────────────────
@@ -9277,6 +9298,7 @@ p31,Sample Player,MI,bat,9.0,false
         unmatched: unmatchedNames.length,
         unmatchedNames,
         fieldingIssues: players.fieldingIssues || [],
+        scorecard: json,
       };
     }
 
@@ -9306,6 +9328,13 @@ p31,Sample Player,MI,bat,9.0,false
         const result = await finalizeOneMatch(m, apiKey);
         renderMatchesAdmin();
         renderHistory();
+        // The Fantasy Scorecard panel only ever populated from the live poller's
+        // state.lastScorecard — for a match finalized after the fact (no live
+        // session ever ran), it stayed empty/"No data yet." even though we now
+        // have a freshly fetched scorecard right here. Feed it in so the panel
+        // (and its fielding-issue banner) actually shows something.
+        state.lastScorecard = result.scorecard;
+        renderFantasyScorecard();
         const fIssues = result.fieldingIssues || [];
         const hasUnmatched = result.unmatchedNames?.length > 0;
         const hasFieldingIssues = fIssues.length > 0;
@@ -9467,6 +9496,14 @@ p31,Sample Player,MI,bat,9.0,false
         const issueText = fIssues2.length ? ` ⚠ ${fIssues2.length} fielding event(s) not credited: ${summarizeFieldingIssues(fIssues2)}.` : '';
         statusEl.innerHTML = `✓ Recalculated M${m.match_number} — ${rows.length} players updated, ${unmatched} unmatched. Fielding: ${fieldingPlayers.length} players credited.`
           + (issueText ? `<span style="color:var(--bad);">${escapeHtml(issueText)}</span>` : '');
+        // Feed the Fantasy Scorecard panel so the fielding-issue banner is visible
+        // there too, not just in this status line (same gap as finalize had).
+        state.lastScorecard = json;
+        renderFantasyScorecard();
+        if (fIssues2.length) {
+          $('#fantasyScorecardSection')?.setAttribute('open', '');
+          $('#fantasyScorecardSection')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
         renderMatchesAdmin();
         renderHistory();
         if (fIssues2.length) {
