@@ -1131,7 +1131,6 @@
       <span id="formatPill" class="db-pill" title="Scoring format — set by the active tournament">T20</span>
       <span class="hdr-divider"></span>
       <button id="simBtn" class="primary" style="display:none;">Start mock match</button>
-      <button id="lbBtn" class="ctrl-btn" style="display:none;" title="Leaderboard">🏆 Leaderboard</button>
       <button id="rulesBtn" class="ctrl-btn" style="display:none;" title="Rules">📖 Rules</button>
       <button id="adminBtn" class="ctrl-btn ctrl-btn-admin" title="Tournament setup, players, schedule" style="display:none;">⚙️ Admin</button>
       <span class="hdr-divider"></span>
@@ -1146,7 +1145,7 @@
   <!-- ══ Page-level tabs ══ -->
   <nav class="page-tabs" id="pageTabs" style="display:none;">
     <span class="p-tab active" data-ptab="home">Home</span>
-    <span class="p-tab" data-ptab="contest">🏆 Contest</span>
+    <span class="p-tab" data-ptab="contest">🏆 Leaderboard</span>
     <span class="p-tab" data-ptab="team">My Team</span>
     <span class="p-tab" data-ptab="season">Season</span>
   </nav>
@@ -1174,8 +1173,7 @@
     </div>
     <!-- Leaderboard section (reuses existing lb modal content inline) -->
     <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
-      <div style="font-size:13px; font-weight:600; color:var(--text);" id="inlineContestName">—</div>
-      <button class="ctrl-btn" id="openFullLbBtn" style="font-size:11px; padding:4px 10px;">⬆ Full view</button>
+      <div style="font-size:13px; font-weight:600; color:var(--text); cursor:pointer;" id="inlineContestName" title="Click for full view">—</div>
     </div>
     <div id="inlineLbPlaceholder" style="font-size:13px; color:var(--muted); padding:20px 0;">
       Pick a contest above to see its leaderboard.
@@ -2913,7 +2911,6 @@ p31,Sample Player,MI,bat,9.0,false
       const name    = $('#userName');
       const signOut  = $('#signOutBtn');
       const adminBtn = $('#adminBtn');
-      const lbBtn    = $('#lbBtn');
       const rulesBtn = $('#rulesBtn');
       const pageTabs = $('#pageTabs');
 
@@ -2925,14 +2922,12 @@ p31,Sample Player,MI,bat,9.0,false
         name.textContent    = displayName;
         pill.style.display    = '';
         signOut.style.display = '';
-        lbBtn.style.display    = '';
         rulesBtn.style.display = '';
         adminBtn.style.display = isAdmin ? '' : 'none';
         pageTabs.style.display = 'flex';
       } else {
         pill.style.display     = 'none';
         signOut.style.display  = 'none';
-        lbBtn.style.display    = 'none';
         rulesBtn.style.display = 'none';
         adminBtn.style.display = !REQUIRE_AUTH ? '' : 'none';
         pageTabs.style.display = !REQUIRE_AUTH ? 'flex' : 'none';
@@ -11109,7 +11104,6 @@ p31,Sample Player,MI,bat,9.0,false
     $('#rulesModal').addEventListener('click', e => { if (e.target.id === 'rulesModal') closeRules(); });
 
     // ─── Leaderboard ─────────────────────────────────────────────────────────
-    $('#lbBtn').addEventListener('click', openLeaderboard);
     $('#lbCloseBtn').addEventListener('click', closeLeaderboard);
     $('#lbModal').addEventListener('click', e => { if (e.target.id === 'lbModal') closeLeaderboard(); });
     // Note: .lb-tab click handlers are wired dynamically inside renderLbTabs()
@@ -11201,8 +11195,8 @@ p31,Sample Player,MI,bat,9.0,false
       if (btnDy) btnDy.style.display = isSL ? 'none' : '';
     }
 
-    // "Full view" button in Contest tab → opens the existing leaderboard modal
-    $('#openFullLbBtn').addEventListener('click', openLeaderboard);
+    // Contest name in Contest tab → click opens the existing leaderboard modal (full view)
+    $('#inlineContestName').addEventListener('click', openLeaderboard);
 
     // ─── Home tab renderer ───────────────────────────────────────────────────
     function renderPageHomeTab() {
