@@ -1251,8 +1251,8 @@
       <div id="messages" class="messages"></div>
       <div class="live-bar">
         <span id="liveDot" class="live-dot"></span>
-        <span id="liveLabel">Pick 11 players to begin</span>
-        <span class="total-points" id="totalPoints">0 <small>pts</small></span>
+        <span id="liveLabel"></span>
+        <span class="total-points" id="totalPoints"></span>
       </div>
       <div id="pitchXiWrap">
         <div class="pitch-outer">
@@ -6369,10 +6369,13 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     function renderTotal(){
-      if (state.selected.length === 0) { $('#totalPoints').innerHTML = '0 <small>pts</small>'; return; }
-      const scored = scoreTeam(state.selected.map(buildPlayerForScoring), state.format);
-      const total = scored.reduce((a,s)=>a+s.totalPoints, 0);
-      $('#totalPoints').innerHTML = `${total.toFixed(1)} <small>pts</small>`;
+      // This status strip ("Pick 11 players to begin" / points) is left over from
+      // the old mock-match simulator and isn't relevant to building a squad — the
+      // Pick XI screen already shows squad validity via #messages and per-player
+      // points via the pitch view / squad list. Keep it blank here; live polling
+      // (connectLive/startSim) still writes its own status into #liveLabel when an
+      // actual match connection is active.
+      $('#totalPoints').innerHTML = '';
     }
 
     function renderSavedTeams() {
