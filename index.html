@@ -310,6 +310,9 @@
     .fsc-table .link-inline select { font-size: 11px; padding: 2px 6px; max-width: 180px; }
     .fsc-table .link-inline button { font-size: 10px; padding: 2px 8px; }
     .fsc-table .link-btn { font-size: 10px; padding: 2px 8px; background: transparent; border-color: var(--bad); color: var(--bad); }
+    .fielding-credit-btn, .fielding-link-btn, .fielding-link-save-btn { font-size: 10px; padding: 2px 8px; background: transparent; border-color: var(--good); color: var(--good); }
+    .fielding-link-cancel-btn { font-size: 10px; padding: 2px 8px; }
+    .fielding-link-sel { font-size: 11px; padding: 2px 6px; max-width: 180px; }
 
     /* Scorecard view */
     .sc-header { padding: 10px 16px; border-bottom: 1px solid var(--border); }
@@ -2128,32 +2131,50 @@ p31,Sample Player,MI,bat,9.0,false
       });
 
       // Resolve a raw fielder name to exactly one player. Checks three tiers in order
-      // (exact name, full-name-ends-with-rawName, rawName-ends-with-surname) and stops
-      // at the first tier that has ANY candidates. Critically, if that tier has more
-      // than one candidate (e.g. two squad members share a surname — "Bryce" matches
-      // both Sarah Bryce and Katherine Bryce), this returns ambiguous:true instead of
-      // silently picking whichever one happens to come first in the array. The old
-      // .find()-chain behaviour did exactly that silent pick, which is how fielding
-      // points for one player got credited to a same-surnamed teammate with zero error.
+      // (exact name, full-name-ends-with-rawName, rawName-ends-with-surname).
+      //
+      // Ambiguity MUST be checked against the full squad roster, not just the
+      // `players` array built so far from batting/bowling rows. Reason: if two
+      // squad members share a name/surname (e.g. sisters Sarah Bryce and Katherine
+      // Bryce) but only ONE of them happened to bat or bowl in this match, the old
+      // code checked `players` first, found a single (wrong) match there, and
+      // returned immediately — never discovering that the squad list actually had
+      // two "Bryce"s. That silently credited the fielding event to whichever sister
+      // batted, even when she wasn't the one who actually took the catch. So every
+      // tier is evaluated against the full squad (when available) first; only if
+      // the squad list is empty do we fall back to `players`-only matching.
       function resolveFielder(norm) {
+        // Honor a manual resolution made via the "Credit to X" / "Link" controls in
+        // the Fantasy Scorecard panel (see linkPlayerAndRescore) — these are stored
+        // in the same NAME_ALIASES map used for top-level player names, keyed by the
+        // lowercased raw text exactly as it appears in the dismissal. A manual pick
+        // always wins, even if the name would otherwise resolve ambiguously.
+        if (typeof NAME_ALIASES !== 'undefined' && NAME_ALIASES[norm]) {
+          const aliasedName = NAME_ALIASES[norm];
+          const existingByAlias = players.find(p => p.name === aliasedName);
+          if (existingByAlias) return { player: existingByAlias, candidates: null };
+          const sqByAlias = squad.find(s => s.name === aliasedName);
+          if (sqByAlias) return { player: ensure(String(sqByAlias.id ?? sqByAlias.name), sqByAlias.name), candidates: null };
+        }
+        const squadNames = squad.filter(s => s.name);
+        const pool = squadNames.length ? squadNames : players;
         const tiers = [
-          players.filter(p => p.name.toLowerCase() === norm),
-          players.filter(p => p.name.toLowerCase().endsWith(' ' + norm)),
-          players.filter(p => norm.endsWith(' ' + p.name.toLowerCase().split(' ').pop())),
+          pool.filter(s => s.name.toLowerCase() === norm),
+          pool.filter(s => s.name.toLowerCase().endsWith(' ' + norm)),
+          pool.filter(s => norm.endsWith(' ' + s.name.toLowerCase().split(' ').pop())),
         ];
         for (const tier of tiers) {
-          if (tier.length === 1) return { player: tier[0], candidates: null };
-          if (tier.length > 1)  return { player: null, candidates: tier.map(p => p.name) };
-        }
-        // Not in batting/bowling rows — check squad list (fielders who didn't bat/bowl).
-        const sqTiers = [
-          squad.filter(s => s.name && s.name.toLowerCase() === norm),
-          squad.filter(s => s.name && s.name.toLowerCase().endsWith(' ' + norm)),
-          squad.filter(s => s.name && norm.endsWith(' ' + s.name.toLowerCase().split(' ').pop())),
-        ];
-        for (const tier of sqTiers) {
-          if (tier.length === 1) return { player: ensure(String(tier[0].id ?? tier[0].name), tier[0].name), candidates: null };
-          if (tier.length > 1)  return { player: null, candidates: tier.map(s => s.name) };
+          if (!tier.length) continue;
+          const distinctNames = [...new Set(tier.map(s => s.name))];
+          if (distinctNames.length > 1) return { player: null, candidates: distinctNames };
+          const name = distinctNames[0];
+          // Prefer the existing `players` entry for this name so batting/bowling
+          // stats already attached stay on the same object; only create a new
+          // fielding-only entry (via squad id) if this player never batted/bowled.
+          const existing = players.find(p => p.name === name);
+          if (existing) return { player: existing, candidates: null };
+          const sq = squadNames.find(s => s.name === name);
+          return { player: ensure(String(sq?.id ?? name), name), candidates: null };
         }
         return { player: null, candidates: null };
       }
@@ -9962,7 +9983,8 @@ p31,Sample Player,MI,bat,9.0,false
           ${unmatchedCount} player${unmatchedCount>1?'s':''} not matched to your pool — click <strong>Link</strong> on the red rows to fix names &amp; recalculate points.
         </div>` : ''}
         ${fieldingIssues.length ? `<div style="padding:6px 10px;font-size:11px;background:rgba(248,113,113,0.08);border-bottom:1px solid var(--border);color:var(--bad);">
-          ⚠ ${fieldingIssues.length} fielding event${fieldingIssues.length>1?'s':''} not credited to anyone: ${escapeHtml(summarizeFieldingIssues(fieldingIssues))}
+          <div style="margin-bottom:4px;">⚠ ${fieldingIssues.length} fielding event${fieldingIssues.length>1?'s':''} not credited to anyone:</div>
+          ${fieldingIssues.map(fieldingIssueRowHtml).join('')}
         </div>` : ''}
         <table class="fsc-table">
           <thead>
@@ -10012,6 +10034,17 @@ p31,Sample Player,MI,bat,9.0,false
         btn.addEventListener('click', () => expandLinkRow(btn));
       });
 
+      // Fielding-issue action controls: one-click "Credit to X" for ambiguous
+      // same-name matches, and an expandable Link picker for fielding events that
+      // matched no one at all. Both write into NAME_ALIASES (same store as the
+      // top-level Link buttons) and rescore, so the fix sticks on the next recalc.
+      view.querySelectorAll('.fielding-credit-btn').forEach(btn => {
+        btn.addEventListener('click', () => linkPlayerAndRescore(btn.dataset.rawName, btn.dataset.playerId));
+      });
+      view.querySelectorAll('.fielding-link-btn').forEach(btn => {
+        btn.addEventListener('click', () => expandFieldingLinkRow(btn));
+      });
+
       // Click a player row → toggle breakdown detail row
       view.querySelectorAll('.fsc-player-row').forEach(tr => {
         tr.addEventListener('click', () => {
@@ -10023,6 +10056,63 @@ p31,Sample Player,MI,bat,9.0,false
           tr.style.background = open ? '' : 'rgba(201,168,76,0.05)';
         });
       });
+    }
+
+    /**
+     * Renders one fielding-issue row with whatever action control fits its stage:
+     *  - 'parse': no raw name was even extracted — nothing to link, text only.
+     *  - 'ambiguous': raw name matched 2+ players — one button per candidate so
+     *     the admin can credit it to the right one in a single click.
+     *  - 'match' (default): raw name matched nobody — same Link-and-pick pattern
+     *     as the top-level unmatched-name rows.
+     * All actions ultimately call linkPlayerAndRescore, which stores the mapping
+     * in NAME_ALIASES (now also consulted by resolveFielder, see fromCricAPI) and
+     * re-runs scoring so the credit actually lands on the next render.
+     */
+    function fieldingIssueRowHtml(it) {
+      const text = `<span style="color:var(--fg)">${escapeHtml(summarizeFieldingIssues([it]))}</span>`;
+      if (it.stage === 'ambiguous') {
+        const btns = it.candidates.map(name => {
+          const p = PLAYERS.find(pp => pp.name === name);
+          return p ? `<button class="fielding-credit-btn" data-raw-name="${escapeHtml(it.rawName)}" data-player-id="${escapeHtml(String(p.id))}">Credit to ${escapeHtml(name)}</button>` : '';
+        }).join(' ');
+        return `<div style="margin:3px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${text} ${btns}</div>`;
+      }
+      if (it.stage === 'match') {
+        return `<div class="fielding-link-row" data-raw-name="${escapeHtml(it.rawName)}" style="margin:3px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+          ${text}
+          <button class="fielding-link-btn">Link</button>
+        </div>`;
+      }
+      return `<div style="margin:3px 0;">${text}</div>`;
+    }
+
+    /**
+     * Expands a fielding-issue "Link" button into an inline player-picker,
+     * mirroring expandLinkRow below but for a fielder raw-name row instead of
+     * an unmatched top-level player row.
+     */
+    function expandFieldingLinkRow(btn) {
+      const row = btn.closest('.fielding-link-row');
+      const rawName = row?.dataset.rawName;
+      if (!rawName) return;
+
+      const playerOpts = PLAYERS
+        .slice().sort((a, b) => a.name.localeCompare(b.name))
+        .map(p => `<option value="${p.id}">${escapeHtml(p.name)} (${escapeHtml(p.team_id || p.team || '')})</option>`)
+        .join('');
+
+      row.innerHTML = `
+        <span style="color:var(--fg)">"${escapeHtml(rawName)}" —</span>
+        <select class="fielding-link-sel">${playerOpts}</select>
+        <button class="fielding-link-save-btn">Credit &amp; rescore</button>
+        <button class="fielding-link-cancel-btn" style="background:transparent;border-color:var(--muted);color:var(--muted);">✕</button>
+      `;
+      row.querySelector('.fielding-link-save-btn').addEventListener('click', () => {
+        const playerId = row.querySelector('.fielding-link-sel').value;
+        linkPlayerAndRescore(rawName, playerId);
+      });
+      row.querySelector('.fielding-link-cancel-btn').addEventListener('click', () => renderFantasyScorecard());
     }
 
     /**
