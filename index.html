@@ -9019,6 +9019,30 @@ p31,Sample Player,MI,bat,9.0,false
       return m ? parseInt(m[1], 10) : null;
     }
 
+    const MONTH_ABBR = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
+
+    // CricAPI's series_info feed sometimes truncates dateTimeGMT to midnight
+    // (e.g. "2026-06-18T00:00:00") and drops the real kickoff time entirely —
+    // seen on the MLC 2026 series. The actual time survives in the human-readable
+    // `status` string instead, e.g. "Match starts at Jun 19, 00:30 GMT". When we
+    // spot the midnight-truncation pattern, parse the real time out of `status`
+    // and use that instead. Falls through untouched for every other tournament
+    // where dateTimeGMT is already correct (the regex just won't match).
+    function fixMidnightGmtFromStatus(rawDt, item) {
+      if (!rawDt || !/T00:00:00(\.000)?Z?$/.test(rawDt)) return rawDt;
+      const m = String(item.status || '').match(/Match starts at\s+([A-Za-z]{3})[A-Za-z]*\s+(\d{1,2}),?\s*(\d{1,2}):(\d{2})\s*GMT/i);
+      if (!m) return rawDt;
+      const monthIdx = MONTH_ABBR[m[1].toLowerCase()];
+      if (monthIdx == null) return rawDt;
+      const day = parseInt(m[2], 10), hour = parseInt(m[3], 10), min = parseInt(m[4], 10);
+      const base = new Date(rawDt.slice(0, 10) + 'T00:00:00Z');
+      if (isNaN(base)) return rawDt;
+      let year = base.getUTCFullYear();
+      if (monthIdx === 0 && base.getUTCMonth() === 11) year += 1; // Dec → Jan year rollover
+      const corrected = new Date(Date.UTC(year, monthIdx, day, hour, min, 0));
+      return isNaN(corrected) ? rawDt : corrected.toISOString();
+    }
+
     function cricItemToMatch(item, tournamentId) {
       // Team code source: /series_info gives `teamInfo` with shortname; /currentMatches gives bracketed names.
       let home = null, away = null;
@@ -9031,7 +9055,7 @@ p31,Sample Player,MI,bat,9.0,false
 
       const fmt = CRIC_FORMAT_MAP[String(item.matchType || '').toLowerCase()] || 'T20';
       // CricAPI dateTimeGMT is already an ISO UTC string — Postgres timestamptz parses it directly.
-      const rawDt = item.dateTimeGMT || item.date || '';
+      const rawDt = fixMidnightGmtFromStatus(item.dateTimeGMT || item.date || '', item);
       return {
         tournamentId,
         externalId : item.id,
