@@ -10712,6 +10712,9 @@ p31,Sample Player,MI,bat,9.0,false
       if (!cur) return '';
       const grouped = {};
       Object.keys(cur).forEach(key => {
+        // dot_ball is excluded from the editor — CricAPI never returns a
+        // per-bowler dot-ball count, so this weight can never affect a score.
+        if (key === 'dot_ball') return;
         const meta = RULE_META[key];
         if (!meta) return;
         (grouped[meta.group] ||= []).push(key);
@@ -10887,7 +10890,8 @@ p31,Sample Player,MI,bat,9.0,false
       { label:'4-wicket haul',      key:'four_wicket_haul', unit:'bonus' },
       { label:'5-wicket haul',      key:'five_wicket_haul', unit:'bonus' },
       { label:'Maiden over',        key:'maiden_over',      unit:'bonus' },
-      { label:'Dot ball',           key:'dot_ball',         unit:'per dot' },
+      // Dot ball intentionally omitted — CricAPI doesn't populate a per-bowler
+      // dot-ball count, so this rule can never actually score anything.
       { label:'Economy < 5',        key:'economy_below_5',  unit:'bonus' },
       { label:'Economy 5–6',        key:'economy_5_to_6',   unit:'bonus' },
       { label:'Economy 10–11',      key:'economy_10_to_11', unit:'pts' },
