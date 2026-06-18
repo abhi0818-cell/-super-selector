@@ -2034,6 +2034,12 @@ p31,Sample Player,MI,bat,9.0,false
 
       // Accumulate fielding stats across all innings before assigning to players.
       const fieldingMap = {}; // normalised name → { catches, stumpings, runOutDirect, runOutIndirect, rawName }
+      // Collects any place the fielding pipeline couldn't fully credit a fielding event —
+      // either the scorecard text didn't yield a fielder name at all, or a name was
+      // extracted but didn't match any known player. Attached to the return value so
+      // every caller (live poller, finalize, recalc, fantasy scorecard) can surface it
+      // in the UI instead of it only ever reaching console.warn.
+      const fieldingIssues = [];
       const addFielding = (rawName, field) => {
         if (!rawName) return;
         const k = rawName.toLowerCase().trim();
@@ -2053,15 +2059,28 @@ p31,Sample Player,MI,bat,9.0,false
         battingRows.forEach(b => {
           const parsed = parseDismissalEntry(b);
           if (!parsed) return;
+          const batterName = (b.batter ?? b.batsman ?? b.player)?.name ?? b.name ?? '?';
+          const dismissalRaw = String(b?.['dismissal-text'] ?? b?.dismissal ?? '').trim();
           // Bowler credit
           const fullName = matchBowlerName(parsed.bowler, bowlerNames) || parsed.bowler;
           if (fullName) (wicketsByBowler[fullName] = wicketsByBowler[fullName] || []).push(parsed.type);
-          // Fielding credit
-          if (parsed.type === 'caught')  addFielding(parsed.fielder, 'catches');
-          if (parsed.type === 'stumped') addFielding(parsed.fielder, 'stumpings');
+          // Fielding credit — flag it when the dismissal type implies a fielder was
+          // involved but the scorecard text didn't actually give us a name to credit.
+          if (parsed.type === 'caught') {
+            if (parsed.fielder) addFielding(parsed.fielder, 'catches');
+            else fieldingIssues.push({ stage: 'parse', dismissalType: 'caught', batter: batterName, dismissalRaw, reason: 'no fielder name found in dismissal text' });
+          }
+          if (parsed.type === 'stumped') {
+            if (parsed.fielder) addFielding(parsed.fielder, 'stumpings');
+            else fieldingIssues.push({ stage: 'parse', dismissalType: 'stumped', batter: batterName, dismissalRaw, reason: 'no fielder name found in dismissal text' });
+          }
           if (parsed.type === 'run_out') {
-            addFielding(parsed.fielder,  'runOutDirect');
-            addFielding(parsed.fielder2, 'runOutIndirect');
+            if (parsed.fielder || parsed.fielder2) {
+              addFielding(parsed.fielder,  'runOutDirect');
+              addFielding(parsed.fielder2, 'runOutIndirect');
+            } else {
+              fieldingIssues.push({ stage: 'parse', dismissalType: 'run_out', batter: batterName, dismissalRaw, reason: 'no fielder name found in dismissal text' });
+            }
           }
         });
 
@@ -2124,14 +2143,38 @@ p31,Sample Player,MI,bat,9.0,false
           if (sq) player = ensure(String(sq.id ?? sq.name), sq.name);
         }
         if (player) {
-          player.fielding = { catches, stumpings, runOutDirect, runOutIndirect };
+          // Accumulate rather than overwrite — a scorecard can spell the same fielder's
+          // name two different ways across separate dismissals in the same match (e.g.
+          // "Bryce" on one row, "S Bryce" on another). Both resolve to the same player
+          // here but arrive as separate fieldingMap entries; overwriting would silently
+          // drop whichever one was assigned first, with no error of any kind.
+          const prev = player.fielding || { catches: 0, stumpings: 0, runOutDirect: 0, runOutIndirect: 0 };
+          player.fielding = {
+            catches:        prev.catches + catches,
+            stumpings:      prev.stumpings + stumpings,
+            runOutDirect:   prev.runOutDirect + runOutDirect,
+            runOutIndirect: prev.runOutIndirect + runOutIndirect,
+          };
         } else {
           console.warn('[fromCricAPI] fielding: no player matched for:', rawName);
+          fieldingIssues.push({ stage: 'match', rawName, catches, stumpings, runOutDirect, runOutIndirect, reason: 'name did not match any player in the match or squad' });
         }
       });
 
       players.forEach(p => { if (p.batting && p.bowling) p.role = 'ar'; });
+      // Non-breaking: attach as a property on the returned array (callers treat the
+      // return value as a plain array via .length/.map/.forEach, which still works).
+      players.fieldingIssues = fieldingIssues;
       return players;
+    }
+
+    // Human-readable summary of fromCricAPI's fieldingIssues, for status text / toasts.
+    function summarizeFieldingIssues(issues) {
+      if (!issues?.length) return '';
+      return issues.map(it => it.stage === 'parse'
+        ? `${it.batter}'s ${it.dismissalType.replace('_',' ')} ("${it.dismissalRaw}") — no fielder name in scorecard`
+        : `"${it.rawName}" — fielding credit not matched to any player`
+      ).join('; ');
     }
 
     // ─── FALLBACK MOCK POOL (used when DB isn't configured) ──────────────────
@@ -9225,7 +9268,13 @@ p31,Sample Player,MI,bat,9.0,false
         const idx = state.matches.findIndex(x => x.id === m.id);
         if (idx >= 0) state.matches[idx] = upd;
       }
-      return { match: matchLabel, players: rows.length, unmatched: unmatchedNames.length, unmatchedNames };
+      return {
+        match: matchLabel,
+        players: rows.length,
+        unmatched: unmatchedNames.length,
+        unmatchedNames,
+        fieldingIssues: players.fieldingIssues || [],
+      };
     }
 
     /**
@@ -9254,13 +9303,26 @@ p31,Sample Player,MI,bat,9.0,false
         const result = await finalizeOneMatch(m, apiKey);
         renderMatchesAdmin();
         renderHistory();
-        if (result.unmatchedNames?.length) {
-          const list = result.unmatchedNames.map(n => `"${n}"`).join(', ');
+        const fIssues = result.fieldingIssues || [];
+        const hasUnmatched = result.unmatchedNames?.length > 0;
+        const hasFieldingIssues = fIssues.length > 0;
+        if (hasUnmatched || hasFieldingIssues) {
+          let warn = '';
+          if (hasUnmatched) {
+            const list = result.unmatchedNames.map(n => `"${n}"`).join(', ');
+            warn += `⚠ ${result.unmatchedNames.length} unmatched: ${escapeHtml(list)}. `;
+          }
+          if (hasFieldingIssues) {
+            warn += `⚠ ${fIssues.length} fielding event${fIssues.length>1?'s':''} not credited: ${escapeHtml(summarizeFieldingIssues(fIssues))}. `;
+          }
           statusEl.innerHTML = `✓ ${result.match} — ${result.players} players saved. `
-            + `<span style="color:var(--bad);">⚠ ${result.unmatchedNames.length} unmatched: ${escapeHtml(list)}. `
-            + `Open <strong>Fantasy Scorecard ↓</strong>, click Link on the red rows, then re-finalize.</span>`;
-          toast(`Finalized — but ${result.unmatchedNames.length} player(s) unmatched. Check scorecard.`, 6000);
-          // Auto-open the fantasy scorecard so the admin sees the red rows immediately
+            + `<span style="color:var(--bad);">${warn}`
+            + `Open <strong>Fantasy Scorecard ↓</strong>${hasUnmatched ? ', click Link on the red rows,' : ''} then re-finalize.</span>`;
+          const toastBits = [];
+          if (hasUnmatched) toastBits.push(`${result.unmatchedNames.length} player(s) unmatched`);
+          if (hasFieldingIssues) toastBits.push(`${fIssues.length} fielding event(s) not credited`);
+          toast(`Finalized — but ${toastBits.join(' and ')}. Check scorecard.`, 6500);
+          // Auto-open the fantasy scorecard so the admin sees the red rows / warning immediately
           $('#fantasyScorecardSection')?.setAttribute('open', '');
           $('#fantasyScorecardSection')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         } else {
@@ -9398,10 +9460,17 @@ p31,Sample Player,MI,bat,9.0,false
         await computeAndSaveXIScoresForMatch(matchId);
         await computeAndSaveSLScoresForMatch(matchId);
 
-        statusEl.textContent = `✓ Recalculated M${m.match_number} — ${rows.length} players updated, ${unmatched} unmatched. Fielding data: ${fieldingPlayers.length} players (see console).`;
+        const fIssues2 = players.fieldingIssues || [];
+        const issueText = fIssues2.length ? ` ⚠ ${fIssues2.length} fielding event(s) not credited: ${summarizeFieldingIssues(fIssues2)}.` : '';
+        statusEl.innerHTML = `✓ Recalculated M${m.match_number} — ${rows.length} players updated, ${unmatched} unmatched. Fielding: ${fieldingPlayers.length} players credited.`
+          + (issueText ? `<span style="color:var(--bad);">${escapeHtml(issueText)}</span>` : '');
         renderMatchesAdmin();
         renderHistory();
-        toast(`Recalculated M${m.match_number} — ${fieldingPlayers.length} players with fielding points.`);
+        if (fIssues2.length) {
+          toast(`Recalculated M${m.match_number} — but ${fIssues2.length} fielding event(s) not credited. Check status above.`, 6500);
+        } else {
+          toast(`Recalculated M${m.match_number} — ${fieldingPlayers.length} players with fielding points.`);
+        }
       } catch (e) {
         statusEl.textContent = `✗ Recalc failed: ${e.message}`;
         toast('Recalc failed: ' + e.message, 5000);
@@ -9845,11 +9914,15 @@ p31,Sample Player,MI,bat,9.0,false
       }
 
       const unmatchedCount = scored.filter(r => !r.localPlayer).length;
+      const fieldingIssues = players.fieldingIssues || [];
 
       view.className = 'fsc-wrap';
       view.innerHTML = `
         ${unmatchedCount ? `<div style="padding:6px 10px;font-size:11px;background:rgba(248,113,113,0.08);border-bottom:1px solid var(--border);color:var(--bad);">
           ${unmatchedCount} player${unmatchedCount>1?'s':''} not matched to your pool — click <strong>Link</strong> on the red rows to fix names &amp; recalculate points.
+        </div>` : ''}
+        ${fieldingIssues.length ? `<div style="padding:6px 10px;font-size:11px;background:rgba(248,113,113,0.08);border-bottom:1px solid var(--border);color:var(--bad);">
+          ⚠ ${fieldingIssues.length} fielding event${fieldingIssues.length>1?'s':''} not credited to anyone: ${escapeHtml(summarizeFieldingIssues(fieldingIssues))}
         </div>` : ''}
         <table class="fsc-table">
           <thead>
