@@ -9306,9 +9306,18 @@ p31,Sample Player,MI,bat,9.0,false
       await state.db.bulkUpsertPlayerMatchStats(m.id, rows);
       await computeAndSaveXIScoresForMatch(m.id);
       await computeAndSaveSLScoresForMatch(m.id);
-      // Ensure the match row is marked completed — it may still say 'scheduled'
-      // if the user never ran a manual CricAPI sync after the match ended.
-      if (m.status !== 'completed') {
+      // Only mark the match row 'completed' if the scorecard we just fetched
+      // actually says the match has ended. Previously this unconditionally set
+      // status='completed' just because Finalize was clicked — if Finalize ran
+      // while the match was still live (e.g. clicked too early, or an automated
+      // sync fired mid-chase), the match got permanently mislabeled 'completed'
+      // even though the scorecard status (e.g. "X need N runs in M balls") showed
+      // it was still in progress. Once mislabeled, every status!=='completed'
+      // filter elsewhere in the app (live polling, "needs finalization" lists,
+      // etc.) would skip it forever, freezing it on a partial snapshot.
+      const lifecycle = matchLifecycle(json);
+      const looksFinished = lifecycle === 'completed';
+      if (looksFinished && m.status !== 'completed') {
         const upd = await state.db.updateMatch(m.id, { status: 'completed' });
         const idx = state.matches.findIndex(x => x.id === m.id);
         if (idx >= 0) state.matches[idx] = upd;
@@ -9320,6 +9329,8 @@ p31,Sample Player,MI,bat,9.0,false
         unmatchedNames,
         fieldingIssues: players.fieldingIssues || [],
         scorecard: json,
+        matchLooksFinished: looksFinished,
+        liveStatusText: json?.data?.status ?? json?.status ?? '',
       };
     }
 
@@ -9359,8 +9370,12 @@ p31,Sample Player,MI,bat,9.0,false
         const fIssues = result.fieldingIssues || [];
         const hasUnmatched = result.unmatchedNames?.length > 0;
         const hasFieldingIssues = fIssues.length > 0;
-        if (hasUnmatched || hasFieldingIssues) {
+        const notActuallyFinished = result.matchLooksFinished === false;
+        if (hasUnmatched || hasFieldingIssues || notActuallyFinished) {
           let warn = '';
+          if (notActuallyFinished) {
+            warn += `⚠ Scorecard doesn't look finished yet (status: "${escapeHtml(result.liveStatusText || 'unknown')}") — match NOT marked completed, stats saved as a snapshot. Re-finalize once it actually ends. `;
+          }
           if (hasUnmatched) {
             const list = result.unmatchedNames.map(n => `"${n}"`).join(', ');
             warn += `⚠ ${result.unmatchedNames.length} unmatched: ${escapeHtml(list)}. `;
@@ -9372,6 +9387,7 @@ p31,Sample Player,MI,bat,9.0,false
             + `<span style="color:var(--bad);">${warn}`
             + `Open <strong>Fantasy Scorecard ↓</strong>${hasUnmatched ? ', click Link on the red rows,' : ''} then re-finalize.</span>`;
           const toastBits = [];
+          if (notActuallyFinished) toastBits.push(`match still in progress — not marked completed`);
           if (hasUnmatched) toastBits.push(`${result.unmatchedNames.length} player(s) unmatched`);
           if (hasFieldingIssues) toastBits.push(`${fIssues.length} fielding event(s) not credited`);
           toast(`Finalized — but ${toastBits.join(' and ')}. Check scorecard.`, 6500);
@@ -9451,23 +9467,30 @@ p31,Sample Player,MI,bat,9.0,false
         let m = state.matches?.find(x => x.id === matchId);
         if (!m) throw new Error('Match not found in state — reload the page and try again.');
 
-        // Prefer cached scorecard; fall back to live API fetch
+        // Prefer the cached scorecard ONLY if it already looks finished — a cache
+        // taken mid-match (e.g. the live poller's last snapshot before a chase
+        // wrapped up) would otherwise get reused forever, since Recalculate would
+        // keep "succeeding" without ever fetching the actual final data. If the
+        // cached payload doesn't look done yet, always go fetch fresh from CricAPI.
         let json;
-        const hasCached = await (async () => {
-          try {
-            const c = await state.db.getMatchScorecard(matchId);
-            if (c) { json = c; return true; }
-          } catch (_) {}
-          return false;
-        })();
+        let cached = null;
+        try { cached = await state.db.getMatchScorecard(matchId); } catch (_) {}
+        const cachedLooksFinished = cached && matchLifecycle(cached) === 'completed';
 
-        if (!hasCached) {
-          if (!m.external_id) throw new Error('No external_id on this match and no cached scorecard — cannot recalc.');
-          statusEl.textContent = `Fetching scorecard for M${m.match_number} from CricAPI…`;
+        if (cachedLooksFinished) {
+          json = cached;
+        } else if (m.external_id) {
+          statusEl.textContent = `Fetching latest scorecard for M${m.match_number} from CricAPI…`;
           json = await fetchJsonWithFallback(k =>
             `match_scorecard?apikey=${encodeURIComponent(k)}&id=${encodeURIComponent(m.external_id)}`
           );
           await state.db.saveMatchScorecard(matchId, json);
+        } else if (cached) {
+          // No external_id to refetch with — fall back to the stale cache, but
+          // the status banner below will flag it as not-yet-finished.
+          json = cached;
+        } else {
+          throw new Error('No external_id on this match and no cached scorecard — cannot recalc.');
         }
 
         const players = fromCricAPI(json, PLAYERS, m.format || 'T20');
@@ -9514,21 +9537,28 @@ p31,Sample Player,MI,bat,9.0,false
         await computeAndSaveSLScoresForMatch(matchId);
 
         const fIssues2 = players.fieldingIssues || [];
-        const issueText = fIssues2.length ? ` ⚠ ${fIssues2.length} fielding event(s) not credited: ${summarizeFieldingIssues(fIssues2)}.` : '';
+        const notFinished = matchLifecycle(json) !== 'completed';
+        const liveStatusText = json?.data?.status ?? json?.status ?? '';
+        let issueText = '';
+        if (notFinished) issueText += ` ⚠ Scorecard doesn't look finished yet (status: "${liveStatusText || 'unknown'}") — recalculate again once the match actually ends.`;
+        if (fIssues2.length) issueText += ` ⚠ ${fIssues2.length} fielding event(s) not credited: ${summarizeFieldingIssues(fIssues2)}.`;
         statusEl.innerHTML = `✓ Recalculated M${m.match_number} — ${rows.length} players updated, ${unmatched} unmatched. Fielding: ${fieldingPlayers.length} players credited.`
           + (issueText ? `<span style="color:var(--bad);">${escapeHtml(issueText)}</span>` : '');
         // Feed the Fantasy Scorecard panel so the fielding-issue banner is visible
         // there too, not just in this status line (same gap as finalize had).
         state.lastScorecard = json;
         renderFantasyScorecard();
-        if (fIssues2.length) {
+        if (fIssues2.length || notFinished) {
           $('#fantasyScorecardSection')?.setAttribute('open', '');
           $('#fantasyScorecardSection')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
         renderMatchesAdmin();
         renderHistory();
-        if (fIssues2.length) {
-          toast(`Recalculated M${m.match_number} — but ${fIssues2.length} fielding event(s) not credited. Check status above.`, 6500);
+        if (fIssues2.length || notFinished) {
+          const bits = [];
+          if (notFinished) bits.push('match not finished yet');
+          if (fIssues2.length) bits.push(`${fIssues2.length} fielding event(s) not credited`);
+          toast(`Recalculated M${m.match_number} — but ${bits.join(' and ')}. Check status above.`, 6500);
         } else {
           toast(`Recalculated M${m.match_number} — ${fieldingPlayers.length} players with fielding points.`);
         }
