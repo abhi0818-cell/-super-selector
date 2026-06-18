@@ -131,7 +131,7 @@
     .pf-label { font-size: 10px; color: var(--muted); white-space: nowrap; letter-spacing: .04em; flex-shrink: 0; }
     .pf-sep { width: 1px; height: 14px; background: var(--border); flex-shrink: 0; align-self: center; margin: 0 2px; }
     /* Match chip row — paginated, no scroll */
-    .pf-match-row-wrap { display: flex; align-items: center; gap: 5px; padding: 6px 14px; flex-wrap: nowrap; overflow: hidden; }
+    .pf-match-row-wrap { display: flex; align-items: center; gap: 5px; padding: 4px 0; flex-wrap: nowrap; overflow: hidden; }
     .pf-match-chips { display: flex; gap: 4px; flex-wrap: wrap; flex: 1; }
     .match-page-btn { font-size: 11px; padding: 3px 7px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--muted); cursor: pointer; line-height: 1; }
     .match-page-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
@@ -466,12 +466,12 @@
       text-transform: none; border: 1px solid var(--border);
     }
     .countdown-chip.live { background: rgba(192,57,43,0.12); color: var(--bad); border-color: var(--bad); }
-    .countdown-chip.soon { background: rgba(166,124,0,0.12); color: var(--accent-2); border-color: var(--accent-2); }
+    .countdown-chip.urgent { background: rgba(192,57,43,0.12); color: var(--bad); border-color: var(--bad); }
     .countdown-chip .dot {
       width: 6px; height: 6px; border-radius: 50%; background: var(--muted);
     }
     .countdown-chip.live .dot { background: var(--bad); animation: pulse 1.5s infinite; }
-    .countdown-chip.soon .dot { background: var(--accent-2); }
+    .countdown-chip.urgent .dot { background: var(--bad); }
 
     /* Lock banner — shown when active match has started */
     .lock-banner {
@@ -5972,12 +5972,12 @@ p31,Sample Player,MI,bat,9.0,false
       const t = new Date(effectiveLockTime(m)).getTime();
       const remaining = t - Date.now();
       const teams = `${m.home_team_id || '?'} vs ${m.away_team_id || '?'}`;
-      chip.classList.remove('live', 'soon');
+      chip.classList.remove('live', 'urgent');
       if (remaining <= 0) {
         chip.classList.add('live');
         text.textContent = `Live: M${m.match_number ?? '?'} ${teams}`;
       } else {
-        if (remaining < 60 * 60 * 1000) chip.classList.add('soon'); // < 1h
+        if (remaining < 30 * 60 * 1000) chip.classList.add('urgent'); // < 30m, static red (no pulse until live)
         text.textContent = `M${m.match_number ?? '?'} ${teams} · ${formatCountdown(remaining)}`;
       }
     }
