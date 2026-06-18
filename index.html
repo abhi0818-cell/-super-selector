@@ -6312,9 +6312,7 @@ p31,Sample Player,MI,bat,9.0,false
           && existing.viceCaptainId === state.viceCaptain
           && existing.playerIds.length === sel.length
           && existing.playerIds.every(id => state.selected.includes(id));
-        msgs.push(alreadySaved
-          ? { t:'ok', m:'Squad is saved. You can edit your XI for the next game.' }
-          : { t:'ok', m:'Squad is valid. Start the match or save your XI below.' });
+        if (alreadySaved) msgs.push({ t:'ok', m:'Squad is saved. You can edit your XI for the next game.' });
       }
 
       $('#messages').innerHTML = msgs.map(x => `<div class="msg ${x.t}">${x.m}</div>`).join('');
