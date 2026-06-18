@@ -927,16 +927,19 @@
     .hist-pitch-pts-lbl { font-size:11px; font-weight:700; color:rgba(255,255,255,0.6); text-transform:uppercase; letter-spacing:.5px; }
     .hist-pitch-pts-val { font-size:13px; font-weight:800; color:#FFD966; text-shadow:0 1px 4px rgba(0,0,0,.8); }
     /* ── History points breakdown panel ─────────────────────────────────────── */
-    .hist-team-panel { display:flex; gap:14px; align-items:flex-start; flex-wrap:wrap; justify-content:flex-start; }
+    .hist-team-panel { display:flex; gap:14px; align-items:stretch; flex-wrap:wrap; justify-content:flex-start; }
     .hist-team-panel .hist-pitch-wrap { flex:0 0 auto; margin:0; }
     .hist-breakdown-panel {
-      flex:0 1 280px; min-width:240px;
+      flex:1 1 420px; min-width:300px; max-width:560px;
       background:var(--panel); border:1px solid var(--border); border-radius:12px; overflow:hidden;
+      display:flex; flex-direction:column;
     }
     .hist-breakdown-hdr {
+      flex:0 0 auto;
       padding:9px 14px; border-bottom:1px solid var(--border);
       font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.5px;
     }
+    .hist-bd-rows { flex:1 1 auto; min-height:0; overflow-y:auto; }
     .hist-bd-row { border-bottom:1px solid var(--panel-2); }
     .hist-bd-row:last-child { border-bottom:none; }
     .hist-bd-row > summary {
@@ -12382,7 +12385,7 @@ p31,Sample Player,MI,bat,9.0,false
       });
       return '<div class="hist-breakdown-panel">'
         + '<div class="hist-breakdown-hdr">Points breakdown</div>'
-        + rowsHtml
+        + '<div class="hist-bd-rows">' + rowsHtml + '</div>'
         + '</div>';
     }
 
