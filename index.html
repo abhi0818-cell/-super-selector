@@ -1191,7 +1191,7 @@
           <span class="pf-search-icon">⌕</span>
           <input id="search" type="text" placeholder="Search players or teams…" />
         </div>
-        <!-- Row 2: Role chips + OS + separator + Team chips -->
+        <!-- Row 2: Role chips + OS -->
         <div class="pf-row" id="pfRoleTeamRow">
           <span class="pf-label">Role</span>
           <span class="pf-chip active" data-role="ALL">All</span>
@@ -1200,7 +1200,9 @@
           <span class="pf-chip" data-role="ar">AR</span>
           <span class="pf-chip" data-role="bowl">BOWL</span>
           <span class="pf-chip" id="osFilterChip" style="display:none;" title="Show overseas only">✈ OS</span>
-          <span class="pf-sep"></span>
+        </div>
+        <!-- Row 2b: Team chips -->
+        <div class="pf-row" id="pfTeamRow">
           <span class="pf-label">Team</span>
           <span id="teamFilterChips" style="display:contents;"></span>
         </div>
@@ -2507,7 +2509,7 @@ p31,Sample Player,MI,bat,9.0,false
         matchPicker.innerHTML = scoredMatches.length
           ? scoredMatches.map(m => {
               const live = m.status === 'in_progress' ? ' 🔴' : '';
-              return `<option value="${m.id}">M${m.match_number} — ${(m.home_team||'')} vs ${(m.away_team||'')}${live}</option>`;
+              return `<option value="${m.id}">M${m.match_number} — ${(m.home_team_id||'')} vs ${(m.away_team_id||'')}${live}</option>`;
             }).join('')
           : '<option value="">No matches with scores yet</option>';
         if (!lbState.matchId && scoredMatches.length) lbState.matchId = scoredMatches[0].id;
