@@ -237,7 +237,6 @@
     .squad-row .name { font-weight: 600; font-size: 13px; }
     .squad-row .meta { font-size: 11px; color: var(--muted); }
     .squad-row.xfer-in { border-left: 2px solid var(--accent-2); padding-left: 4px; }
-    #slXiList .squad-row { grid-template-columns: 1fr auto auto auto auto; }
     .squad-row .pts { font-weight: 700; color: var(--accent); min-width: 60px; text-align: right; }
     .cap-btn {
       width: 28px; height: 28px; border-radius: 50%; padding: 0;
@@ -756,7 +755,6 @@
         gap: 6px;
         padding: 8px 4px;
       }
-      #slXiList .squad-row { grid-template-columns: 1fr auto auto; }
       /* Hide the overseas badge and credit cost columns */
       .squad-row .os-tag,
       .squad-row .cred,
@@ -797,8 +795,10 @@
       #loginModal input { font-size: 16px; } /* prevent iOS zoom */
 
       /* ── SL booster bar ─────────────────────────────────────────── */
-      #slBoosterBar { padding: 8px 12px; }
-      .sl-booster-pill { font-size: 11px !important; padding: 6px 10px !important; }
+      #slPitchBoosterRow { flex-direction: column; }
+      #slPitchXiWrap { margin: 0 auto !important; }
+      #slBoosterBar { padding: 8px 0 0; width: 100%; }
+      .sl-booster-pill { font-size: 12px !important; padding: 9px 12px !important; }
 
       /* ── Countdown chip ─────────────────────────────────────────── */
       .countdown-chip { font-size: 11px; padding: 4px 8px; }
@@ -1361,39 +1361,40 @@
             <!-- Shared-league notice (shown when active squad mirrors a primary squad's XI) -->
             <div id="slSharedXiBanner" style="display:none;"></div>
             <div id="slXferInfoBar" style="font-size:12px; padding:4px 0 6px; color:var(--muted);"></div>
-            <!-- Booster pills (shown when contest has available_boosters) -->
-            <div id="slBoosterBar" style="display:none; padding:6px 0 8px;"></div>
-            <!-- Pitch view (mirrors Daily Pick XI) -->
-            <div id="slPitchXiWrap">
-              <div class="pitch-outer">
-                <div class="pitch-oval" id="slPitchOval">
-                  <svg class="pitch-svg-overlay" viewBox="0 0 304 460" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
-                    <ellipse cx="152" cy="230" rx="145" ry="220" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="2" stroke-dasharray="7 5"/>
-                    <rect x="134" y="140" width="36" height="180" rx="5" fill="url(#slPitchGrad)" opacity="0.72"/>
-                    <line x1="120" y1="165" x2="184" y2="165" stroke="rgba(255,255,255,0.6)" stroke-width="2"/>
-                    <line x1="120" y1="295" x2="184" y2="295" stroke="rgba(255,255,255,0.6)" stroke-width="2"/>
-                    <line x1="147" y1="155" x2="147" y2="167" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
-                    <line x1="152" y1="155" x2="152" y2="167" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
-                    <line x1="157" y1="155" x2="157" y2="167" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
-                    <line x1="147" y1="293" x2="147" y2="305" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
-                    <line x1="152" y1="293" x2="152" y2="305" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
-                    <line x1="157" y1="293" x2="157" y2="305" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
-                    <defs>
-                      <linearGradient id="slPitchGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%"   stop-color="#b8893a"/>
-                        <stop offset="40%"  stop-color="#d4a85a"/>
-                        <stop offset="60%"  stop-color="#d4a85a"/>
-                        <stop offset="100%" stop-color="#b8893a"/>
-                      </linearGradient>
-                    </defs>
-                  </svg>
-                  <div id="slRowsMount" style="display:flex;flex-direction:column;justify-content:space-evenly;align-items:stretch;flex:1;width:100%;z-index:2;"></div>
+            <!-- Pitch view (mirrors Daily Pick XI) + boosters side panel.
+                 C/VC selection happens on the pitch itself (hover a player for
+                 the C/V/x controls) or via Edit 11 — there is no separate list. -->
+            <div id="slPitchBoosterRow" style="display:flex; gap:12px; align-items:flex-start;">
+              <div id="slPitchXiWrap" style="margin:0; flex:0 0 auto;">
+                <div class="pitch-outer">
+                  <div class="pitch-oval" id="slPitchOval">
+                    <svg class="pitch-svg-overlay" viewBox="0 0 304 460" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+                      <ellipse cx="152" cy="230" rx="145" ry="220" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="2" stroke-dasharray="7 5"/>
+                      <rect x="134" y="140" width="36" height="180" rx="5" fill="url(#slPitchGrad)" opacity="0.72"/>
+                      <line x1="120" y1="165" x2="184" y2="165" stroke="rgba(255,255,255,0.6)" stroke-width="2"/>
+                      <line x1="120" y1="295" x2="184" y2="295" stroke="rgba(255,255,255,0.6)" stroke-width="2"/>
+                      <line x1="147" y1="155" x2="147" y2="167" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+                      <line x1="152" y1="155" x2="152" y2="167" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+                      <line x1="157" y1="155" x2="157" y2="167" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+                      <line x1="147" y1="293" x2="147" y2="305" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+                      <line x1="152" y1="293" x2="152" y2="305" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+                      <line x1="157" y1="293" x2="157" y2="305" stroke="rgba(255,255,255,0.5)" stroke-width="1.5"/>
+                      <defs>
+                        <linearGradient id="slPitchGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%"   stop-color="#b8893a"/>
+                          <stop offset="40%"  stop-color="#d4a85a"/>
+                          <stop offset="60%"  stop-color="#d4a85a"/>
+                          <stop offset="100%" stop-color="#b8893a"/>
+                        </linearGradient>
+                      </defs>
+                    </svg>
+                    <div id="slRowsMount" style="display:flex;flex-direction:column;justify-content:space-evenly;align-items:stretch;flex:1;width:100%;z-index:2;"></div>
+                  </div>
                 </div>
               </div>
+              <!-- Booster pills (shown when contest has available_boosters) -->
+              <div id="slBoosterBar" style="display:none; flex:1; min-width:0;"></div>
             </div>
-            <div style="font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; margin:14px 0 6px;">Points breakdown</div>
-            <!-- Selected XI list -->
-            <div id="slXiList" style="margin-bottom:10px;"></div>
             <div class="save-bar">
               <span style="flex:1; font-size:12px; color:var(--muted);" id="slXiSaveLabel">Pick 11 from the pool.</span>
               <button id="slRevertBtn" class="danger" style="display:none;">Revert to Saved</button>
@@ -4355,7 +4356,6 @@ p31,Sample Player,MI,bat,9.0,false
       const isPlayoff       = phase === 'playoff';
       // SL XI is decoupled from the pool dropdown. The "locked" concept is now
       // season-level: prevXI = last locked XI across all matches.
-      // prevSet is used below to highlight transferred-in players.
       // draftChanges = diff between picker and prevXI (pending transfers before next lock).
       // If the last locked match is completed (auto-locked retroactively), this squad
       // hasn't had a real active lock yet — treat as first match (no transfer cost).
@@ -4364,7 +4364,6 @@ p31,Sample Player,MI,bat,9.0,false
         : null;
       const isFirstActiveLock = !prev.length || lastLockedMatchStatus === 'completed';
 
-      const prevSet      = new Set(prev);
       const draftChanges = isFirstActiveLock ? 0 : (prev.length ? slTransferCount() : 0);
 
       // Would saving the current draft exceed the season budget?
@@ -4467,11 +4466,12 @@ p31,Sample Player,MI,bat,9.0,false
       // ── Pitch view (mirrors Daily Pick XI) ─────────────────────────────────
       renderSlPitchView();
 
-      // ── Selected XI list ──────────────────────────────────────────────────
-      const xiList = $('#slXiList');
+      // ── XI total stat ───────────────────────────────────────────────────
+      // No per-player breakdown list here — the team being picked is for an
+      // upcoming match, so there are no scored events yet to break down.
+      // C/VC selection happens on the pitch (hover a player) or via Edit 11.
       const totalStatEl = $('#slXiStatTotal .value');
       if (xi.length === 0) {
-        xiList.innerHTML = '<div class="empty" style="padding:8px 0; font-size:12px;">No players selected — click <strong>Pick / Edit Team</strong> below to open the player pool.</div>';
         if (totalStatEl) totalStatEl.textContent = '0.0';
       } else {
         // Compute live scores for all XI players using same engine as daily mode.
@@ -4485,52 +4485,8 @@ p31,Sample Player,MI,bat,9.0,false
           return { name: p.name, role: p.role, captaincy, is_overseas: !!p.overseas, ...stats };
         }).filter(Boolean);
         const slScored  = scoreTeam(slScoreInputs, state.format, xiBooster);
-        const slByName  = Object.fromEntries(slScored.map(s => [s.name, s]));
         const slTotal   = slScored.reduce((a, s) => a + s.totalPoints, 0);
-
-        xiList.innerHTML = sortByRole(xi).map(id => {
-          const p    = PLAYERS.find(x => x.id === id);
-          if (!p) return '';
-          const isCap = id === cap;
-          const isVc  = id === vc;
-          const badge = isCap ? '<span class="cap-badge">C</span>' : isVc ? '<span class="vc-badge">VC</span>' : '';
-          const isNew = prev.length && !prevSet.has(id);
-          const score = slByName[p.name];
-          const multBadge = score && score.multiplier > 1
-            ? `<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:rgba(34,211,238,0.2);color:var(--accent);margin-left:3px;">${score.multiplier}×</span>`
-            : '';
-          const breakdown = score && Object.keys(score.breakdown).length
-            ? Object.entries(score.breakdown).map(([cat, vals]) => {
-                const items = Object.entries(vals).filter(([, v]) => v !== 0).map(([k, v]) => `${k}: ${v > 0 ? '+' : ''}${v}`).join(', ');
-                return items ? `<span class="b-cat">${cat}</span>${items}` : '';
-              }).filter(Boolean).join(' &nbsp;|&nbsp; ')
-            : '<em>no events yet</em>';
-          return `<div class="squad-row${isNew ? ' xfer-in' : ''}" data-slid="${id}">
-            <div>
-              <div class="name">${p.name}${badge}${multBadge}${p.overseas ? ' <span class="os-tag">✈️</span>' : ''}</div>
-              <div class="meta"><span class="role-tag role-${p.role}">${roleLabel[p.role]}</span> ${p.team} · ${p.credits.toFixed(1)} cr</div>
-            </div>
-            <button class="cap-btn ${isCap ? 'captain' : ''}" data-slcap2="${id}" title="Captain (2×)">C</button>
-            <button class="cap-btn ${isVc  ? 'vc'      : ''}" data-slvc2="${id}"  title="Vice-Captain (1.5×)">V</button>
-            <span class="pts">${score ? score.totalPoints.toFixed(1) : '0.0'}</span>
-            <button class="remove-btn" data-slrm="${id}" title="Remove">×</button>
-            <div class="breakdown">${breakdown}</div>
-          </div>`;
-        }).join('');
-
-        // Wire buttons
-        xiList.querySelectorAll('[data-slcap2]').forEach(btn =>
-          btn.addEventListener('click', e => { e.stopPropagation(); slSetCaptain(btn.dataset.slcap2); }));
-        xiList.querySelectorAll('[data-slvc2]').forEach(btn =>
-          btn.addEventListener('click', e => { e.stopPropagation(); slSetVc(btn.dataset.slvc2); }));
-        xiList.querySelectorAll('[data-slrm]').forEach(btn =>
-          btn.addEventListener('click', e => { e.stopPropagation(); togglePlayer(btn.dataset.slrm); }));
-        xiList.querySelectorAll('.squad-row').forEach(row =>
-          row.addEventListener('click', () => row.classList.toggle('expanded')));
-
-        // Update the XI total in the stat tile
-        const totalEl = $('#slXiStatTotal .value');
-        if (totalEl) totalEl.textContent = slTotal.toFixed(1);
+        if (totalStatEl) totalStatEl.textContent = slTotal.toFixed(1);
       }
 
       // ── Revert button — show only when a locked XI exists to revert to ────
@@ -4648,7 +4604,9 @@ p31,Sample Player,MI,bat,9.0,false
           mn === (contest.playoff_start_match_number   ?? null)
         );
 
-      // Build pills
+      // Build vertical booster cards — one full-width row per booster.
+      // Available/clickable boosters render in full colour; used or
+      // not-applicable ones render greyed-out and unselectable.
       const pills = Object.entries(available).map(([key, totalUses]) => {
         const meta       = BOOSTER_META[key]; if (!meta) return '';
         const isActive   = activeForNext === key;
@@ -4658,7 +4616,7 @@ p31,Sample Player,MI,bat,9.0,false
         const remaining   = totalUses - usedInOther;
         const isSpent     = remaining <= 0;  // all uses consumed in OTHER matches
 
-        // Block this pill if another booster is already active for this match
+        // Block this card if another booster is already active for this match
         const anotherActive = !!activeForNext && !isActive;
         // Block transfer boosters on the first match of season / playoffs
         const isBlocked = anotherActive || (TRANSFER_BOOSTERS.has(key) && transfersUnlimited);
@@ -4672,16 +4630,18 @@ p31,Sample Player,MI,bat,9.0,false
         // An active booster is never disabled — it must remain clickable to deactivate
         const isDisabled = isActive ? false : (isSpent || isBlocked);
 
-        let pillStyle = `display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:20px;font-size:12px;font-weight:600;cursor:${isDisabled ? 'default' : 'pointer'};border:1px solid;transition:all .15s;`;
+        let pillStyle = `display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;border-radius:10px;font-weight:600;text-align:left;cursor:${isDisabled ? 'default' : 'pointer'};border:1px solid;transition:all .15s;`;
         if (isActive)        pillStyle += 'background:rgba(201,168,76,0.18);border-color:var(--accent);color:var(--accent);';
         else if (isSpent)    pillStyle += 'background:var(--panel-2);border-color:var(--border);color:var(--muted);opacity:0.45;';
         else if (isBlocked)  pillStyle += 'background:var(--panel-2);border-color:var(--border);color:var(--muted);opacity:0.4;';
         else                 pillStyle += 'background:var(--panel-2);border-color:var(--border);color:var(--text);';
 
-        const label   = isActive  ? `${meta.icon} ${meta.label} ✓ (tap to remove)`
-                      : isSpent   ? `${meta.icon} ${meta.label} (used)`
-                      : isBlocked ? `${meta.icon} ${meta.label} ✗`
-                      : `${meta.icon} ${meta.label} (${remaining} left)`;
+        const statusText = isActive  ? 'Active for this match · tap to remove'
+                          : isSpent   ? 'Used'
+                          : isBlocked ? (blockedReason || 'Not applicable')
+                          : `${remaining} use${remaining === 1 ? '' : 's'} left`;
+
+        const statusMark = isActive ? '✓' : (isSpent || isBlocked) ? '✗' : '';
 
         const titleText = isActive
           ? `${escapeHtml(meta.desc)} · Active for this match — click to deactivate`
@@ -4696,14 +4656,25 @@ p31,Sample Player,MI,bat,9.0,false
           data-spent="${isDisabled}"
           title="${titleText}"
           style="${pillStyle}"
-        >${label}</button>`;
+        >
+          <span style="font-size:18px;line-height:1;flex:0 0 auto;">${meta.icon}</span>
+          <span style="display:flex;flex-direction:column;gap:1px;flex:1;min-width:0;">
+            <span style="font-size:12.5px;">${meta.label}</span>
+            <span style="font-size:10.5px;font-weight:400;opacity:0.8;">${escapeHtml(statusText)}</span>
+          </span>
+          ${statusMark ? `<span style="font-size:13px;flex:0 0 auto;">${statusMark}</span>` : ''}
+        </button>`;
       }).filter(Boolean).join('');
 
       const matchLabel = nextMatch
-        ? `<span style="font-size:11px;color:var(--muted);margin-left:6px;">for M${nextMatch.match_number ?? '?'} · ${nextMatch.home_team_id ?? '?'} vs ${nextMatch.away_team_id ?? '?'}</span>`
-        : `<span style="font-size:11px;color:var(--muted);margin-left:6px;">no upcoming match to activate for</span>`;
+        ? `M${nextMatch.match_number ?? '?'} · ${nextMatch.home_team_id ?? '?'} vs ${nextMatch.away_team_id ?? '?'}`
+        : 'No upcoming match to activate for';
 
-      bar.innerHTML = `<div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px;">⚡ Boosters ${matchLabel}</div><div style="display:flex;flex-wrap:wrap;gap:6px;">${pills}</div>`;
+      bar.innerHTML = `<div style="margin-bottom:8px;">
+          <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;">⚡ Boosters</div>
+          <div style="font-size:11px;color:var(--muted);">${escapeHtml(matchLabel)}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;">${pills}</div>`;
 
       // Wire pill clicks
       bar.querySelectorAll('.sl-booster-pill').forEach(pill => {
