@@ -2629,6 +2629,17 @@ export function createDb(cfg = {}) {
 
       const sb = await getClient();
 
+      // Look up each player's real role (wk/bat/ar/bowl) — previously this was
+      // hardcoded to 'bat' for everyone, which made the pitch view dump the
+      // entire XI into the BAT row (WK/AR/BOWL always rendered empty).
+      const { data: roleRows, error: re } = await sb
+        .from('players')
+        .select('id, role')
+        .in('id', playerIds);
+      if (re) throw re;
+      const roleById = {};
+      (roleRows || []).forEach(p => { roleById[p.id] = p.role; });
+
       // Delete existing XI for this squad+match
       const { error: de } = await sb
         .from('user_match_xi')
@@ -2644,7 +2655,7 @@ export function createDb(cfg = {}) {
         player_id : pid,
         is_captain: pid === captainId,
         is_vc     : pid === vcId,
-        role      : 'bat',
+        role      : roleById[pid] || 'bat',
       }));
       const { error: ie } = await sb.from('user_match_xi').insert(rows);
       if (ie) throw ie;
@@ -3084,6 +3095,22 @@ export function createDb(cfg = {}) {
       // join pattern getMatchHistoryDetailed uses for Daily.
       const matchIds  = [...new Set((xiRows || []).map(r => r.match_id))];
       const playerIds = [...new Set((xiRows || []).map(r => r.player_id))];
+
+      // v_match_xi_with_scores.role comes from user_match_xi.role, which was
+      // historically saved as a hardcoded 'bat' for every player regardless of
+      // their real position (see saveMatchXI) — that put the whole XI into the
+      // pitch view's BAT row. Re-resolve the real role from `players` here so
+      // both old and new rows render correctly without needing a DB migration.
+      let roleById = {};
+      if (playerIds.length) {
+        const { data: roleRows, error: e4 } = await sb
+          .from('players')
+          .select('id, role')
+          .in('id', playerIds);
+        if (e4) throw e4;
+        (roleRows || []).forEach(p => { roleById[p.id] = p.role; });
+      }
+
       let statIdx = {};
       if (matchIds.length && playerIds.length) {
         const { data: statRows, error: e3 } = await sb
@@ -3115,6 +3142,9 @@ export function createDb(cfg = {}) {
         const st = statIdx[r.match_id]?.[r.player_id];
         byMatch[r.match_id].players.push({
           ...r,
+          // Real role from `players`, not the (possibly hardcoded-'bat') value
+          // stored on user_match_xi — see roleById note above.
+          role      : roleById[r.player_id] || r.role,
           // base_points (from the view) IS the raw, pre-multiplier total — kept as
           // raw_points too so this row matches the shape histPitchToken/
           // histBreakdownRowHtml expect (same field name Daily's rows use).
