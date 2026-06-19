@@ -11705,7 +11705,7 @@ p31,Sample Player,MI,bat,9.0,false
         const pickerHtml = `<select id="inlineLbMatchPicker" style="margin-bottom:8px;padding:6px 8px;font-size:12px;border-radius:6px;border:1px solid var(--border);background:var(--panel);color:var(--text);">
           ${scoredMatches.map(m => {
             const live = m.status === 'in_progress' ? ' 🔴' : '';
-            return `<option value="${m.id}"${m.id === dailyMatchId ? ' selected' : ''}>M${m.match_number} — ${escapeHtml(m.home_team||'')} vs ${escapeHtml(m.away_team||'')}${live}</option>`;
+            return `<option value="${m.id}"${m.id === dailyMatchId ? ' selected' : ''}>M${m.match_number} — ${escapeHtml(m.home_team_id||'')} vs ${escapeHtml(m.away_team_id||'')}${live}</option>`;
           }).join('')}
         </select>`;
 
