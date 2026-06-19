@@ -2701,25 +2701,17 @@ p31,Sample Player,MI,bat,9.0,false
           cell.innerHTML = '<div style="padding:10px 8px;color:var(--muted);font-size:12px;">No player data yet.</div>';
           return;
         }
-        const sortedPlayers = [...detail.players].sort((a, b) => (ROLE_ORDER_LB[a.role] ?? 9) - (ROLE_ORDER_LB[b.role] ?? 9));
-        const playerRows = sortedPlayers.map(p => {
-          const badge = p.is_captain ? '<span class="cap-badge">C</span>' : p.is_vc ? '<span class="vc-badge">VC</span>' : '';
-          const pts = p.total_points != null ? Number(p.total_points).toFixed(1) : '—';
-          return `<tr>
-            <td style="padding:3px 8px;font-size:11px;">${escapeHtml(p.name)}${badge}</td>
-            <td style="padding:3px 8px;font-size:11px;color:var(--muted);">${p.team_id || '—'}</td>
-            <td style="padding:3px 8px;font-size:11px;text-align:right;color:var(--accent);">${pts}</td>
-          </tr>`;
-        }).join('');
-        cell.innerHTML = `
-          <table style="width:100%;border-collapse:collapse;font-size:12px;border-top:1px solid var(--border);">
-            <thead><tr>
-              <th style="padding:5px 8px;text-align:left;color:var(--muted);font-size:10px;background:var(--panel-2);">Player</th>
-              <th style="padding:5px 8px;text-align:left;color:var(--muted);font-size:10px;background:var(--panel-2);">Team</th>
-              <th style="padding:5px 8px;text-align:right;color:var(--muted);font-size:10px;background:var(--panel-2);">Pts</th>
-            </tr></thead>
-            <tbody>${playerRows}</tbody>
-          </table>`;
+        const fmt = ((state.matches || []).find(m => m.id === matchId)?.format || state.format || 'T20').toUpperCase();
+        const t = {
+          players         : detail.players,
+          captain_id      : detail.captainId,
+          vice_captain_id : detail.viceCaptainId,
+          total_points    : detail.totalPoints,
+        };
+        cell.innerHTML = `<div style="padding:12px 8px 6px;">${histTeamPanelHtml(t, fmt)}</div>`;
+        requestAnimationFrame(() => {
+          cell.querySelectorAll('.pitch-oval-hist').forEach(ov => fitHistOval(ov));
+        });
       } catch (e) {
         cell.innerHTML = `<div style="padding:10px 8px;color:var(--bad);font-size:12px;">Failed: ${e.message}</div>`;
       }
