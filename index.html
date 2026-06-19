@@ -438,19 +438,12 @@
     .hist-match-header .match-label { font-weight: 700; }
     .hist-match-header .match-meta  { color: var(--muted); font-size: 11px; }
     .hist-match-header .match-pts   { font-weight: 700; color: var(--accent); font-size: 14px; white-space: nowrap; }
-    .hist-xi-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-    .hist-xi-table th { color: var(--muted); font-size: 9px; text-transform: uppercase;
-      letter-spacing: 0.5px; padding: 5px 8px; text-align: right;
-      border-bottom: 1px solid var(--border); background: rgba(237,232,213,0.6); }
-    .hist-xi-table th.name { text-align: left; }
-    .hist-xi-table td { padding: 4px 8px; text-align: right; border-bottom: 1px dashed rgba(214,207,168,0.6); }
-    .hist-xi-table td.name { text-align: left; font-weight: 500; }
-    .hist-xi-table td.muted { color: var(--muted); }
-    .hist-xi-table td.pts-cell { font-weight: 700; color: var(--accent); }
-    .hist-xi-table td.pts-cell.zero { color: var(--muted); font-weight: 400; }
-    .hist-xi-table .cap-badge { font-size: 9px; padding: 1px 4px; border-radius: 3px;
+    /* Generic captain/vice-captain badges — used by the player pool card (Pick XI)
+       and other spots outside the history pitch component (which has its own
+       .pitch-cbadge / .hist-bd-cbadge variants). */
+    .cap-badge { font-size: 9px; padding: 1px 4px; border-radius: 3px;
       background: rgba(166,124,0,0.15); color: var(--accent-2); margin-left: 4px; font-weight: 700; }
-    .hist-xi-table .vc-badge  { font-size: 9px; padding: 1px 4px; border-radius: 3px;
+    .vc-badge  { font-size: 9px; padding: 1px 4px; border-radius: 3px;
       background: rgba(148,163,184,0.15); color: var(--muted); margin-left: 4px; font-weight: 700; }
     .hist-xi-wrap { display: none; padding: 0; }
     .hist-xi-wrap.open { display: block; }
@@ -619,6 +612,12 @@
     #historyList .hist-match-table td { border-bottom: 1px dashed rgba(214,207,168,0.7); }
     #historyList .hist-match-block:last-child .hist-match-table td { border-bottom: none; }
     #historyList .hist-match-block.open .hist-match-table td { border-bottom-color: transparent; }
+    /* SL Season tab: same accordion table-alignment treatment as Daily's History tab. */
+    #slSeasonView .sl-season-table { table-layout: fixed; }
+    #slSeasonView .hist-match-table { margin: 0; }
+    #slSeasonView .hist-match-table td { border-bottom: 1px dashed rgba(214,207,168,0.7); }
+    #slSeasonView .hist-match-block:last-child .hist-match-table td { border-bottom: none; }
+    #slSeasonView .hist-match-block.open .hist-match-table td { border-bottom-color: transparent; }
 
     /* ── Leaderboard ──────────────────────────────────────── */
     #lbModal {
@@ -2660,56 +2659,86 @@ p31,Sample Player,MI,bat,9.0,false
             running  += net;
             return { m, net, runningAtMatch: running };
           });
-        const matchRows = [...matchRowData]
+
+        // Shared colgroup so each match's mini table lines up with the header table.
+        const COLGROUP = '<colgroup><col><col style="width:70px"><col style="width:90px"></colgroup>';
+
+        const blocks = [...matchRowData]
           .reverse()
           .map(({ m, net, runningAtMatch }) => {
             const innerDetailId = detailIdPrefix + '_m' + (m.match_id || '').replace(/-/g, '');
+            const pitchPanelId  = innerDetailId + '_pitch';
             const sortedPlayers = [...(m.players || [])].sort((a, b) => (ROLE_ORDER_LB[a.role] ?? 9) - (ROLE_ORDER_LB[b.role] ?? 9));
-            const playerRows = sortedPlayers.map(p => {
-              const badge = p.is_captain ? '<span class="cap-badge">C</span>' : p.is_vc ? '<span class="vc-badge">VC</span>' : '';
-              return `<tr>
-                <td style="padding:3px 8px;font-size:11px;">${escapeHtml(p.player_name)}${badge}</td>
-                <td style="padding:3px 8px;font-size:11px;color:var(--muted);">${p.team_id || '—'}</td>
-                <td style="padding:3px 8px;font-size:11px;text-align:right;color:var(--accent);">${Number(p.total_points).toFixed(1)}</td>
-              </tr>`;
-            }).join('');
-            return `
-              <tr class="sl-match-row" data-detail="${innerDetailId}" style="cursor:pointer;background:var(--panel-2);">
-                <td style="padding:5px 8px;font-size:12px;font-weight:600;">M${m.match_number ?? '?'} · ${m.home_team_id ?? '?'} vs ${m.away_team_id ?? '?'} <span style="font-size:10px;color:var(--muted);">▾</span></td>
-                <td style="padding:5px 8px;font-size:12px;text-align:right;">${net.toFixed(1)}</td>
-                <td style="padding:5px 8px;font-size:12px;text-align:right;color:var(--muted);">${runningAtMatch.toFixed(1)}</td>
-              </tr>
-              <tr id="${innerDetailId}" style="display:none;">
-                <td colspan="3" style="padding:0;">
-                  <table style="width:100%;border-collapse:collapse;">
-                    <thead><tr>
-                      <th style="padding:3px 8px;font-size:10px;color:var(--muted);text-align:left;background:var(--panel);">Player</th>
-                      <th style="padding:3px 8px;font-size:10px;color:var(--muted);background:var(--panel);">Team</th>
-                      <th style="padding:3px 8px;font-size:10px;color:var(--muted);text-align:right;background:var(--panel);">Pts</th>
-                    </tr></thead>
-                    <tbody>${playerRows}</tbody>
-                  </table>
-                </td>
-              </tr>`;
+
+            // Reuse the shared pitch+breakdown component — reshape SL's per-match
+            // player rows (player_name/base_points/multiplier from v_match_xi_with_scores,
+            // plus batting/bowling/fielding merged in by db.getSquadSeason) into the
+            // 'history-shaped' object histPitchToken/histBreakdownRowHtml expect.
+            const pitchPlayers = sortedPlayers.map(p => ({
+              player_id : p.player_id,
+              name      : p.player_name,
+              role      : p.role,
+              team_id   : p.team_id,
+              batting   : p.batting,
+              bowling   : p.bowling,
+              fielding  : p.fielding,
+              raw_points: p.raw_points,
+              multiplier: p.multiplier,
+            }));
+            const captainId = sortedPlayers.find(p => p.is_captain)?.player_id ?? null;
+            const vcId      = sortedPlayers.find(p => p.is_vc)?.player_id ?? null;
+            const matchFmt  = (state.matches || []).find(x => x.id === m.match_id)?.format;
+            const fmt       = (matchFmt || state.format || 'T20').toUpperCase();
+            const pitchTeam = { players: pitchPlayers, captain_id: captainId, vice_captain_id: vcId, total_points: m.xi_total };
+            const pitchDetailHtml = histTeamPanelHtml(pitchTeam, fmt);
+
+            const matchRow =
+              '<tr class="sl-match-row" data-detail="' + innerDetailId + '" data-pitch="' + pitchPanelId + '" style="cursor:pointer;" title="Click to expand">' +
+              '<td class="l">M' + (m.match_number ?? '?') + ' · ' + escapeHtml((m.home_team_id ?? '?') + ' vs ' + (m.away_team_id ?? '?')) + ' <span style="font-size:10px;color:var(--muted);">▾</span></td>' +
+              '<td class="pts">' + net.toFixed(1) + '</td>' +
+              '<td>' + runningAtMatch.toFixed(1) + '</td>' +
+              '</tr>';
+
+            // Pitch panel stays OUTSIDE any <table>/<td> to avoid the Safari compositor
+            // bug where gradient backgrounds inside <td> render as solid black.
+            const matchTable = '<table class="sl-season-table hist-match-table">' + COLGROUP + '<tbody>' + matchRow + '</tbody></table>';
+            const pitchPanel = '<div id="' + pitchPanelId + '" style="display:none;">' + pitchDetailHtml + '</div>';
+            return '<div class="hist-match-block" data-detail="' + innerDetailId + '" data-pitch="' + pitchPanelId + '">' + matchTable + pitchPanel + '</div>';
           }).join('');
-        cell.innerHTML = `
-          <table style="width:100%;border-collapse:collapse;font-size:12px;border-top:1px solid var(--border);">
-            <thead><tr>
-              <th style="padding:5px 8px;text-align:left;color:var(--muted);font-size:10px;background:var(--panel-2);">Match</th>
-              <th style="padding:5px 8px;text-align:right;color:var(--muted);font-size:10px;background:var(--panel-2);">Net</th>
-              <th style="padding:5px 8px;text-align:right;color:var(--muted);font-size:10px;background:var(--panel-2);">Running</th>
-            </tr></thead>
-            <tbody>${matchRows}</tbody>
-          </table>`;
-        // Wire inner match expand/collapse
-        cell.querySelectorAll('.sl-match-row').forEach(mRow => {
-          mRow.addEventListener('click', () => {
-            const mid = el.querySelector('#' + mRow.dataset.detail);
-            if (!mid) return;
-            const open = mid.style.display !== 'none';
-            mid.style.display = open ? 'none' : '';
-            const c = mRow.querySelector('span[style*="▾"], span[style*="▴"]');
-            if (c) c.textContent = open ? '▾' : '▴';
+
+        const headerTable =
+          '<table class="sl-season-table hist-header-table">' + COLGROUP +
+          '<thead><tr><th class="l">Match</th><th>Net</th><th>Running</th></tr></thead>' +
+          '</table>';
+
+        cell.innerHTML = headerTable + blocks;
+
+        // Wire expand/collapse, accordion-style — opening a match auto-collapses
+        // whichever other match's panel was previously open (same as renderHistory).
+        cell.querySelectorAll('.sl-match-row').forEach(row => {
+          row.addEventListener('click', () => {
+            const pitchPanel = cell.querySelector('#' + row.dataset.pitch);
+            if (!pitchPanel) return;
+            const opening = pitchPanel.style.display === 'none';
+
+            cell.querySelectorAll('.sl-match-row').forEach(otherRow => {
+              if (otherRow === row) return;
+              const otherPanel = cell.querySelector('#' + otherRow.dataset.pitch);
+              if (otherPanel) otherPanel.style.display = 'none';
+              otherRow.closest('.hist-match-block')?.classList.remove('open');
+              const otherCaret = otherRow.querySelector('span[style*="▾"], span[style*="▴"]');
+              if (otherCaret) otherCaret.textContent = '▾';
+            });
+
+            pitchPanel.style.display = opening ? '' : 'none';
+            row.closest('.hist-match-block')?.classList.toggle('open', opening);
+            const caret = row.querySelector('span[style*="▾"], span[style*="▴"]');
+            if (caret) caret.textContent = opening ? '▴' : '▾';
+            if (opening) {
+              requestAnimationFrame(() => {
+                pitchPanel.querySelectorAll('.pitch-oval-hist').forEach(ov => fitHistOval(ov));
+              });
+            }
           });
         });
       } catch (e) {
@@ -4941,6 +4970,10 @@ p31,Sample Player,MI,bat,9.0,false
 
       const roleOrder = { wk: 0, bat: 1, ar: 2, bowl: 3 };
 
+      // Shared colgroup so every match's mini single-row table lines up with the
+      // header table's columns (same pattern as renderHistory / loadSLDetailInto).
+      const COLGROUP = '<colgroup><col><col style="width:60px"><col style="width:60px"><col style="width:60px"><col style="width:80px"></colgroup>';
+
       let running = 0;
       const rows = data.matches.map(m => {
         const pen  = penMap[m.match_id] || 0;
@@ -4948,58 +4981,67 @@ p31,Sample Player,MI,bat,9.0,false
         running   += net;
         const xferCount = (data.transfers || []).filter(t => t.match_id === m.match_id).length;
         const xferTxt = xferCount ? ' <span style="font-size:10px;color:var(--muted);">×' + xferCount + ' xfer</span>' : '';
-        const detailId = 'slDetail_' + m.match_id.replace(/-/g, '');
+        const detailId    = 'slDetail_' + m.match_id.replace(/-/g, '');
+        const pitchPanelId = detailId + '_pitch';
         // Show "0" when transfers were made but free; "--" when no transfers at all
         const penCell = xferCount > 0 ? (pen ? '-' + pen : '0') : '--';
 
-        // Player detail rows sorted by WK·BAT·AR·BOWL
+        // Reuse the shared pitch+breakdown component — reshape SL's per-match player
+        // rows (player_name/base_points/multiplier from v_match_xi_with_scores, plus
+        // batting/bowling/fielding merged in by db.getSquadSeason) into the
+        // 'history-shaped' object histPitchToken/histBreakdownRowHtml expect.
         const sortedPlayers = [...(m.players || [])].sort((a, b) => (roleOrder[a.role] ?? 9) - (roleOrder[b.role] ?? 9));
-        const playerRowsHtml = sortedPlayers.map(p => {
-          const badge = p.is_captain ? '<span class="cap-badge">C</span>'
-                      : p.is_vc     ? '<span class="vc-badge">VC</span>' : '';
-          const pts = Number(p.total_points).toFixed(1);
-          return '<tr>' +
-            '<td class="name">' + escapeHtml(p.player_name) + badge + '</td>' +
-            '<td class="muted">' + (p.team_id || '—') + '</td>' +
-            '<td class="muted">' + (roleLabel[p.role] || p.role) + '</td>' +
-            '<td class="pts-cell' + (Number(p.total_points) !== 0 ? '' : ' zero') + '">' + pts + '</td>' +
-            '</tr>';
-        }).join('');
-
-        const detailHtml =
-          '<tr id="' + detailId + '" style="display:none;">' +
-          '<td colspan="5" style="padding:0 0 6px;">' +
-          '<table class="hist-xi-table" style="margin:0;border-top:none;border-radius:0 0 6px 6px;">' +
-          '<thead><tr><th class="name">Player</th><th>Team</th><th>Role</th><th>Pts</th></tr></thead>' +
-          '<tbody>' + playerRowsHtml + '</tbody>' +
-          '</table></td></tr>';
+        const pitchPlayers = sortedPlayers.map(p => ({
+          player_id : p.player_id,
+          name      : p.player_name,
+          role      : p.role,
+          team_id   : p.team_id,
+          batting   : p.batting,
+          bowling   : p.bowling,
+          fielding  : p.fielding,
+          raw_points: p.raw_points,
+          multiplier: p.multiplier,
+        }));
+        const captainId = sortedPlayers.find(p => p.is_captain)?.player_id ?? null;
+        const vcId      = sortedPlayers.find(p => p.is_vc)?.player_id ?? null;
+        const matchFmt  = (state.matches || []).find(x => x.id === m.match_id)?.format;
+        const fmt       = (matchFmt || state.format || 'T20').toUpperCase();
+        const pitchTeam = { players: pitchPlayers, captain_id: captainId, vice_captain_id: vcId, total_points: m.xi_total };
+        const pitchDetailHtml = histTeamPanelHtml(pitchTeam, fmt);
 
         const matchRow =
-          '<tr class="sl-match-row" data-detail="' + detailId + '" style="cursor:pointer;" title="Click to expand">' +
-          '<td class="l">M' + (m.match_number ?? '?') + ' · ' + (m.home_team_id ?? '?') + ' vs ' + (m.away_team_id ?? '?') + xferTxt + ' <span style="font-size:10px;color:var(--muted);">▾</span></td>' +
+          '<tr class="sl-match-row" data-detail="' + detailId + '" data-pitch="' + pitchPanelId + '" style="cursor:pointer;" title="Click to expand">' +
+          '<td class="l">M' + (m.match_number ?? '?') + ' · ' + escapeHtml((m.home_team_id ?? '?') + ' vs ' + (m.away_team_id ?? '?')) + xferTxt + ' <span style="font-size:10px;color:var(--muted);">▾</span></td>' +
           '<td>' + m.xi_total.toFixed(1) + '</td>' +
           '<td class="pen">' + penCell + '</td>' +
           '<td class="pts">' + net.toFixed(1) + '</td>' +
           '<td>' + running.toFixed(1) + '</td>' +
           '</tr>';
 
-        return matchRow + detailHtml;
+        // Pitch panel stays OUTSIDE any <table>/<td> to avoid the Safari compositor
+        // bug where gradient backgrounds inside <td> render as solid black.
+        const matchTable = '<table class="sl-season-table hist-match-table">' + COLGROUP + '<tbody>' + matchRow + '</tbody></table>';
+        const pitchPanel = '<div id="' + pitchPanelId + '" style="display:none;">' + pitchDetailHtml + '</div>';
+        return '<div class="hist-match-block" data-detail="' + detailId + '" data-pitch="' + pitchPanelId + '">' + matchTable + pitchPanel + '</div>';
       }).reverse().join('');
 
       // ── Live match overlay ────────────────────────────────────────────────
       const locked = state.sl.lastLockedXI;
       let liveRow = null;
       let liveScored = [];
+      let liveInputs = [];
+      let liveBooster = null;
       if (locked?.playerIds?.length && Object.keys(state.stats).length) {
         const alreadyInDb = data.matches.some(m => m.match_id === locked.matchId);
         if (!alreadyInDb) {
-          const liveInputs = locked.playerIds.map(id => {
+          liveBooster = getCachedBoosterForMatch(locked.matchId);
+          liveInputs = locked.playerIds.map(id => {
             const p = PLAYERS.find(x => x.id === id); if (!p) return null;
             const stats = state.stats[id] || {};
             const captaincy = id === locked.captainId ? 'captain' : id === locked.vcId ? 'vice_captain' : 'normal';
-            return { name: p.name, role: p.role, captaincy, ...stats };
+            return { id, name: p.name, role: p.role, team: p.team, captaincy, is_overseas: !!p.overseas, ...stats };
           }).filter(Boolean);
-          liveScored = scoreTeam(liveInputs, state.format);
+          liveScored = scoreTeam(liveInputs, state.format, liveBooster);
           const liveTotal  = liveScored.reduce((a, s) => a + s.totalPoints, 0);
           const lm = (state.matches || []).find(m => m.id === locked.matchId);
           const liveLabel = `M${locked.matchNumber ?? '?'} · ${lm?.home_team_id ?? '?'} vs ${lm?.away_team_id ?? '?'}`;
@@ -5011,40 +5053,38 @@ p31,Sample Player,MI,bat,9.0,false
       const xiGross = data.matches.reduce((s,m)=>s+m.xi_total,0);
       const grandTotal = +(data.seasonTotal + (liveRow?.total ?? 0)).toFixed(1);
 
-      let liveRowHtml = '';
+      let liveBlockHtml = '';
       if (liveRow) {
-        // Live player detail rows
-        const liveSortedById = locked.playerIds
-          .map(id => ({ id, player: PLAYERS.find(x => x.id === id) }))
-          .filter(x => x.player)
-          .sort((a, b) => (roleOrder[a.player.role] ?? 9) - (roleOrder[b.player.role] ?? 9));
-        const livePlayerRows = liveSortedById.map(({ id, player: p }) => {
-          const scored = liveScored.find(s => s.name === p.name);
-          const badge  = id === locked.captainId ? '<span class="cap-badge">C</span>'
-                       : id === locked.vcId      ? '<span class="vc-badge">VC</span>' : '';
-          const pts = scored ? scored.totalPoints.toFixed(1) : '0.0';
-          return '<tr style="color:var(--accent);">' +
-            '<td class="name">' + escapeHtml(p.name) + badge + '</td>' +
-            '<td class="muted">' + (p.team || '—') + '</td>' +
-            '<td class="muted">' + (roleLabel[p.role] || p.role) + '</td>' +
-            '<td class="pts-cell">' + pts + '</td>' +
-            '</tr>';
-        }).join('');
+        const byName = Object.fromEntries(liveScored.map(s => [s.name, s]));
+        const livePitchPlayers = liveInputs.map(p => ({
+          player_id : p.id,
+          name      : p.name,
+          role      : p.role,
+          team_id   : p.team,
+          batting   : p.batting,
+          bowling   : p.bowling,
+          fielding  : p.fielding,
+          raw_points: byName[p.name]?.rawPoints ?? null,
+          multiplier: byName[p.name]?.multiplier ?? null,
+        }));
+        const livePitchTeam = {
+          players: livePitchPlayers, captain_id: locked.captainId, vice_captain_id: locked.vcId,
+          total_points: liveRow.total,
+        };
+        const livePitchHtml = histTeamPanelHtml(livePitchTeam, state.format);
+        const pitchPanelId  = 'slDetailLive_pitch';
 
-        liveRowHtml =
-          '<tr class="sl-match-row" data-detail="slDetailLive" style="cursor:pointer;color:var(--accent);" title="Click to expand">' +
+        const liveMatchRow =
+          '<tr class="sl-match-row" data-detail="slDetailLive" data-pitch="' + pitchPanelId + '" style="cursor:pointer;color:var(--accent);" title="Click to expand">' +
           '<td class="l">' + liveRow.label + ' <span style="font-size:9px;padding:1px 5px;border-radius:8px;background:rgba(201,168,76,0.15);margin-left:4px;text-transform:uppercase;letter-spacing:0.4px;">live</span> <span style="font-size:10px;color:var(--muted);">▾</span></td>' +
           '<td>' + liveRow.total.toFixed(1) + '</td>' +
           '<td class="pen">--</td>' +
           '<td class="pts">' + liveRow.total.toFixed(1) + '</td>' +
           '<td>' + (running + liveRow.total).toFixed(1) + '</td>' +
-          '</tr>' +
-          '<tr id="slDetailLive" style="display:none;">' +
-          '<td colspan="5" style="padding:0 0 6px;">' +
-          '<table class="hist-xi-table" style="margin:0;border-top:none;border-radius:0 0 6px 6px;">' +
-          '<thead><tr><th class="name">Player</th><th>Team</th><th>Role</th><th>Pts</th></tr></thead>' +
-          '<tbody>' + livePlayerRows + '</tbody>' +
-          '</table></td></tr>';
+          '</tr>';
+        const liveMatchTable = '<table class="sl-season-table hist-match-table">' + COLGROUP + '<tbody>' + liveMatchRow + '</tbody></table>';
+        const livePitchPanel = '<div id="' + pitchPanelId + '" style="display:none;">' + livePitchHtml + '</div>';
+        liveBlockHtml = '<div class="hist-match-block" data-detail="slDetailLive" data-pitch="' + pitchPanelId + '">' + liveMatchTable + livePitchPanel + '</div>';
       }
 
       const slTotalRow =
@@ -5056,24 +5096,42 @@ p31,Sample Player,MI,bat,9.0,false
         '<td style="padding:6px 8px;">' + grandTotal + '</td>' +
         '</tr>';
 
-      view.innerHTML = '<table class="sl-season-table">' +
+      const headerTable = '<table class="sl-season-table hist-header-table">' + COLGROUP +
         '<thead>' +
         '<tr><th class="l">Match</th><th>XI pts</th><th>-Xfer</th><th>Net</th><th>Running</th></tr>' +
         slTotalRow +
         '</thead>' +
-        '<tbody>' + liveRowHtml + rows + '</tbody>' +
         '</table>';
 
-      // Wire expand / collapse on match rows
+      view.innerHTML = headerTable + liveBlockHtml + rows;
+
+      // Wire expand/collapse, accordion-style: opening a match's pitch panel
+      // auto-collapses whichever other match's panel was previously open
+      // (same pattern as renderHistory / loadSLDetailInto).
       view.querySelectorAll('.sl-match-row').forEach(row => {
         row.addEventListener('click', () => {
-          const detail = view.querySelector('#' + row.dataset.detail);
-          if (!detail) return;
-          const opening = detail.style.display === 'none';
-          detail.style.display = opening ? '' : 'none';
-          // Flip the caret
+          const pitchPanel = view.querySelector('#' + row.dataset.pitch);
+          if (!pitchPanel) return;
+          const opening = pitchPanel.style.display === 'none';
+
+          view.querySelectorAll('.sl-match-row').forEach(otherRow => {
+            if (otherRow === row) return;
+            const otherPanel = view.querySelector('#' + otherRow.dataset.pitch);
+            if (otherPanel) otherPanel.style.display = 'none';
+            otherRow.closest('.hist-match-block')?.classList.remove('open');
+            const otherCaret = otherRow.querySelector('span[style*="▾"], span[style*="▴"]');
+            if (otherCaret) otherCaret.textContent = '▾';
+          });
+
+          pitchPanel.style.display = opening ? '' : 'none';
+          row.closest('.hist-match-block')?.classList.toggle('open', opening);
           const caret = row.querySelector('span[style*="▾"], span[style*="▴"]');
           if (caret) caret.textContent = opening ? '▴' : '▾';
+          if (opening) {
+            requestAnimationFrame(() => {
+              pitchPanel.querySelectorAll('.pitch-oval-hist').forEach(ov => fitHistOval(ov));
+            });
+          }
         });
       });
     }
@@ -5584,7 +5642,7 @@ p31,Sample Player,MI,bat,9.0,false
         const p = PLAYERS.find(x => x.id === id); if (!p) return null;
         const stats = state.stats[id] || {};
         const captaincy = id === captainId ? 'captain' : id === vcId ? 'vice_captain' : 'normal';
-        return { name: p.name, role: p.role, captaincy, is_overseas: !!p.overseas, ...stats };
+        return { id, name: p.name, role: p.role, team: p.team, captaincy, is_overseas: !!p.overseas, ...stats };
       }).filter(Boolean);
 
       const scored  = scoreTeam(scoreInputs, state.format, liveBooster);
@@ -5594,56 +5652,40 @@ p31,Sample Player,MI,bat,9.0,false
       const capName = PLAYERS.find(p => p.id === captainId)?.name?.split(' ').pop() ?? '--';
       const vcName  = PLAYERS.find(p => p.id === vcId)?.name?.split(' ').pop() ?? '--';
 
-      let html = `
-        <div style="padding:10px 16px 10px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
-          <div>
-            <div style="font-weight:600; font-size:14px;">${matchLabel}${vsLabel}${statusText}</div>
-            <div style="font-size:11px; color:var(--muted); margin-top:3px;">${capName} (C) · ${vcName} (VC)</div>
-          </div>
-          <div style="text-align:right;">
-            <div style="font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:0.4px;">Total</div>
-            <div style="font-size:24px; font-weight:700; color:var(--accent);">${total.toFixed(1)}</div>
-          </div>
+      // Reuse the same pitch + points-breakdown component as Daily's Live Score /
+      // History tabs — build a "history-shaped" team object. multiplier is threaded
+      // through from scoreTeam's true booster-aware result (NOT re-derived from
+      // isCap/isVc inside histPitchToken/histBreakdownRowHtml), so boosters like
+      // triple_captain (×3) or team_double display correctly.
+      const livePlayers = scoreInputs.map(p => ({
+        player_id : p.id,
+        name      : p.name,
+        role      : p.role,
+        team_id   : p.team,
+        batting   : p.batting,
+        bowling   : p.bowling,
+        fielding  : p.fielding,
+        raw_points: byName[p.name]?.rawPoints ?? null,
+        multiplier: byName[p.name]?.multiplier ?? null,
+      }));
+      const liveTeam = {
+        captain_id     : captainId,
+        vice_captain_id: vcId,
+        total_points   : total,
+        players        : livePlayers,
+      };
+
+      el.innerHTML = `
+        <div style="padding:10px 16px 8px; border-bottom:1px solid var(--border);">
+          <div style="font-weight:600; font-size:14px;">${matchLabel}${vsLabel}${statusText}</div>
+          <div style="font-size:11px; color:var(--muted); margin-top:3px;">${capName} (C) · ${vcName} (VC)</div>
         </div>
-        <div style="padding:8px 0 12px;">`;
+        <div style="padding:12px 16px 14px;">${histTeamPanelHtml(liveTeam, state.format)}</div>
+      `;
 
-      html += sortByRole(playerIds).map(id => {
-        const p = PLAYERS.find(x => x.id === id); if (!p) return '';
-        const isCap = id === captainId;
-        const isVc  = id === vcId;
-        const badge = isCap
-          ? '<span class="cap-badge">C</span>'
-          : isVc ? '<span class="vc-badge">VC</span>' : '';
-        const score     = byName[p.name];
-        const pts       = score ? score.totalPoints.toFixed(1) : '0.0';
-        const multBadge = score && score.multiplier > 1
-          ? `<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:rgba(34,211,238,0.2);color:var(--accent);margin-left:3px;">${score.multiplier}×</span>`
-          : '';
-        const breakdown = score && Object.keys(score.breakdown).length
-          ? Object.entries(score.breakdown).map(([cat, vals]) => {
-              const items = Object.entries(vals)
-                .filter(([, v]) => v !== 0)
-                .map(([k, v]) => `${k}: ${v > 0 ? '+' : ''}${v}`)
-                .join(', ');
-              return items ? `<span class="b-cat">${cat}</span>${items}` : '';
-            }).filter(Boolean).join(' &nbsp;|&nbsp; ')
-          : '<em>no events yet</em>';
-        return `<div class="squad-row" data-liveid="${id}" style="cursor:pointer;">
-          <div>
-            <div class="name">${p.name}${badge}${multBadge}${p.overseas ? ' <span class="os-tag">✈️</span>' : ''}</div>
-            <div class="meta"><span class="role-tag role-${p.role}">${roleLabel[p.role]}</span> ${p.team} · ${p.credits.toFixed(1)} cr</div>
-          </div>
-          <span class="pts">${pts}</span>
-          <div class="breakdown">${breakdown}</div>
-        </div>`;
-      }).join('');
-
-      html += '</div>';
-      el.innerHTML = html;
-
-      // Expand/collapse breakdown on click
-      el.querySelectorAll('.squad-row').forEach(row =>
-        row.addEventListener('click', () => row.classList.toggle('expanded')));
+      requestAnimationFrame(() => {
+        el.querySelectorAll('.pitch-oval-hist').forEach(ov => fitHistOval(ov));
+      });
     }
 
     // ─── POOL CLICK — mode-aware ─────────────────────────────────────────────
@@ -12418,7 +12460,12 @@ p31,Sample Player,MI,bat,9.0,false
       var tm = teamByCode(p.team_id);
       var c1 = (tm && tm.color)  || '#888888';
       var c2 = (tm && tm.color2) || '#333333';
-      var mult = isCap ? 2.0 : isVc ? 1.5 : 1.0;
+      // p.multiplier (when present) is the true booster-aware multiplier from
+      // scoreTeam()/calculateScore() or the DB's stored multiplier column — it
+      // takes precedence over the plain captain/VC-derived value below, which
+      // remains the fallback for Daily (no boosters, never sets this field).
+      var mult = (p.multiplier !== null && p.multiplier !== undefined) ? Number(p.multiplier)
+                : isCap ? 2.0 : isVc ? 1.5 : 1.0;
       var rawPts = (p.raw_points !== null && p.raw_points !== undefined) ? Number(p.raw_points) : null;
       var pts = rawPts !== null ? (rawPts * mult).toFixed(1) : '—';
       var roleKey = p.role || 'bat';
@@ -12493,7 +12540,10 @@ p31,Sample Player,MI,bat,9.0,false
     function histBreakdownRowHtml(p, fmt, captainId, vcId, isFirst) {
       var isCap = String(p.player_id) === String(captainId);
       var isVc  = String(p.player_id) === String(vcId);
-      var mult  = isCap ? MULTIPLIERS.captain : isVc ? MULTIPLIERS.vice_captain : MULTIPLIERS.normal;
+      // p.multiplier (true booster-aware value) overrides the plain captain/VC
+      // guess when present — see histPitchToken for the same convention.
+      var mult  = (p.multiplier !== null && p.multiplier !== undefined) ? Number(p.multiplier)
+                : isCap ? MULTIPLIERS.captain : isVc ? MULTIPLIERS.vice_captain : MULTIPLIERS.normal;
       var rules = SCORING_RULES[fmt] || SCORING_RULES.T20;
       var tm = teamByCode(p.team_id);
       var c1 = (tm && tm.color)  || '#888888';
@@ -12548,8 +12598,14 @@ p31,Sample Player,MI,bat,9.0,false
 
       var rawStored = (p.raw_points !== null && p.raw_points !== undefined) ? Number(p.raw_points) : null;
       var finalStr  = rawStored !== null ? (rawStored * mult).toFixed(1) : '—';
-      var multLabel = isCap ? ('×' + MULTIPLIERS.captain + ' (Captain)')
-                    : isVc  ? ('×' + MULTIPLIERS.vice_captain + ' (Vice-Captain)') : null;
+      // Label reflects the RESOLVED multiplier (booster-aware) rather than the
+      // hardcoded captain/VC constants, so e.g. a Triple Captain booster shows
+      // "×3 (Captain)" and a Team Double booster shows "×2 (Booster)" on a
+      // player who is neither captain nor vice-captain.
+      var multLabel = mult === 1 ? null
+                    : isCap ? ('×' + mult + ' (Captain)')
+                    : isVc  ? ('×' + mult + ' (Vice-Captain)')
+                    : ('×' + mult + ' (Booster)');
 
       var linesHtml = lines.map(function(l) {
         return '<div class="hist-bd-line"><span>' + escapeHtml(l[0]) + '</span><span>' + (l[1]>=0?'+':'') + l[1].toFixed(1) + '</span></div>';

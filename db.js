@@ -3078,6 +3078,25 @@ export function createDb(cfg = {}) {
       if (e1) throw e1;
       if (e2) throw e2;
 
+      // Itemized batting/bowling/fielding stat objects for every match/player combo
+      // in this squad's season — needed by the shared pitch+breakdown component
+      // (histBreakdownRowHtml) to show line-by-line scoring, mirroring the exact
+      // join pattern getMatchHistoryDetailed uses for Daily.
+      const matchIds  = [...new Set((xiRows || []).map(r => r.match_id))];
+      const playerIds = [...new Set((xiRows || []).map(r => r.player_id))];
+      let statIdx = {};
+      if (matchIds.length && playerIds.length) {
+        const { data: statRows, error: e3 } = await sb
+          .from('player_match_stats')
+          .select('match_id, player_id, raw_points, batting, bowling, fielding')
+          .in('match_id', matchIds)
+          .in('player_id', playerIds);
+        if (e3) throw e3;
+        (statRows || []).forEach(s => {
+          (statIdx[s.match_id] ??= {})[s.player_id] = s;
+        });
+      }
+
       // Group XI rows by match
       const byMatch = {};
       (xiRows || []).forEach(r => {
@@ -3093,7 +3112,17 @@ export function createDb(cfg = {}) {
             xi_total    : 0,
           };
         }
-        byMatch[r.match_id].players.push(r);
+        const st = statIdx[r.match_id]?.[r.player_id];
+        byMatch[r.match_id].players.push({
+          ...r,
+          // base_points (from the view) IS the raw, pre-multiplier total — kept as
+          // raw_points too so this row matches the shape histPitchToken/
+          // histBreakdownRowHtml expect (same field name Daily's rows use).
+          raw_points: r.base_points ?? null,
+          batting   : st?.batting   ?? null,
+          bowling   : st?.bowling   ?? null,
+          fielding  : st?.fielding  ?? null,
+        });
         byMatch[r.match_id].xi_total += Number(r.total_points ?? 0);
       });
 
