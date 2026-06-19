@@ -797,7 +797,7 @@
       #slPitchBoosterRow { flex-direction: column; }
       #slPitchXiWrap { margin: 0 auto !important; }
       #slBoosterBar { padding: 8px 0 0; width: 100%; max-width: none; }
-      .sl-booster-pill { font-size: 12px !important; padding: 9px 12px !important; }
+      .sl-booster-pill { padding: 10px 4px !important; }
 
       /* ── Countdown chip ─────────────────────────────────────────── */
       .countdown-chip { font-size: 11px; padding: 4px 8px; }
@@ -840,16 +840,14 @@
   
     /* ═══ PITCH XI VIEW ═══════════════════════════════════════════════════════ */
     #pitchXiWrap, #slPitchXiWrap { background:#1a5c1a; max-width:360px; margin:0 auto; border-radius:12px; overflow:hidden; }
-    /* #slPitchXiWrap is a flex item (sits beside the booster column) — without an
+    /* #slPitchXiWrap is a flex item inside #slPitchBoosterRow — without an
        explicit width, flex-basis:auto sizes it to its content's max-content width
-       (the jersey rows, which are far narrower than 360px), shrinking the pitch and
-       forcing the sibling booster bar to balloon to fill the freed-up space. Setting
-       a real width (capped by max-width:100% so it still shrinks on narrow screens)
-       makes it match Daily's #pitchXiWrap dimensions exactly. */
+       (the jersey rows, which are far narrower than 360px), shrinking the pitch.
+       Setting a real width (capped by max-width:100% so it still shrinks on
+       narrow screens) makes it match Daily's #pitchXiWrap dimensions exactly. */
     #slPitchXiWrap { width:360px; max-width:100%; }
-    /* Keep the booster column pill-sized instead of stretching across whatever
-       space the flex row leaves it (main can be up to 1400px wide on desktop). */
-    #slBoosterBar { max-width:300px; }
+    /* Booster trigger is now a small pill (popup holds the actual grid — see
+       #slBoosterModal), so it no longer needs a width cap of its own. */
     .pitch-oval {
       position:relative; margin:12px 16px;
       height:430px;
@@ -1370,13 +1368,19 @@
             <!-- Shared-league notice (shown when active squad mirrors a primary squad's XI) -->
             <div id="slSharedXiBanner" style="display:none;"></div>
             <div id="slXferInfoBar" style="font-size:12px; padding:4px 0 6px; color:var(--muted);"></div>
-            <!-- Pitch view (mirrors Daily Pick XI) + boosters side panel.
+            <!-- Pitch view (mirrors Daily Pick XI) + a small Boosters trigger.
                  C/VC selection happens on the pitch itself (hover a player for
-                 the C/V/x controls) or via Edit 11 — there is no separate list. -->
-            <div id="slPitchBoosterRow" style="display:flex; gap:12px; align-items:flex-start;">
+                 the C/V/x controls) or via Edit 11 — there is no separate list.
+                 Boosters are picked in a popup (#slBoosterModal) rather than an
+                 inline grid beside the pitch — that grid was forcing the column
+                 too wide (worse once the player pool is open). Whichever booster
+                 is active shows as a small badge on the pitch itself instead. -->
+            <div id="slPitchBoosterRow" style="display:flex; flex-direction:column; gap:8px; align-items:flex-start;">
+              <div id="slBoosterBar" style="display:none;"></div>
               <div id="slPitchXiWrap" style="margin:0; flex:0 0 auto;">
                 <div class="pitch-outer">
                   <div class="pitch-oval" id="slPitchOval">
+                    <div id="slBoosterPitchBadge" style="display:none; position:absolute; top:8px; left:50%; transform:translateX(-50%); z-index:5;"></div>
                     <svg class="pitch-svg-overlay" viewBox="0 0 304 460" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
                       <ellipse cx="152" cy="230" rx="145" ry="220" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="2" stroke-dasharray="7 5"/>
                       <rect x="134" y="140" width="36" height="180" rx="5" fill="url(#slPitchGrad)" opacity="0.72"/>
@@ -1401,8 +1405,6 @@
                   </div>
                 </div>
               </div>
-              <!-- Booster pills (shown when contest has available_boosters) -->
-              <div id="slBoosterBar" style="display:none; flex:1; min-width:0;"></div>
             </div>
             <div class="save-bar">
               <span style="flex:1; font-size:12px; color:var(--muted);" id="slXiSaveLabel">Pick 11 from the pool.</span>
@@ -1782,6 +1784,23 @@ p31,Sample Player,MI,bat,9.0,false
       </header>
       <div class="modal-body">
         <div id="playerStatsBody"><div class="sc-empty">Loading…</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Season Long booster picker — popup so the icon grid doesn't have to
+       live beside the pitch (it was forcing the Pick XI column too wide,
+       especially with the player pool open). The Pick XI screen now just
+       shows a small "Boosters" trigger; activating one shows its icon on
+       the pitch itself. -->
+  <div id="slBoosterModal" class="modal-backdrop">
+    <div class="modal" style="max-width:420px;">
+      <header>
+        <h2>Boosters</h2>
+        <button class="modal-close" id="slBoosterModalCloseBtn" title="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <div id="slBoosterModalBody"><div class="sc-empty">Loading…</div></div>
       </div>
     </div>
   </div>
@@ -4562,6 +4581,7 @@ p31,Sample Player,MI,bat,9.0,false
       } else {
         const bar = $('#slBoosterBar');
         if (bar) bar.style.display = 'none';
+        renderSlBoosterPitchBadge(null); // clear any stale active-booster badge too
       }
     }
 
@@ -4593,45 +4613,129 @@ p31,Sample Player,MI,bat,9.0,false
       return state.sl.boosterActivations.find(a => a.match_id === matchId)?.booster ?? null;
     }
 
-    // ─── BOOSTER BAR ─────────────────────────────────────────────────────────
+    // ─── BOOSTER TRIGGER + POPUP ────────────────────────────────────────────
+    // Boosters used to render as a 2-col icon grid sitting beside the pitch —
+    // that forced the Pick XI column wider than it should be (and broke down
+    // further once the player pool opened alongside it, see #slPitchBoosterRow
+    // comment). The grid now lives in a popup (#slBoosterModal). The Pick XI
+    // tab itself only shows a small trigger pill, and whichever booster is
+    // active for the next match also shows as a tiny badge on the pitch.
 
     /**
-     * Render the booster pill row on the Pick XI tab.
-     * Fetches activations fresh each time; updates #slBoosterBar in place.
-     * Hides the bar entirely when the active contest has no boosters.
+     * Shared lookup for both the trigger pill and the popup grid: contest's
+     * available boosters, the next unlocked match, cached activations, and
+     * which booster (if any) is active for that match. Returns null when the
+     * active contest has no boosters configured.
+     */
+    async function getSlBoosterContext() {
+      const contest   = state.sl.seasonContest;
+      const available = contest?.available_boosters;
+      if (!available || !Object.keys(available).length) return null;
+
+      const nextMatch = findNextScheduledMatch();
+
+      let activations = state.sl.boosterActivations;
+      if (!activations) {
+        activations = await state.db.getBoosterActivations(state.sl.squad?.id);
+        state.sl.boosterActivations = activations;
+      }
+
+      const activeForNext = nextMatch
+        ? (activations.find(a => a.match_id === nextMatch.id)?.booster ?? null)
+        : null;
+
+      return { contest, available, nextMatch, activations, activeForNext };
+    }
+
+    /**
+     * Small pill on the Pick XI tab that opens the booster popup. Also
+     * refreshes the pitch badge so the two always stay in sync.
      */
     async function renderSlBoosterBar() {
       const bar = $('#slBoosterBar');
       if (!bar) return;
 
-      const contest   = state.sl.seasonContest;
-      const available = contest?.available_boosters;
-      if (!available || !Object.keys(available).length) {
-        bar.style.display = 'none'; return;
+      let ctx;
+      try {
+        ctx = await getSlBoosterContext();
+      } catch (e) {
+        bar.style.display = 'none';
+        renderSlBoosterPitchBadge(null);
+        return;
       }
+      if (!ctx) {
+        bar.style.display = 'none';
+        renderSlBoosterPitchBadge(null);
+        return;
+      }
+
+      const activeMeta = ctx.activeForNext ? BOOSTER_META[ctx.activeForNext] : null;
 
       bar.style.display = '';
-      bar.innerHTML = '<span style="font-size:11px;color:var(--muted);">Boosters loading…</span>';
+      bar.innerHTML = `<button id="slBoosterTriggerBtn" type="button" style="
+          display:inline-flex; align-items:center; gap:6px; padding:6px 12px;
+          border-radius:99px; font-size:12px; font-weight:600; cursor:pointer;
+          border:1px solid ${activeMeta ? 'var(--accent)' : 'var(--border)'};
+          background:${activeMeta ? 'rgba(201,168,76,0.18)' : 'var(--panel-2)'};
+          color:${activeMeta ? 'var(--accent)' : 'var(--text)'};
+        ">
+          <span>⚡</span>
+          <span>${activeMeta ? escapeHtml(activeMeta.label) + ' active' : 'Boosters'}</span>
+          <span style="color:var(--muted); font-weight:400;">›</span>
+        </button>`;
+      $('#slBoosterTriggerBtn').addEventListener('click', openSlBoosterModal);
 
-      // Determine the next upcoming (unlocked) match — boosters are activated per match
-      const nextMatch    = findNextScheduledMatch();
+      renderSlBoosterPitchBadge(activeMeta);
+    }
 
-      // Fetch all activations for this squad
-      let activations = state.sl.boosterActivations;
-      if (!activations) {
-        try {
-          activations = await state.db.getBoosterActivations(state.sl.squad?.id);
-          state.sl.boosterActivations = activations;
-        } catch (e) {
-          bar.innerHTML = `<span style="font-size:11px;color:var(--bad);">Could not load boosters: ${escapeHtml(e.message)}</span>`;
-          return;
-        }
+    /** Small icon badge floated at the top of the SL pitch — mirrors whatever's active. */
+    function renderSlBoosterPitchBadge(activeMeta) {
+      const badge = $('#slBoosterPitchBadge');
+      if (!badge) return;
+      if (!activeMeta) {
+        badge.style.display = 'none';
+        badge.innerHTML = '';
+        return;
+      }
+      badge.style.display = '';
+      badge.innerHTML = `<span style="
+          display:inline-flex; align-items:center; gap:4px; padding:3px 9px;
+          border-radius:99px; font-size:10px; font-weight:700;
+          background:rgba(255,255,255,0.94); color:#1C1F26;
+          box-shadow:0 1px 4px rgba(0,0,0,.35); white-space:nowrap;
+        ">${activeMeta.icon} ${escapeHtml(activeMeta.label)}</span>`;
+    }
+
+    function openSlBoosterModal() {
+      $('#slBoosterModal').classList.add('open');
+      renderSlBoosterModalGrid();
+    }
+    function closeSlBoosterModal() {
+      $('#slBoosterModal').classList.remove('open');
+    }
+
+    /**
+     * The full icon-tile grid (same content/behaviour as the old inline bar),
+     * now rendered inside the popup body.
+     */
+    async function renderSlBoosterModalGrid() {
+      const body = $('#slBoosterModalBody');
+      if (!body) return;
+      body.innerHTML = '<div class="sc-empty">Loading…</div>';
+
+      let ctx;
+      try {
+        ctx = await getSlBoosterContext();
+      } catch (e) {
+        body.innerHTML = `<div class="sc-empty" style="color:var(--bad);">Could not load boosters: ${escapeHtml(e.message)}</div>`;
+        return;
+      }
+      if (!ctx) {
+        body.innerHTML = '<div class="sc-empty">No boosters available for this contest.</div>';
+        return;
       }
 
-      // Which booster (if any) is active for the next match?
-      const activeForNext = nextMatch
-        ? (activations.find(a => a.match_id === nextMatch.id)?.booster ?? null)
-        : null;
+      const { contest, available, nextMatch, activations, activeForNext } = ctx;
 
       // Is the next match the first of the season or the first of playoffs?
       // On those matches transfers are already unlimited, so wildcard/free_hit are pointless.
@@ -4643,9 +4747,11 @@ p31,Sample Player,MI,bat,9.0,false
           mn === (contest.playoff_start_match_number   ?? null)
         );
 
-      // Build vertical booster cards — one full-width row per booster.
-      // Available/clickable boosters render in full colour; used or
-      // not-applicable ones render greyed-out and unselectable.
+      // Compact 2-column grid of icon tiles — a full-width sentence-per-row list
+      // for up to 7 boosters made the column feel like a wall of text. Each tile
+      // now just carries icon + short label + a small corner badge (✓ active,
+      // ✗ unavailable, ×N uses left); the full explanation moves to the title
+      // tooltip and to the one shared caption line under the header.
       const pills = Object.entries(available).map(([key, totalUses]) => {
         const meta       = BOOSTER_META[key]; if (!meta) return '';
         const isActive   = activeForNext === key;
@@ -4669,24 +4775,24 @@ p31,Sample Player,MI,bat,9.0,false
         // An active booster is never disabled — it must remain clickable to deactivate
         const isDisabled = isActive ? false : (isSpent || isBlocked);
 
-        let pillStyle = `display:flex;align-items:center;gap:10px;width:100%;padding:9px 12px;border-radius:10px;font-weight:600;text-align:left;cursor:${isDisabled ? 'default' : 'pointer'};border:1px solid;transition:all .15s;`;
+        let pillStyle = `position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:12px 4px;border-radius:10px;font-weight:600;text-align:center;cursor:${isDisabled ? 'default' : 'pointer'};border:1px solid;transition:all .15s;`;
         if (isActive)        pillStyle += 'background:rgba(201,168,76,0.18);border-color:var(--accent);color:var(--accent);';
         else if (isSpent)    pillStyle += 'background:var(--panel-2);border-color:var(--border);color:var(--muted);opacity:0.45;';
         else if (isBlocked)  pillStyle += 'background:var(--panel-2);border-color:var(--border);color:var(--muted);opacity:0.4;';
         else                 pillStyle += 'background:var(--panel-2);border-color:var(--border);color:var(--text);';
-
-        const statusText = isActive  ? 'Active for this match · tap to remove'
-                          : isSpent   ? 'Used'
-                          : isBlocked ? (blockedReason || 'Not applicable')
-                          : `${remaining} use${remaining === 1 ? '' : 's'} left`;
-
-        const statusMark = isActive ? '✓' : (isSpent || isBlocked) ? '✗' : '';
 
         const titleText = isActive
           ? `${escapeHtml(meta.desc)} · Active for this match — click to deactivate`
           : blockedReason
             ? escapeHtml(blockedReason)
             : `${escapeHtml(meta.desc)} · ${remaining}/${totalUses} uses remaining`;
+
+        const badgeStyle = 'position:absolute;top:-6px;right:-6px;width:16px;height:16px;border-radius:50%;font-size:9px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 3px rgba(0,0,0,.3);';
+        const badge = isActive
+          ? `<span style="${badgeStyle}background:var(--accent);color:#1C1F26;">✓</span>`
+          : (isSpent || isBlocked)
+            ? `<span style="${badgeStyle}background:var(--panel-2);color:var(--muted);border:1px solid var(--border);">✗</span>`
+            : (totalUses > 1 ? `<span style="${badgeStyle}background:var(--panel-2);color:var(--text);border:1px solid var(--border);">${remaining}</span>` : '');
 
         return `<button
           class="sl-booster-pill"
@@ -4696,12 +4802,9 @@ p31,Sample Player,MI,bat,9.0,false
           title="${titleText}"
           style="${pillStyle}"
         >
-          <span style="font-size:18px;line-height:1;flex:0 0 auto;">${meta.icon}</span>
-          <span style="display:flex;flex-direction:column;gap:1px;flex:1;min-width:0;">
-            <span style="font-size:12.5px;">${meta.label}</span>
-            <span style="font-size:10.5px;font-weight:400;opacity:0.8;">${escapeHtml(statusText)}</span>
-          </span>
-          ${statusMark ? `<span style="font-size:13px;flex:0 0 auto;">${statusMark}</span>` : ''}
+          ${badge}
+          <span style="font-size:22px;line-height:1;">${meta.icon}</span>
+          <span style="font-size:11px;line-height:1.15;">${meta.label}</span>
         </button>`;
       }).filter(Boolean).join('');
 
@@ -4709,14 +4812,18 @@ p31,Sample Player,MI,bat,9.0,false
         ? `M${nextMatch.match_number ?? '?'} · ${nextMatch.home_team_id ?? '?'} vs ${nextMatch.away_team_id ?? '?'}`
         : 'No upcoming match to activate for';
 
-      bar.innerHTML = `<div style="margin-bottom:8px;">
-          <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;">⚡ Boosters</div>
-          <div style="font-size:11px;color:var(--muted);">${escapeHtml(matchLabel)}</div>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:6px;">${pills}</div>`;
+      const activeMeta = activeForNext ? BOOSTER_META[activeForNext] : null;
+      const caption = activeMeta
+        ? `${activeMeta.label} active — tap it to remove.`
+        : 'Tap a booster to activate for this match.';
 
-      // Wire pill clicks
-      bar.querySelectorAll('.sl-booster-pill').forEach(pill => {
+      body.innerHTML = `<div style="margin-bottom:10px; font-size:12px; color:var(--muted);">${escapeHtml(matchLabel)}</div>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">${pills}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:10px;text-align:center;">${escapeHtml(caption)}</div>`;
+
+      // Wire pill clicks — re-render the grid in place, then refresh the
+      // Pick XI trigger pill + pitch badge so all three stay consistent.
+      body.querySelectorAll('.sl-booster-pill').forEach(pill => {
         if (pill.dataset.spent === 'true') return;
         pill.addEventListener('click', async () => {
           const booster  = pill.dataset.booster;
@@ -4731,6 +4838,7 @@ p31,Sample Player,MI,bat,9.0,false
               await state.db.deactivateBooster(state.sl.squad.id, nextMatch.id, booster);
               state.sl.boosterActivations = null; // invalidate cache
               toast(`${BOOSTER_META[booster].label} deactivated.`, 2500);
+              await renderSlBoosterModalGrid();
               renderSlBoosterBar();
             } catch (e) { toast('Deactivate failed: ' + e.message, 4000); }
           } else {
@@ -4741,6 +4849,7 @@ p31,Sample Player,MI,bat,9.0,false
               );
               state.sl.boosterActivations = null;
               toast(`${BOOSTER_META[booster].label} activated for M${nextMatch.match_number ?? '?'}!`, 3000);
+              await renderSlBoosterModalGrid();
               renderSlBoosterBar();
             } catch (e) { toast(e.message, 4000); }
           }
@@ -12149,6 +12258,9 @@ p31,Sample Player,MI,bat,9.0,false
     $('#playerStatsCloseBtn').addEventListener('click', closePlayerStatsModal);
     $('#playerStatsModal').addEventListener('click', e => { if (e.target.id === 'playerStatsModal') closePlayerStatsModal(); });
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#playerStatsModal').classList.contains('open')) closePlayerStatsModal(); });
+    $('#slBoosterModalCloseBtn').addEventListener('click', closeSlBoosterModal);
+    $('#slBoosterModal').addEventListener('click', e => { if (e.target.id === 'slBoosterModal') closeSlBoosterModal(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#slBoosterModal').classList.contains('open')) closeSlBoosterModal(); });
     // Team filter is now chip-based (rendered by renderTeamFilter) — no select listener needed.
     // Note: #matchFilter select replaced with #matchFilterChips chip UI — no select listener needed.
     $('#csvOpenBtn').addEventListener('click', openCsvView);
