@@ -796,7 +796,7 @@
       /* ── SL booster bar ─────────────────────────────────────────── */
       #slPitchBoosterRow { flex-direction: column; }
       #slPitchXiWrap { margin: 0 auto !important; }
-      #slBoosterBar { padding: 8px 0 0; width: 100%; }
+      #slBoosterBar { padding: 8px 0 0; width: 100%; max-width: none; }
       .sl-booster-pill { font-size: 12px !important; padding: 9px 12px !important; }
 
       /* ── Countdown chip ─────────────────────────────────────────── */
@@ -840,6 +840,16 @@
   
     /* ═══ PITCH XI VIEW ═══════════════════════════════════════════════════════ */
     #pitchXiWrap, #slPitchXiWrap { background:#1a5c1a; max-width:360px; margin:0 auto; border-radius:12px; overflow:hidden; }
+    /* #slPitchXiWrap is a flex item (sits beside the booster column) — without an
+       explicit width, flex-basis:auto sizes it to its content's max-content width
+       (the jersey rows, which are far narrower than 360px), shrinking the pitch and
+       forcing the sibling booster bar to balloon to fill the freed-up space. Setting
+       a real width (capped by max-width:100% so it still shrinks on narrow screens)
+       makes it match Daily's #pitchXiWrap dimensions exactly. */
+    #slPitchXiWrap { width:360px; max-width:100%; }
+    /* Keep the booster column pill-sized instead of stretching across whatever
+       space the flex row leaves it (main can be up to 1400px wide on desktop). */
+    #slBoosterBar { max-width:300px; }
     .pitch-oval {
       position:relative; margin:12px 16px;
       height:430px;
