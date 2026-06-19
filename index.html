@@ -6108,9 +6108,16 @@ p31,Sample Player,MI,bat,9.0,false
       const remaining = t - Date.now();
       const teams = `${m.home_team_id || '?'} vs ${m.away_team_id || '?'}`;
       chip.classList.remove('live', 'urgent');
-      if (remaining <= 0) {
+      // "Live" should reflect the match's actual broadcast status (in_progress),
+      // not just that the lock-time clock has hit zero — a toss delay or late
+      // start means lock_time can pass well before the match is really live,
+      // and showing "Live" in that window is misleading (it stays SCHEDULED).
+      if (remaining <= 0 && m.status === 'in_progress') {
         chip.classList.add('live');
         text.textContent = `Live: M${m.match_number ?? '?'} ${teams}`;
+      } else if (remaining <= 0) {
+        chip.classList.add('urgent'); // lock time passed, but not confirmed live yet
+        text.textContent = `M${m.match_number ?? '?'} ${teams} · Starting soon`;
       } else {
         if (remaining < 30 * 60 * 1000) chip.classList.add('urgent'); // < 30m, static red (no pulse until live)
         text.textContent = `M${m.match_number ?? '?'} ${teams} · ${formatCountdown(remaining)}`;
