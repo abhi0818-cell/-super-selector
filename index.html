@@ -4797,6 +4797,17 @@ p31,Sample Player,MI,bat,9.0,false
       const squadId = state.sl.squad.id;
 
       try {
+        // Fetch the draft fresh from the DB right now, at lock time — not from
+        // state.sl.draft. The auto-lock can be triggered by ANY client/session
+        // that happens to render the SL panel after this match's lock time
+        // passes (this user's own reload, a different tab, another device).
+        // Whichever client's in-memory state.sl.draft last got refreshed could
+        // be stale relative to a save made moments before lock — pulling fresh
+        // here guarantees user_teams (read by Leaderboard/History/"my team")
+        // matches user_match_xi (written by lockMatchXI below, which already
+        // does its own fresh fetch) instead of silently diverging from it.
+        const freshDraft = await state.db.getDraft(squadId).catch(() => null);
+
         // Check for an active wildcard or free_hit booster — if present, transfers
         // are free for this match (no deduction, no count against the season budget).
         let activeBooster = null;
@@ -4805,7 +4816,7 @@ p31,Sample Player,MI,bat,9.0,false
 
         // Free Hit: snapshot the current draft BEFORE locking so it can be restored afterwards.
         if (activeBooster === 'free_hit') {
-          const draft = state.sl.draft ?? {};
+          const draft = freshDraft ?? state.sl.draft ?? {};
           if (draft.playerIds?.length === 11) {
             try {
               // Re-activate with snapshot (overwrite the placeholder row saved at activation time)
@@ -4828,8 +4839,9 @@ p31,Sample Player,MI,bat,9.0,false
           bypassTransfers,
         });
 
-        // Also write to user_teams for the scoring pipeline
-        const draft = state.sl.draft ?? {};
+        // Also write to user_teams for the scoring pipeline — same freshly-fetched
+        // draft used above, so this can never disagree with user_match_xi.
+        const draft = freshDraft ?? state.sl.draft ?? {};
         if (draft.playerIds?.length === 11) {
           await state.db.upsertSlTeam(squadId, matchId, {
             playerIds    : draft.playerIds,
@@ -6054,6 +6066,14 @@ p31,Sample Player,MI,bat,9.0,false
     // (lock_time when set, else start_time — see effectiveLockTime()). A delayed
     // match with no lock_time set yet never auto-connects. Idempotent: each
     // match is only auto-connected once per session.
+    //
+    // The first call is deliberately delayed AUTO_CONNECT_DELAY_MS past the
+    // effective lock time rather than fired right at it — scheduled start times
+    // routinely slip (late toss, rain, broadcast delay) and CricAPI has nothing
+    // live yet at that exact instant, so hitting it right on the scheduled clock
+    // just burns quota for no data. After this first delayed call, the poller
+    // re-polls every ~20 min (see calcPollInterval) until the match is completed.
+    const AUTO_CONNECT_DELAY_MS = 10 * 60_000; // 10 minutes
     state.autoConnected ??= new Set();
     async function maybeAutoConnect() {
       if (state.poller) return;                              // already polling something
@@ -6063,6 +6083,8 @@ p31,Sample Player,MI,bat,9.0,false
       if (state.autoConnected.has(m.id)) return;             // tried this one already
       if (!m.external_id) return;                            // no CricAPI link
       if (!state.db) return;
+      const lockTs = effectiveLockTime(m);
+      if (!lockTs || Date.now() < new Date(lockTs).getTime() + AUTO_CONNECT_DELAY_MS) return; // not yet — still in the post-lock buffer
 
       // Confirm a saved XI exists for this match before attempting to connect.
       // IMPORTANT: only mark it "tried" (state.autoConnected) once this check has
@@ -12282,10 +12304,41 @@ p31,Sample Player,MI,bat,9.0,false
     if (savedPick) $('#apiKeyPicker').value = savedPick;
     initAuth();
     renderApiPill();
+
+    /**
+     * One-time repair: re-sync the user_teams row for a given match number from
+     * the already-correct user_match_xi rows for the current squad. Use this to
+     * fix matches that were auto-locked before the slLockForMatch staleness fix
+     * (commit "Fix stale draft used when writing user_teams on SL auto-lock") —
+     * user_match_xi was always written correctly (fresh draft fetch), only
+     * user_teams could have picked up a stale draft. Run from the console:
+     *   await window.__SS.fixSlTeamFromLock(1)   // fixes M1
+     * Safe to re-run; it's just an upsert against whatever is in user_match_xi.
+     */
+    async function fixSlTeamFromLock(matchNumber) {
+      if (!state.db || !state.sl.squad) { console.warn('[fixSlTeamFromLock] No DB connection or no SL squad joined.'); return; }
+      const match = (state.matches || []).find(m => m.match_number === matchNumber);
+      if (!match) { console.warn('[fixSlTeamFromLock] No match with match_number ' + matchNumber + ' found.'); return; }
+      const squadId = state.sl.squad.id;
+      const lockedRows = await state.db.getMatchXI(squadId, match.id);
+      if (!lockedRows?.length) { console.warn('[fixSlTeamFromLock] No locked XI in user_match_xi for M' + matchNumber + ' — nothing to sync from.'); return; }
+      const playerIds     = lockedRows.map(r => r.player_id);
+      const captainId     = lockedRows.find(r => r.is_captain)?.player_id ?? null;
+      const viceCaptainId = lockedRows.find(r => r.is_vc)?.player_id ?? null;
+      await state.db.upsertSlTeam(squadId, match.id, {
+        playerIds, captainId, viceCaptainId,
+        format: match.format || state.format || 'T20',
+      });
+      state.savedTeams = await state.db.listUserTeams();
+      console.log('[fixSlTeamFromLock] M' + matchNumber + ' user_teams re-synced from user_match_xi. playerIds:', playerIds, 'captainId:', captainId, 'viceCaptainId:', viceCaptainId);
+      return { playerIds, captainId, viceCaptainId };
+    }
+
     window.__SS = { state, get PLAYERS(){ return PLAYERS; }, scoreTeam, calculateScore, fromCricAPI,
       testConnect: () => connectDb(SB_URL, SB_ANON, { silent: false }),
       // Debug helpers for the live-poller/Pick-XI decoupling work
-      getLockedDailyXI, resolveSquadForMatch, findNextMatch, connectLive, maybeAutoConnect };
+      getLockedDailyXI, resolveSquadForMatch, findNextMatch, connectLive, maybeAutoConnect,
+      fixSlTeamFromLock };
   
 
   
