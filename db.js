@@ -1594,11 +1594,19 @@ export function createDb(cfg = {}) {
     /** All XI scores indexed by match_id — for the matches admin column. */
     // ─── Profiles ─────────────────────────────────────────────────────────
 
-    /** Upsert the signed-in user's display name + email into profiles. */
+    /**
+     * Upsert the signed-in user's display name + email into profiles.
+     * Preserves any existing custom display_name already stored — this is
+     * called on every login/DB reconnect with a metadata-derived fallback
+     * name (usually the email), so we must not let that clobber a name the
+     * user set manually.
+     */
     async upsertProfile({ userId, displayName, email }) {
       const sb = await getClient();
+      const { data: existing } = await sb.from('profiles').select('display_name').eq('id', userId).maybeSingle();
+      const finalDisplayName = existing?.display_name || displayName;
       const { error } = await sb.from('profiles').upsert({
-        id: userId, display_name: displayName, email, updated_at: new Date().toISOString(),
+        id: userId, display_name: finalDisplayName, email, updated_at: new Date().toISOString(),
       }, { onConflict: 'id' });
       if (error) throw error;
     },
