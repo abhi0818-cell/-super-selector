@@ -904,16 +904,49 @@ Deno.serve(async (req: Request) => {
         }
       }
 
+      // ── 6b. Per-player regression guard ────────────────────────────────────
+      // The innings-level watermark above only protects the LAST innings's
+      // total progress — it says nothing about the first innings or about
+      // any individual player. A read that's "fresh enough" on the chasing
+      // team's overs can still carry a worse/cached snapshot of an earlier
+      // innings (or of one player's row specifically), and the upsert below
+      // is a blind overwrite — so without this guard that worse snapshot
+      // would silently clobber already-good data. Cricket stats are
+      // monotonic within a match (balls faced/bowled never decrease), so any
+      // player whose new read has FEWER balls than what's already stored is
+      // almost certainly a stale partial read for that player — skip them
+      // and leave their existing row untouched.
+      const { data: existingStatRows } = await sb
+        .from('player_match_stats')
+        .select('player_id, batting, bowling, raw_points')
+        .eq('match_id', match.id)
+      const existingByPlayer = new Map((existingStatRows ?? []).map(r => [r.player_id, r]))
+
+      const regressedPlayers: string[] = []
+      for (const [playerId, s] of statAccum) {
+        const ex = existingByPlayer.get(playerId)
+        if (!ex) continue
+        const newBattingBalls = (s.batting as any)?.ballsFaced   ?? 0
+        const oldBattingBalls = (ex.batting as any)?.ballsFaced  ?? 0
+        const newBowlingBalls = (s.bowling as any)?.ballsBowled  ?? 0
+        const oldBowlingBalls = (ex.bowling as any)?.ballsBowled ?? 0
+        if (newBattingBalls < oldBattingBalls || newBowlingBalls < oldBowlingBalls) {
+          regressedPlayers.push(playerId)
+        }
+      }
+
       // ── 7. Upsert player_match_stats ──────────────────────────────────────
-      const statRows = Array.from(statAccum.entries()).map(([playerId, s]) => ({
-        match_id  : match.id,
-        player_id : playerId,
-        batting   : s.batting   ?? null,
-        bowling   : s.bowling   ?? null,
-        fielding  : null,   // not available from scrapers
-        raw_points: Math.round(s.rawPoints * 10) / 10,
-        source    : 'scraper',
-      }))
+      const statRows = Array.from(statAccum.entries())
+        .filter(([playerId]) => !regressedPlayers.includes(playerId))
+        .map(([playerId, s]) => ({
+          match_id  : match.id,
+          player_id : playerId,
+          batting   : s.batting   ?? null,
+          bowling   : s.bowling   ?? null,
+          fielding  : null,   // not available from scrapers
+          raw_points: Math.round(s.rawPoints * 10) / 10,
+          source    : 'scraper',
+        }))
 
       if (statRows.length) {
         const CHUNK = 50
@@ -953,8 +986,17 @@ Deno.serve(async (req: Request) => {
       }
 
       // ── 10. Distribute raw_points to locked XI scores (SL squads + Daily teams) ──
+      // Regressed players keep their existing (already-correct) raw_points
+      // here too, so scoring stays consistent with what's actually persisted
+      // above rather than re-applying points from the discarded worse read.
       const pointsMap = new Map<string, number>()
-      for (const [pid, s] of statAccum) pointsMap.set(pid, s.rawPoints)
+      for (const [pid, s] of statAccum) {
+        if (regressedPlayers.includes(pid)) {
+          pointsMap.set(pid, existingByPlayer.get(pid)?.raw_points ?? s.rawPoints)
+        } else {
+          pointsMap.set(pid, s.rawPoints)
+        }
+      }
       await scoreXIForMatch(match.id, pointsMap)
       const dailyTeamsScored = await scoreDailyTeamsForMatch(match.id, pointsMap)
 
@@ -972,6 +1014,7 @@ Deno.serve(async (req: Request) => {
         url,
         matched : statRows.length,
         unmatched: unmatched.map(u => u.name),
+        regressedPlayersSkipped: regressedPlayers,
         fuzzyAliasesCreated: fuzzyAliases.length,
         dailyTeamsScored,
       })

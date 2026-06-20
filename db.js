@@ -970,6 +970,29 @@ export function createDb(cfg = {}) {
     // ── Scraper unmatched player reconciliation ──────────────────────────────
 
     /**
+     * Lightweight count of unresolved unmatched player names, per tournament.
+     * Used to populate the "⚠️ Unmatched Players" badge eagerly (on page load,
+     * for every tournament at once) without paying for the full match-join
+     * payload that getUnmatchedPlayers() fetches — that one is only called
+     * when the admin actually expands a tournament's panel.
+     */
+    async getUnmatchedPlayersCounts(tournamentIds) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('scraper_unmatched')
+        .select('tournament_id')
+        .in('tournament_id', tournamentIds)
+        .is('resolved_at', null);
+      if (error) throw error;
+      const counts = new Map();
+      for (const id of tournamentIds) counts.set(id, 0);
+      for (const row of data ?? []) {
+        counts.set(row.tournament_id, (counts.get(row.tournament_id) ?? 0) + 1);
+      }
+      return counts;
+    },
+
+    /**
      * Returns all unresolved unmatched player names for a tournament.
      * Each row includes match info (number + team names) for context.
      */

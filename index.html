@@ -1375,7 +1375,7 @@
                  inline grid beside the pitch — that grid was forcing the column
                  too wide (worse once the player pool is open). Whichever booster
                  is active shows as a small badge on the pitch itself instead. -->
-            <div id="slPitchBoosterRow" style="display:flex; flex-direction:column; gap:8px; align-items:flex-start;">
+            <div id="slPitchBoosterRow" style="display:flex; flex-direction:column; gap:8px; align-items:center;">
               <div id="slBoosterBar" style="display:none;"></div>
               <div id="slPitchXiWrap" style="margin:0; flex:0 0 auto;">
                 <div class="pitch-outer">
@@ -3566,6 +3566,24 @@ p31,Sample Player,MI,bat,9.0,false
             </div>
           </div>`;
       }).join('');
+
+      // Eagerly populate the "⚠️ Unmatched Players" badges for every
+      // tournament right now, instead of waiting for the admin to click
+      // "▶ Load" on each one — that's the only way this kind of gap (players
+      // missing from a tournament roster, silently dropped by the scraper)
+      // actually gets noticed instead of sitting unresolved for days.
+      const tIds = state.tournaments.map(t => t.id);
+      if (tIds.length) {
+        state.db.getUnmatchedPlayersCounts(tIds).then(counts => {
+          counts.forEach((count, tid) => {
+            const badge = list.querySelector(`.unmatched-badge[data-tid="${tid}"]`);
+            if (!badge) return;
+            badge.textContent = count;
+            badge.style.display = count ? 'inline' : 'none';
+          });
+        }).catch(err => console.error('getUnmatchedPlayersCounts failed:', err));
+      }
+
       // Wire active toggles
       list.querySelectorAll('.tournament-active-toggle').forEach(cb => {
         cb.addEventListener('change', async e => {
