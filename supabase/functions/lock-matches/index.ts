@@ -299,11 +299,30 @@ Deno.serve(async (req) => {
           }
         }
 
-        // If the previous locked match is already completed treat as no baseline
-        // (user joined mid-season — first lock should not charge transfers)
+        // "First active lock" = this squad has no real transfer baseline — either
+        // it never locked anything before, or the only prior lock on record was a
+        // retroactive auto-lock for a match that was ALREADY completed by the time
+        // the squad joined (so that XI was never actually picked by the user).
+        // We distinguish that from the normal, common case of an actively-playing
+        // squad whose previous match simply finished before this one locked —
+        // checked by looking for ANY earlier locked match for this squad. If one
+        // exists, they've been actively playing and the real baseline must be
+        // honored regardless of the previous match's status. (Mirrors the fix
+        // applied to lockMatchXI in db.js.)
         const prevMatchId     = prevXIRows?.find((r: any) => prevPlayerIds.includes(r.player_id))?.match_id;
         const prevMatchStatus = tournamentMatches.find(m => m.id === prevMatchId)?.status ?? null;
-        const baselineIds     = prevMatchStatus === 'completed' ? [] : prevPlayerIds;
+
+        let baselineIds = prevPlayerIds;
+        if (prevPlayerIds.length === 0) {
+          baselineIds = [];
+        } else if (prevMatchStatus === 'completed') {
+          const prevMatchNum    = tournamentMatches.find(m => m.id === prevMatchId)?.match_number ?? 0;
+          const lockedMatchIds  = new Set((prevXIRows ?? []).map((r: any) => r.match_id));
+          const hasEarlierLock  = tournamentMatches.some(m =>
+            (m.match_number ?? 0) < prevMatchNum && lockedMatchIds.has(m.id),
+          );
+          baselineIds = hasEarlierLock ? prevPlayerIds : [];
+        }
 
         // ── Lock: write user_match_xi ────────────────────────────────────────
         try {

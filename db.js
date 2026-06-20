@@ -318,9 +318,20 @@ export function createDb(cfg = {}) {
      * Insert a new player row.
      * @param {{id?:string, name:string, team:string, role:string, credits:number, overseas?:boolean}} input
      *   If `id` is omitted, the caller is expected to generate one (e.g. `p31`).
+     * @param {string} [tournamentId] - if given, also attach this player to that
+     *   tournament's pool (a `tournament_players` row), so the new player shows
+     *   up immediately without a manual SQL insert. Only happens when the
+     *   tournament has ALREADY switched to a tournament-specific pool (i.e. it
+     *   has at least one tournament_players row). If the tournament is still on
+     *   the global-players fallback (no rows yet), we deliberately skip this —
+     *   inserting a row for just ONE player would flip the whole tournament
+     *   into "tournament mode" and hide every other player who hasn't been
+     *   explicitly imported yet (see loadPlayersForActiveTournament in
+     *   index.html, which switches sources based on whether tournament_players
+     *   has ANY rows at all).
      * @returns {Promise<object>} the inserted player (normalised)
      */
-    async addPlayer(input) {
+    async addPlayer(input, tournamentId) {
       if (!input.name || !input.team || !input.role) throw new Error('addPlayer: name, team, role required');
       if (!['wk','bat','ar','bowl'].includes(input.role)) throw new Error('addPlayer: invalid role');
       const sb = await getClient();
@@ -334,7 +345,27 @@ export function createDb(cfg = {}) {
       };
       const { data, error } = await sb.from('players').insert(row).select().single();
       if (error) throw error;
-      return { id: data.id, name: data.name, team: data.team_id, role: data.role, credits: Number(data.credits), overseas: !!data.is_overseas };
+      const player = { id: data.id, name: data.name, team: data.team_id, role: data.role, credits: Number(data.credits), overseas: !!data.is_overseas };
+
+      if (tournamentId) {
+        const { count, error: ce } = await sb
+          .from('tournament_players')
+          .select('player_id', { count: 'exact', head: true })
+          .eq('tournament_id', tournamentId);
+        if (ce) throw ce;
+        if (count > 0) {
+          const { error: te } = await sb.from('tournament_players').upsert({
+            tournament_id: tournamentId,
+            player_id    : player.id,
+            team_id      : player.team,
+            credit_value : player.credits,
+            is_active    : true,
+          }, { onConflict: 'tournament_id,player_id' });
+          if (te) throw te;
+        }
+      }
+
+      return player;
     },
 
     /**

@@ -4013,7 +4013,7 @@ p31,Sample Player,MI,bat,9.0,false
                         ${fi.candidates ? `<br/><span style="color:var(--accent-2);">ambiguous: ${fi.candidates.map(escapeHtml).join(' / ')}</span>` : ''}
                       </td>
                       <td style="padding:5px 6px;">
-                        <div style="display:flex; gap:4px; flex-wrap:wrap; align-items:center;">
+                        <div class="fi-actions" style="display:flex; gap:4px; flex-wrap:wrap; align-items:center;">
                           <select class="fi-player-select" style="font-size:11px; max-width:180px;">
                             <option value="">— select player —</option>
                             ${fi.candidates ? candidateOpts : playerOpts}
@@ -4025,10 +4025,50 @@ p31,Sample Player,MI,bat,9.0,false
                                   title="${fi.candidates ? 'Credit this match only — name is ambiguous, no alias saved' : 'Credit + save alias for future runs'}">
                             ${fi.candidates ? 'Credit (this match)' : 'Credit + alias'}
                           </button>
+                          <button class="fi-add-btn" title="Add as new player"
+                                  style="font-size:10px; padding:2px 7px; border-radius:4px;
+                                         background:rgba(80,180,120,0.10); border:1px solid rgba(80,180,120,0.5);
+                                         color:rgba(60,160,100,0.9); cursor:pointer; white-space:nowrap;">+ Add</button>
                           <button class="fi-ignore-btn"
                                   style="font-size:10px; padding:2px 7px; border-radius:4px;
                                          background:transparent; border:1px solid var(--border);
                                          color:var(--muted); cursor:pointer; white-space:nowrap;">Ignore</button>
+                        </div>
+                        <!-- Add new player form (hidden by default) -->
+                        <div class="fi-add-form" style="display:none; margin-top:4px; background:rgba(80,180,120,0.06);
+                             border:1px solid rgba(80,180,120,0.2); border-radius:4px; padding:6px; font-size:11px;">
+                          <div style="display:flex; gap:4px; flex-wrap:wrap; margin-bottom:4px;">
+                            <input class="fi-new-name" placeholder="Name" value="${escapeHtml(fi.rawName)}"
+                                   style="flex:1; min-width:120px; font-size:11px; padding:3px 6px;" />
+                            <input class="fi-new-id" placeholder="ID (e.g. p99)"
+                                   style="width:80px; font-size:11px; padding:3px 6px;" />
+                          </div>
+                          <div style="display:flex; gap:4px; flex-wrap:wrap;">
+                            <select class="fi-new-role" style="font-size:11px; padding:3px 5px;">
+                              <option value="bat">BAT</option>
+                              <option value="bowl">BOWL</option>
+                              <option value="ar">AR</option>
+                              <option value="wk">WK</option>
+                            </select>
+                            <select class="fi-new-team" style="font-size:11px; padding:3px 5px; max-width:110px;">
+                              <option value="">— team —</option>
+                              ${teamCodes().map(t => `<option value="${t}">${escapeHtml(t)}</option>`).join('')}
+                            </select>
+                            <input class="fi-new-credits" type="number" min="6" max="14" step="0.5"
+                                   placeholder="Credits" value="8"
+                                   style="width:70px; font-size:11px; padding:3px 6px;" />
+                            <label style="display:flex; align-items:center; gap:3px; font-size:10px; color:var(--muted);">
+                              <input class="fi-new-os" type="checkbox" /> ✈️ Overseas
+                            </label>
+                          </div>
+                          <div style="margin-top:4px; display:flex; gap:4px;">
+                            <button class="fi-add-save"
+                                    style="font-size:10px; padding:2px 10px; border-radius:4px;
+                                           background:rgba(80,180,120,0.8); color:#fff; border:none; cursor:pointer;">Add &amp; credit</button>
+                            <button class="fi-add-cancel"
+                                    style="font-size:10px; padding:2px 6px; border-radius:4px;
+                                           background:transparent; border:1px solid var(--border); color:var(--muted); cursor:pointer;">✕</button>
+                          </div>
                         </div>
                       </td>
                     </tr>`;
@@ -4067,6 +4107,42 @@ p31,Sample Player,MI,bat,9.0,false
                   if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
                   if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All fielding issues resolved.</span>';
                 } catch (err) { toast('Failed: ' + err.message); }
+              });
+
+              // Add as new player (e.g. a sub fielder who isn't in the pool at all),
+              // then immediately credit this fielding event to them.
+              const fiActions = row.querySelector('.fi-actions');
+              const fiAddForm = row.querySelector('.fi-add-form');
+              row.querySelector('.fi-add-btn').addEventListener('click', () => {
+                fiActions.style.display = 'none';
+                fiAddForm.style.display = 'block';
+              });
+              row.querySelector('.fi-add-cancel').addEventListener('click', () => {
+                fiAddForm.style.display = 'none';
+                fiActions.style.display = 'flex';
+              });
+              row.querySelector('.fi-add-save').addEventListener('click', async () => {
+                const name    = row.querySelector('.fi-new-name').value.trim();
+                const pid     = row.querySelector('.fi-new-id').value.trim() || undefined;
+                const role    = row.querySelector('.fi-new-role').value;
+                const teamId  = row.querySelector('.fi-new-team').value;
+                const credits = parseFloat(row.querySelector('.fi-new-credits').value) || 8;
+                const os      = row.querySelector('.fi-new-os').checked;
+                if (!name || !teamId) { toast('Name and team are required.'); return; }
+                try {
+                  const inserted = await state.db.addPlayer({ id: pid, name, team: teamId, role, credits, overseas: os }, tid);
+                  PLAYERS.push(inserted);
+                  const rules  = rulesFor(fmt);
+                  const points = 1 * (rules[FIELDING_RULE_KEY[field]] || 0);
+                  // Treat like the "unmatched" case — save an alias so future
+                  // scraper runs auto-credit this newly-added player by name.
+                  await state.db.resolveFieldingIssueAsCredit(issue, inserted.id, points, true);
+                  row.remove();
+                  const remaining = panel.querySelectorAll('.fi-row').length;
+                  if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
+                  if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All fielding issues resolved.</span>';
+                  toast(`Added ${name} and credited.`);
+                } catch (err) { toast('Failed: ' + err.message, 4000); }
               });
             });
 
@@ -8974,7 +9050,7 @@ p31,Sample Player,MI,bat,9.0,false
 
       try {
         if (state.db) {
-          const inserted = await state.db.addPlayer({ id, name, team, role, credits, overseas });
+          const inserted = await state.db.addPlayer({ id, name, team, role, credits, overseas }, state.activeTournamentId);
           PLAYERS.push(inserted);
         } else {
           PLAYERS.push({ id, name, team, role, credits, overseas });
