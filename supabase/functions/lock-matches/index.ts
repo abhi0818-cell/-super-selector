@@ -1,7 +1,10 @@
 // lock-matches — Supabase Edge Function
 //
 // Locks every SL squad's draft XI for any match whose lock gate has passed
-// and whose status is still 'scheduled' or 'delayed'.
+// and whose status is still 'scheduled', 'in_progress', or 'delayed'.
+// ('in_progress' is included so a poll-cricapi status flip can't race ahead
+// of this function and starve a match from ever being locked — see the
+// comment at the matches query below.)
 // Gate = lock_time if set, otherwise start_time.
 // After locking all squads it updates the match status to 'live'.
 //
@@ -107,12 +110,26 @@ Deno.serve(async (req) => {
 
   // ── 1. Find matches that need locking ──────────────────────────────────────
   // Covers two cases:
-  //   a) Normal:  status = 'scheduled' and start_time <= now
-  //   b) Delayed: status = 'delayed'   and lock_time  <= now (admin set a lock time)
+  //   a) Normal:  status IN ('scheduled', 'in_progress') and start_time <= now
+  //   b) Delayed: status = 'delayed'                     and lock_time  <= now (admin set a lock time)
+  //
+  // 'in_progress' is included alongside 'scheduled' to avoid a race with
+  // poll-cricapi: that function independently flips a CricAPI-driven match's
+  // status straight to 'in_progress' the moment it detects live data,
+  // completely independent of this function. Both run on a 1-minute cron, so
+  // on any given match start it's a coin flip which one's tick lands first.
+  // If this query only matched 'scheduled', a poll-cricapi win would
+  // permanently starve that match — it would never come back as 'scheduled'
+  // again, so its SL squads/daily teams would never get locked. Matching
+  // 'in_progress' too closes that gap. (Scraper-driven matches never see
+  // this race — scrape-scorecard has no 'live'/'in_progress' transition of
+  // its own; it leaves status at 'scheduled' until completion.) This is
+  // still idempotent: once a match is processed here it's set to 'live',
+  // which neither query matches, so it converges after one pass.
   const { data: scheduled, error: mErr } = await sb
     .from('matches')
     .select('id, tournament_id, match_number, start_time, lock_time, status')
-    .eq('status', 'scheduled')
+    .in('status', ['scheduled', 'in_progress'])
     .lte('start_time', nowISO)
     .order('match_number', { ascending: true });
 
