@@ -753,7 +753,14 @@ Deno.serve(async (req: Request) => {
       let source: 'cricketaddictor' | 'business_standard'
 
       try {
-        const res = await fetch(url, {
+        // Cache-bust: confirmed live that cricketaddictor's CDN serves a
+        // frozen/stale edge copy of the bare scorecard URL (seen stuck on an
+        // in-progress snapshot well after the real match had finished), while
+        // the exact same URL with any query string appended returns the
+        // current page. Without this, a match can get permanently stuck
+        // mid-innings no matter how many times we re-fetch.
+        const fetchUrl = url + (url.includes('?') ? '&' : '?') + '_cb=' + Date.now()
+        const res = await fetch(fetchUrl, {
           headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SuperSelector/1.0)' },
         })
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
