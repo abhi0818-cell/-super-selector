@@ -986,6 +986,56 @@ Deno.serve(async (req: Request) => {
         continue
       }
 
+      // ── 3c. Cache the raw scraped scorecard for the admin "Live scorecard" panel ──
+      // poll-cricapi caches CricAPI's raw payload into match_scorecards so the
+      // browser's renderScorecard()/renderInnings()/renderBatRow() code (built
+      // for CricAPI) can render it as-is. Scraper-driven matches never wrote
+      // anything there, so the admin panel fell back to a lossy reconstruction
+      // built later from player_match_stats — fantasy-squad players only, no
+      // dismissal text, and any name the resolver couldn't match was silently
+      // dropped from view (only visible as a bare string in scraper_unmatched).
+      // Shaping `innings` (every batter/bowler exactly as scraped, BEFORE name
+      // resolution runs) into the same CricAPI-ish payload shape and writing it
+      // here gives scraper matches the identical rich view CricAPI matches get
+      // — unmatched names included, with their real runs/balls/dismissal text —
+      // which is what actually lets an admin spot and fix a gap at a glance.
+      const SKIP_ROW_NAMES = new Set(['extras', 'total', 'yet to bat', 'did not bat'])
+      const rawScorecard = innings.map(inn => {
+        const bat  = inn.batting.filter(b => !SKIP_ROW_NAMES.has(b.name.toLowerCase().trim()))
+        const bowl = inn.bowling.filter(b => !SKIP_ROW_NAMES.has(b.name.toLowerCase().trim()))
+        const totalRuns  = bat.reduce((s, b) => s + b.runs, 0)
+        const totalWkts  = bat.filter(b => b.dismissed).length
+        const totalBalls = bowl.reduce((s, b) => s + (Math.round(b.overs) * 6 + Math.round((b.overs % 1) * 10)), 0)
+        const overallOvers = Math.floor(totalBalls / 6) + (totalBalls % 6) / 10
+        return {
+          inning: `${inn.teamName} Innings`,
+          r: totalRuns, w: totalWkts, o: totalBalls ? overallOvers.toFixed(1) : '0.0',
+          batting: bat.map(b => ({
+            batsman: { name: b.name }, r: b.runs, b: b.balls, '4s': b.fours, '6s': b.sixes,
+            'dismissal-text': b.dismissed ? (b.dismissalText ?? 'out') : 'not out',
+          })),
+          bowling: bowl.map(b => ({
+            bowler: { name: b.name }, o: b.overs, m: b.maidens, r: b.runs, w: b.wickets,
+          })),
+        }
+      })
+      await sb.from('match_scorecards').upsert(
+        {
+          match_id: match.id,
+          payload: {
+            data: {
+              matchInfo: {
+                name  : `${homeTeam} vs ${awayTeam}`,
+                status: completionInfo.completed ? 'Completed' : 'Live',
+              },
+              scorecard: rawScorecard,
+            },
+          },
+          fetched_at: new Date().toISOString(),
+        },
+        { onConflict: 'match_id' },
+      )
+
       // ── 4. Build name resolution maps ─────────────────────────────────────
       const { data: tPlayers } = await sb
         .from('tournament_players')

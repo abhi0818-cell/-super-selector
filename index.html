@@ -7438,14 +7438,19 @@ p31,Sample Player,MI,bat,9.0,false
         this.nextPollAt = Date.now() + this.interval;
         try {
           // Plain Postgres reads — not CricAPI calls, so the #apiPill counter
-          // is intentionally untouched here.
-          const [statRows, status] = await Promise.all([
+          // is intentionally untouched here. rawScorecard comes from
+          // match_scorecards — written by scrape-scorecard with every name it
+          // scraped (matched or not), shaped just like CricAPI's payload — so
+          // the "Live scorecard" panel can render it with the exact same code
+          // used for CricAPI matches instead of the lossy squad-only rebuild.
+          const [statRows, status, rawScorecard] = await Promise.all([
             this.db.getPlayerStatsForMatchFull(this.matchId),
             this.db.getMatchStatus(this.matchId),
+            this.db.getMatchScorecard(this.matchId),
           ]);
-          const h = JSON.stringify(statRows);
-          if (h !== this._lastHash) { this._lastHash = h; this.onUpdate?.(statRows); }
-          this.onPoll?.(statRows, status);
+          const h = JSON.stringify({ statRows, rawScorecard });
+          if (h !== this._lastHash) { this._lastHash = h; this.onUpdate?.(statRows, rawScorecard); }
+          this.onPoll?.(statRows, status, rawScorecard);
         } catch(e){ this.onError?.(e); }
         finally { this._inflight = false; }
       }
@@ -7555,7 +7560,7 @@ p31,Sample Player,MI,bat,9.0,false
 
       state.poller = new DbScorePoller({
         db: state.db, matchId, format: state.format, interval: pollInterval,
-        onUpdate: (statRows) => {
+        onUpdate: (statRows, rawScorecard) => {
           // Rows are keyed by our own player_id already — no name matching needed.
           statRows.forEach(s => {
             state.stats[s.player_id] = { batting: s.batting, bowling: s.bowling, fielding: s.fielding };
@@ -7563,8 +7568,12 @@ p31,Sample Player,MI,bat,9.0,false
           // Rebuild the "Live scorecard" panel's payload too — it reads from
           // state.lastScorecard, which the legacy CricAPI flow keeps fresh but
           // this scraper flow previously never touched, leaving it stuck on
-          // whatever (stale) payload was last cached.
-          state.lastScorecard = buildLiveScorecardFromStats(localMatch, statRows);
+          // whatever (stale) payload was last cached. Prefer the raw scraped
+          // scorecard cached in match_scorecards (every name as scraped,
+          // matched or not, with dismissal text) — it's the same rich payload
+          // CricAPI matches show. Fall back to the squad-only reconstruction
+          // only when nothing's been scraped for this match yet.
+          state.lastScorecard = rawScorecard || buildLiveScorecardFromStats(localMatch, statRows);
           render();
           if (state.activeDailyTab === 'live' && state.mode === 'daily') renderDailyLiveTab();
           if (state.mode === 'season_long') {
@@ -7574,11 +7583,11 @@ p31,Sample Player,MI,bat,9.0,false
           renderFantasyScorecard();
           $('#scorecardSection').setAttribute('open', '');
         },
-        onPoll: (statRows, status) => {
+        onPoll: (statRows, status, rawScorecard) => {
           // Always rebuild — even when onUpdate didn't fire (hash unchanged),
           // so a freshly-loaded page or reconnect still shows current data
           // instead of leaving state.lastScorecard at null/stale.
-          state.lastScorecard = buildLiveScorecardFromStats(localMatch, statRows);
+          state.lastScorecard = rawScorecard || buildLiveScorecardFromStats(localMatch, statRows);
           render();
           renderScorecard();
           renderFantasyScorecard();
@@ -9257,12 +9266,21 @@ p31,Sample Player,MI,bat,9.0,false
               // mismatch between "points just scraped" and "what admin sees".
               if (m) {
                 try {
-                  const statRows = await state.db.getPlayerStatsForMatchFull(id);
+                  const [statRows, rawScorecard] = await Promise.all([
+                    state.db.getPlayerStatsForMatchFull(id),
+                    state.db.getMatchScorecard(id), // raw scrape this run just cached — every name, matched or not
+                  ]);
                   console.info(`[Scrape Now] player_match_stats rows for match ${id}:`, statRows.length, statRows);
+                  // The squad-only reconstruction needs both teams assigned to this
+                  // match; the raw scraped scorecard doesn't (it's built straight
+                  // from the scraped team names, no team_id lookup involved) — so
+                  // only skip `built` (and its diagnostics) when teams are missing,
+                  // not the whole render.
+                  let built = null;
                   if (!m.home_team_id || !m.away_team_id) {
-                    toast(`Saved ${statRows.length} player rows, but this match has no home_team_id/away_team_id set — can't build the scorecard table without both teams assigned.`, 6000);
+                    if (!rawScorecard) toast(`Saved ${statRows.length} player rows, but this match has no home_team_id/away_team_id set — can't build the scorecard table without both teams assigned.`, 6000);
                   } else {
-                    const built = buildLiveScorecardFromStats(m, statRows);
+                    built = buildLiveScorecardFromStats(m, statRows);
                     if (!built) {
                       const resolvedCount = statRows.filter(s => PLAYERS.some(p => p.id === s.player_id)).length;
                       const rosterCount   = PLAYERS.filter(p => (p.team_id || p.team) === m.home_team_id || (p.team_id || p.team) === m.away_team_id).length;
@@ -9274,17 +9292,25 @@ p31,Sample Player,MI,bat,9.0,false
                         playersInPool: PLAYERS.length, playersSource,
                         matchedTeamIds, expects: [m.home_team_id, m.away_team_id],
                       });
-                      if (resolvedCount === 0) {
-                        toast(`Saved ${statRows.length} player rows, but NONE of those player_ids exist in the currently loaded ` +
-                          `pool (${PLAYERS.length} players, source: ${playersSource}). Your player pool for ${m.home_team_id}/${m.away_team_id} ` +
-                          `has ${rosterCount} players — if that's 0, this tournament's roster was never set up. If it's >0, the scraper resolved ` +
-                          `to different player records than your roster (re-check Player Linking).`, 9000);
-                      } else {
-                        toast(`Saved ${statRows.length} player rows (${resolvedCount} resolved to a player), but their team_id didn't match ` +
-                          `${m.home_team_id}/${m.away_team_id}: ${matchedTeamIds.join(', ') || 'none'} — fix the mismatch in Teams/Players.`, 8000);
+                      if (!rawScorecard) {
+                        if (resolvedCount === 0) {
+                          toast(`Saved ${statRows.length} player rows, but NONE of those player_ids exist in the currently loaded ` +
+                            `pool (${PLAYERS.length} players, source: ${playersSource}). Your player pool for ${m.home_team_id}/${m.away_team_id} ` +
+                            `has ${rosterCount} players — if that's 0, this tournament's roster was never set up. If it's >0, the scraper resolved ` +
+                            `to different player records than your roster (re-check Player Linking).`, 9000);
+                        } else {
+                          toast(`Saved ${statRows.length} player rows (${resolvedCount} resolved to a player), but their team_id didn't match ` +
+                            `${m.home_team_id}/${m.away_team_id}: ${matchedTeamIds.join(', ') || 'none'} — fix the mismatch in Teams/Players.`, 8000);
+                        }
                       }
                     }
-                    state.lastScorecard = built;
+                  }
+                  // Prefer the raw scraped scorecard this run just cached in
+                  // match_scorecards (every name as scraped, matched or not,
+                  // with dismissal text) over the squad-only reconstruction —
+                  // same rich view CricAPI matches get.
+                  if (rawScorecard || built) {
+                    state.lastScorecard = rawScorecard || built;
                     render();
                     renderScorecard();
                     renderFantasyScorecard();
