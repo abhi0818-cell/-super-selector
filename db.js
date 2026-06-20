@@ -3198,12 +3198,38 @@ export function createDb(cfg = {}) {
         squadId, matchId, sorted, contestConfig.start_match_number ?? null
       );
 
-      // If the previous lock was for a completed match (auto-locked retroactively),
-      // this is the squad's first active participation — treat as no baseline (0 transfers).
-      const prevMatchStatus = prev.matchId
-        ? (allMatches.find(m => m.id === prev.matchId)?.status ?? null)
-        : null;
-      const isFirstActiveLock = !prev.playerIds?.length || prevMatchStatus === 'completed';
+      // "First active lock" = this squad has no real transfer baseline — either it
+      // never locked anything before, or the only prior lock on record was a
+      // retroactive auto-lock for a match that was ALREADY completed by the time
+      // the squad joined (so that XI was never actually picked by the user).
+      // We distinguish that from the normal, common case of an actively-playing
+      // squad whose previous match simply finished and got scored before they got
+      // around to locking the next one — checked by looking for ANY earlier locked
+      // match for this squad. If one exists, they've been actively playing and the
+      // real baseline must be honored regardless of the previous match's status.
+      let isFirstActiveLock = !prev.playerIds?.length;
+      if (!isFirstActiveLock) {
+        const prevMatchStatus = prev.matchId
+          ? (allMatches.find(m => m.id === prev.matchId)?.status ?? null)
+          : null;
+        if (prevMatchStatus === 'completed') {
+          const prevMatchNum = sorted.find(m => m.id === prev.matchId)?.match_number ?? 0;
+          const earlierMatchIds = sorted
+            .filter(m => (m.match_number ?? 0) < prevMatchNum)
+            .map(m => m.id);
+          if (earlierMatchIds.length) {
+            const sb = await getClient();
+            const { count } = await sb
+              .from('user_match_xi')
+              .select('id', { count: 'exact', head: true })
+              .eq('squad_id', squadId)
+              .in('match_id', earlierMatchIds);
+            isFirstActiveLock = !(count > 0);
+          } else {
+            isFirstActiveLock = true; // prev is the earliest possible match — genuinely first lock
+          }
+        }
+      }
       const baselinePlayerIds = isFirstActiveLock ? [] : prev.playerIds;
 
       // Write XI + transfers
