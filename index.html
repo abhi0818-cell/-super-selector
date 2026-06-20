@@ -7498,12 +7498,28 @@ p31,Sample Player,MI,bat,9.0,false
             r: bw.runsConceded ?? 0, w: bw.wickets ?? 0,
           });
         });
-        if (!battingRows.length && !bowlingRows.length) return null;
+        // Fielding — credited via scrape-scorecard's dismissal-text derivation
+        // (catches/stumpings/run-outs), keyed to whichever team was bowling/
+        // fielding this innings (oppId). Pulled in separately from the bowling
+        // loop above because a fielder's catch/stumping/run-out is real credit
+        // even when they didn't bowl a ball themselves (e.g. a specialist
+        // fielder low in the order) — without this, that credit is correctly
+        // scored into XI/SL totals server-side but had no row to display here.
+        const fieldingRows = [];
+        PLAYERS.filter(p => (p.team_id || p.team) === oppId).forEach(p => {
+          const s = byPlayer.get(p.id);
+          const f = s?.fielding;
+          if (!f) return;
+          const total = (f.catches||0) + (f.stumpings||0) + (f.runOutDirect||0) + (f.runOutIndirect||0);
+          if (!total) return;
+          fieldingRows.push({ name: p.name, fielding: f });
+        });
+        if (!battingRows.length && !bowlingRows.length && !fieldingRows.length) return null;
         const overallOvers = Math.floor(totalBallsBowled / 6) + (totalBallsBowled % 6) / 10;
         return {
           inning: `${teamId} Innings`,
           r: totalRuns, w: totalWkts, o: totalBallsBowled ? overallOvers.toFixed(1) : '0.0',
-          batting: battingRows, bowling: bowlingRows,
+          batting: battingRows, bowling: bowlingRows, fielding: fieldingRows,
         };
       }).filter(Boolean);
 
@@ -10880,6 +10896,18 @@ p31,Sample Player,MI,bat,9.0,false
               ${bowling.map(b => renderBowlRow(b)).join('')}
             </tbody>
           </table>
+        `;
+      }
+      // Fielding — catches/stumpings/run-outs auto-derived from dismissal text.
+      // Shown as a plain line list rather than a table since a fielder may have
+      // no batting/bowling row of their own to sit next to (e.g. didn't bat).
+      const fielding = inn.fielding || [];
+      if (fielding.length) {
+        html += `
+          <div class="sc-fielding" style="margin-top:10px;font-size:12px;color:var(--fg);">
+            <div style="color:var(--muted);margin-bottom:4px;">Fielding</div>
+            ${fielding.map(f => `<div>${escapeHtml(f.name)} — ${escapeHtml(formatFieldingLine(f.fielding) || '')}</div>`).join('')}
+          </div>
         `;
       }
       html += `</div>`;
