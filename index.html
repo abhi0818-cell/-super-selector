@@ -3564,6 +3564,21 @@ p31,Sample Player,MI,bat,9.0,false
               <div class="unmatched-panel" data-tid="${t.id}"
                    style="display:none; margin-top:6px;"></div>
             </div>
+            <!-- Fielding issues panel -->
+            <div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
+              <button class="fielding-issues-toggle" data-tid="${t.id}"
+                      style="display:flex; align-items:center; gap:6px; background:none; border:none;
+                             cursor:pointer; padding:0; width:100%; text-align:left;">
+                <span style="font-size:11px; color:var(--muted);">🥎 Fielding Issues</span>
+                <span class="fielding-issues-badge" data-tid="${t.id}"
+                      style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:10px;
+                             background:rgba(220,80,60,0.15); color:rgba(220,80,60,0.9); display:none;">0</span>
+                <span class="fielding-issues-chevron" data-tid="${t.id}"
+                      style="font-size:10px; color:var(--muted); margin-left:auto;">▶ Load</span>
+              </button>
+              <div class="fielding-issues-panel" data-tid="${t.id}"
+                   style="display:none; margin-top:6px;"></div>
+            </div>
           </div>`;
       }).join('');
 
@@ -3582,6 +3597,14 @@ p31,Sample Player,MI,bat,9.0,false
             badge.style.display = count ? 'inline' : 'none';
           });
         }).catch(err => console.error('getUnmatchedPlayersCounts failed:', err));
+        state.db.getFieldingIssuesCounts(tIds).then(counts => {
+          counts.forEach((count, tid) => {
+            const badge = list.querySelector(`.fielding-issues-badge[data-tid="${tid}"]`);
+            if (!badge) return;
+            badge.textContent = count;
+            badge.style.display = count ? 'inline' : 'none';
+          });
+        }).catch(err => console.error('getFieldingIssuesCounts failed:', err));
       }
 
       // Wire active toggles
@@ -3888,6 +3911,148 @@ p31,Sample Player,MI,bat,9.0,false
                   const remaining = panel.querySelectorAll('.unmatched-row').length;
                   if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
                   if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All names resolved.</span>';
+                } catch (err) { toast('Failed: ' + err.message); }
+              });
+            });
+
+          } catch (err) {
+            panel.innerHTML = `<span style="font-size:11px;color:var(--bad);">Error: ${escapeHtml(err.message)}</span>`;
+            if (chevron) chevron.textContent = '▶ Retry';
+          }
+        });
+      });
+
+      // Wire fielding issues panels — scraper-derived catch/stumping/run-out/
+      // bowled/LBW credit that couldn't be auto-resolved to exactly one player.
+      const FIELDING_ISSUE_LABELS = {
+        catches: 'Catch', stumpings: 'Stumping',
+        runOutDirect: 'Run-out (direct)', runOutIndirect: 'Run-out (assist)',
+      };
+      const FIELDING_RULE_KEY = {
+        catches: 'catch', stumpings: 'stumping',
+        runOutDirect: 'run_out_direct', runOutIndirect: 'run_out_indirect',
+      };
+      list.querySelectorAll('.fielding-issues-toggle').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const tid     = btn.dataset.tid;
+          const panel   = list.querySelector(`.fielding-issues-panel[data-tid="${tid}"]`);
+          const chevron = list.querySelector(`.fielding-issues-chevron[data-tid="${tid}"]`);
+          const badge   = list.querySelector(`.fielding-issues-badge[data-tid="${tid}"]`);
+          if (!panel) return;
+
+          if (panel.style.display !== 'none') {
+            panel.style.display = 'none';
+            if (chevron) chevron.textContent = '▶ Load';
+            return;
+          }
+
+          if (chevron) chevron.textContent = '⏳';
+          panel.style.display = 'block';
+          panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">Loading…</span>';
+
+          try {
+            const [issues, tPlayers, overrides] = await Promise.all([
+              state.db.getFieldingIssues(tid),
+              state.db.getPlayersForTournament(tid),
+              state.db.getScoringRules(tid).catch(() => ({})),
+            ]);
+            const rulesFor = fmt => ({ ...DEFAULT_SCORING_RULES[fmt], ...(overrides?.[fmt] || {}) });
+
+            if (chevron) chevron.textContent = issues.length ? '▼ Hide' : '▼';
+            if (badge) { badge.textContent = issues.length; badge.style.display = issues.length ? 'inline' : 'none'; }
+
+            if (!issues.length) {
+              panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ No fielding issues — all dismissal credit auto-resolved.</span>';
+              return;
+            }
+
+            const playerOpts = tPlayers.map(p =>
+              `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${p.role}${p.overseas ? ', ✈️' : ''})</option>`
+            ).join('');
+
+            panel.innerHTML = `
+              <table style="width:100%; border-collapse:collapse; font-size:11px;">
+                <thead>
+                  <tr style="color:var(--muted); border-bottom:1px solid var(--border);">
+                    <th style="text-align:left; padding:4px 6px; font-weight:600;">Fielder (raw)</th>
+                    <th style="text-align:left; padding:4px 6px; font-weight:600;">Event</th>
+                    <th style="text-align:left; padding:4px 6px; font-weight:600;">Dismissal / Match</th>
+                    <th style="padding:4px 6px; font-weight:600; min-width:220px;">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${issues.map(fi => {
+                    const candidateOpts = fi.candidates
+                      ? fi.candidates.map(name => {
+                          const p = tPlayers.find(tp => tp.name === name);
+                          return p ? `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>` : '';
+                        }).join('')
+                      : '';
+                    return `
+                    <tr class="fi-row" data-fid="${fi.id}" data-matchid="${fi.matchId}"
+                        data-fmt="${fi.matchFormat}" data-field="${fi.field}"
+                        data-ambiguous="${fi.candidates ? '1' : '0'}"
+                        style="border-bottom:1px solid var(--border);">
+                      <td style="padding:5px 6px; font-weight:600; color:rgba(220,80,60,0.9);">${escapeHtml(fi.rawName)}</td>
+                      <td style="padding:5px 6px; color:var(--muted);">${FIELDING_ISSUE_LABELS[fi.field] || fi.field}</td>
+                      <td style="padding:5px 6px; color:var(--muted); font-size:10px;">
+                        ${escapeHtml(fi.batterName)}: "${escapeHtml(fi.dismissalText)}"<br/>${escapeHtml(fi.matchLabel)}
+                        ${fi.candidates ? `<br/><span style="color:var(--accent-2);">ambiguous: ${fi.candidates.map(escapeHtml).join(' / ')}</span>` : ''}
+                      </td>
+                      <td style="padding:5px 6px;">
+                        <div style="display:flex; gap:4px; flex-wrap:wrap; align-items:center;">
+                          <select class="fi-player-select" style="font-size:11px; max-width:180px;">
+                            <option value="">— select player —</option>
+                            ${fi.candidates ? candidateOpts : playerOpts}
+                          </select>
+                          <button class="fi-credit-btn"
+                                  style="font-size:10px; padding:2px 7px; border-radius:4px;
+                                         background:rgba(201,168,76,0.12); border:1px solid var(--accent);
+                                         color:var(--accent); cursor:pointer; white-space:nowrap;"
+                                  title="${fi.candidates ? 'Credit this match only — name is ambiguous, no alias saved' : 'Credit + save alias for future runs'}">
+                            ${fi.candidates ? 'Credit (this match)' : 'Credit + alias'}
+                          </button>
+                          <button class="fi-ignore-btn"
+                                  style="font-size:10px; padding:2px 7px; border-radius:4px;
+                                         background:transparent; border:1px solid var(--border);
+                                         color:var(--muted); cursor:pointer; white-space:nowrap;">Ignore</button>
+                        </div>
+                      </td>
+                    </tr>`;
+                  }).join('')}
+                </tbody>
+              </table>`;
+
+            panel.querySelectorAll('.fi-row').forEach(row => {
+              const fid        = row.dataset.fid;
+              const matchId    = row.dataset.matchid;
+              const fmt        = row.dataset.fmt;
+              const field      = row.dataset.field;
+              const ambiguous  = row.dataset.ambiguous === '1';
+              const issue      = issues.find(x => x.id === fid);
+
+              row.querySelector('.fi-credit-btn').addEventListener('click', async () => {
+                const playerId = row.querySelector('.fi-player-select').value;
+                if (!playerId) { toast('Select a player first.'); return; }
+                try {
+                  const rules = rulesFor(fmt);
+                  const points = 1 * (rules[FIELDING_RULE_KEY[field]] || 0);
+                  await state.db.resolveFieldingIssueAsCredit(issue, playerId, points, !ambiguous);
+                  row.remove();
+                  const remaining = panel.querySelectorAll('.fi-row').length;
+                  if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
+                  if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All fielding issues resolved.</span>';
+                  toast(ambiguous ? 'Credited for this match.' : 'Credited — alias saved for future runs.');
+                } catch (err) { toast('Failed: ' + err.message); }
+              });
+
+              row.querySelector('.fi-ignore-btn').addEventListener('click', async () => {
+                try {
+                  await state.db.ignoreFieldingIssue(fid);
+                  row.remove();
+                  const remaining = panel.querySelectorAll('.fi-row').length;
+                  if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
+                  if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All fielding issues resolved.</span>';
                 } catch (err) { toast('Failed: ' + err.message); }
               });
             });
@@ -8954,6 +9119,13 @@ p31,Sample Player,MI,bat,9.0,false
                   ? `<button class="row-finalize" data-act="finalize" title="Fetch scorecard &amp; save fantasy points">Finalize</button>
                      <button class="row-recalc" data-act="recalc" title="Re-parse cached scorecard &amp; overwrite player stats">Recalc</button>`
                   : ''}
+                ${isFinished
+                  ? `<button class="row-fielding" data-act="fielding"
+                       style="font-size:11px;padding:2px 7px;border-radius:4px;
+                              background:rgba(201,168,76,0.10);border:1px solid var(--accent);
+                              color:var(--accent);cursor:pointer;"
+                       title="Manually add catch/stumping/run-out/bowled/LBW credit for a player in this match">🥎 Fielding</button>`
+                  : ''}
                 ${m.status === 'delayed'
                   ? `<button class="row-revert-lock" data-act="revert-lock"
                        style="font-size:11px;padding:2px 7px;border-radius:4px;
@@ -9047,7 +9219,13 @@ p31,Sample Player,MI,bat,9.0,false
               // Update cached scorecard_url in state
               const m = state.matches.find(x => x.id === id);
               if (m && r.url) m.scorecard_url = r.url;
-              toast(`🕷 Scraped ${r.matched} players from ${r.source}. Unmatched: ${r.unmatched?.length ?? 0}.`, 4000);
+              if (r.completionMarked && m) m.status = 'completed';
+              const bits = [`🕷 Scraped ${r.matched} players from ${r.source}`];
+              if (r.unmatched?.length) bits.push(`${r.unmatched.length} unmatched`);
+              if (r.fieldingCredited) bits.push(`${r.fieldingCredited} fielding credit${r.fieldingCredited===1?'':'s'} auto-derived`);
+              if (r.fieldingIssues)   bits.push(`${r.fieldingIssues} fielding issue${r.fieldingIssues===1?'':'s'} need review (see ⚠️ Fielding Issues below)`);
+              if (r.completionMarked) bits.push(`match marked completed`);
+              toast(bits.join(' — ') + '.', r.fieldingIssues || r.completionMarked ? 6000 : 4000);
               renderMatchesAdmin();
               // Pull the fresh player_match_stats this scrape just wrote and
               // rebuild the Live/Fantasy scorecard panel right away — otherwise
@@ -9124,6 +9302,7 @@ p31,Sample Player,MI,bat,9.0,false
             btn.disabled = false;
           }
         });
+        tr.querySelector('[data-act="fielding"]')?.addEventListener('click', () => toggleFieldingCreditRow(id, tr));
         tr.querySelector('.delay-toggle-btn')?.addEventListener('click', async (e) => {
           const btn       = e.currentTarget;
           const isDelayed = btn.dataset.delayed === 'true';
@@ -9144,6 +9323,104 @@ p31,Sample Player,MI,bat,9.0,false
         });
       });
       $('#adminCount').textContent = `${matches.length} matches`;
+    }
+
+    // Manual fielding/wicket-bonus credit — fully free-form entry, independent of
+    // any parsed dismissal. Covers all 6 categories the admin can credit for a
+    // completed match: catch, stumping, run-out (direct/assist), bowled bonus,
+    // LBW bonus. Always writes source='scraper_manual', which both the scraper's
+    // regression guard and any future re-scrape treat as permanently protected.
+    const MANUAL_FIELDING_RULE_KEY = {
+      catches: 'catch', stumpings: 'stumping',
+      runOutDirect: 'run_out_direct', runOutIndirect: 'run_out_indirect',
+      bowled: 'lbw_bowled_bonus', lbw: 'lbw_bowled_bonus',
+    };
+    const MANUAL_FIELDING_LABELS = {
+      catches: 'Catch', stumpings: 'Stumping',
+      runOutDirect: 'Run-out (direct)', runOutIndirect: 'Run-out (assist)',
+      bowled: 'Bowled (bonus)', lbw: 'LBW (bonus)',
+    };
+
+    async function toggleFieldingCreditRow(matchId, tr) {
+      const existing = tr.parentElement?.querySelector(`.fielding-credit-row[data-matchid="${matchId}"]`);
+      if (existing) { existing.remove(); return; }
+      // Only one inline credit form open at a time.
+      $('#adminMatchesBody')?.querySelectorAll('.fielding-credit-row').forEach(r => r.remove());
+
+      const m = state.matches.find(x => x.id === matchId);
+      if (!m) return;
+
+      const formRow = document.createElement('tr');
+      formRow.className = 'fielding-credit-row';
+      formRow.dataset.matchid = matchId;
+      formRow.innerHTML = `
+        <td colspan="10" style="padding:8px 10px; background:rgba(201,168,76,0.06); border-top:1px dashed var(--accent);">
+          <div style="font-size:11px; color:var(--muted); margin-bottom:6px;">Loading players…</div>
+        </td>`;
+      tr.after(formRow);
+
+      try {
+        const tPlayers = m.tournament_id ? await state.db.getPlayersForTournament(m.tournament_id) : [];
+        const rosterPlayers = tPlayers.filter(p => p.team === m.home_team_id || p.team === m.away_team_id);
+        const pool = rosterPlayers.length ? rosterPlayers : tPlayers;
+        const playerOpts = pool.map(p =>
+          `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${p.role}${p.overseas ? ', ✈️' : ''})</option>`
+        ).join('');
+        const fieldOpts = Object.entries(MANUAL_FIELDING_LABELS).map(
+          ([k, label]) => `<option value="${k}">${label}</option>`
+        ).join('');
+
+        formRow.querySelector('td').innerHTML = `
+          <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; font-size:11px;">
+            <span style="font-weight:600; color:var(--accent);">🥎 Manual credit:</span>
+            <select class="mfc-player" style="font-size:11px; max-width:200px;">
+              <option value="">— select player —</option>
+              ${playerOpts}
+            </select>
+            <select class="mfc-field" style="font-size:11px;">${fieldOpts}</select>
+            <input class="mfc-count" type="number" min="1" step="1" value="1" style="width:48px; font-size:11px;" />
+            <button class="mfc-save"
+              style="font-size:10px; padding:2px 8px; border-radius:4px; background:rgba(201,168,76,0.15);
+                     border:1px solid var(--accent); color:var(--accent); cursor:pointer;">Save</button>
+            <button class="mfc-cancel"
+              style="font-size:10px; padding:2px 8px; border-radius:4px; background:transparent;
+                     border:1px solid var(--border); color:var(--muted); cursor:pointer;">Cancel</button>
+            <span class="mfc-status" style="font-size:10px; color:var(--muted);"></span>
+          </div>`;
+
+        formRow.querySelector('.mfc-cancel').addEventListener('click', () => formRow.remove());
+        formRow.querySelector('.mfc-save').addEventListener('click', async (e) => {
+          const btn       = e.currentTarget;
+          const playerId  = formRow.querySelector('.mfc-player').value;
+          const field     = formRow.querySelector('.mfc-field').value;
+          const count     = Math.max(1, parseInt(formRow.querySelector('.mfc-count').value, 10) || 1);
+          const statusEl  = formRow.querySelector('.mfc-status');
+          if (!playerId) { statusEl.textContent = 'Select a player first.'; return; }
+
+          btn.disabled = true; statusEl.textContent = 'Saving…';
+          try {
+            const overrides = await state.db.getScoringRules(m.tournament_id).catch(() => ({}));
+            const fmt   = m.format || 'T20';
+            const rules = { ...DEFAULT_SCORING_RULES[fmt], ...(overrides?.[fmt] || {}) };
+            const ruleKey = MANUAL_FIELDING_RULE_KEY[field];
+            const points  = count * (rules[ruleKey] || 0);
+
+            await state.db.applyManualFieldingCredit(matchId, playerId, field, count, points);
+            await computeAndSaveXIScoresForMatch(matchId);
+            await computeAndSaveSLScoresForMatch(matchId);
+
+            const playerName = pool.find(p => p.id === playerId)?.name || playerId;
+            toast(`🥎 Credited ${playerName}: ${count}× ${MANUAL_FIELDING_LABELS[field]} (+${points} pts). Propagated to XI/SL totals.`, 5000);
+            formRow.remove();
+          } catch (err) {
+            statusEl.textContent = 'Failed: ' + err.message;
+            btn.disabled = false;
+          }
+        });
+      } catch (err) {
+        formRow.querySelector('td').innerHTML =
+          `<span style="font-size:11px; color:var(--bad);">Failed to load players: ${escapeHtml(err.message)}</span>`;
+      }
     }
 
     // datetime-local input → ISO UTC string (Postgres timestamptz-friendly)

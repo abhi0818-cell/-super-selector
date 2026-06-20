@@ -290,7 +290,18 @@ async function discoverUrl(
 
 // ─── HTML parsers ─────────────────────────────────────────────────────────────
 
-interface BatRow  { name: string; runs: number; balls: number; fours: number; sixes: number; dismissed: boolean }
+interface BatRow  {
+  name: string; runs: number; balls: number; fours: number; sixes: number; dismissed: boolean
+  // Raw dismissal description as it appears next to the batter's name, e.g.
+  // "c A Fletcher b A Russell", "runout (A Fletcher / M Tromp)", "b SC van Schalkwyk".
+  // null when not out. This is the same text poll-cricapi gets handed already-split
+  // out by CricAPI's JSON — here we have to lift it out of the HTML ourselves, see
+  // parseCricketAddictor/parseBusinessStandard below. Used to auto-derive fielding
+  // credit (catches/stumpings/run-outs) and bowler wicketTypes (for the lbw/bowled
+  // bonus) instead of leaving fielding null and wicketTypes empty for every
+  // scraper-sourced match, as before.
+  dismissalText: string | null
+}
 interface BowlRow { name: string; overs: number; runs: number; wickets: number; maidens: number; dots: number }
 interface Innings { teamName: string; batting: BatRow[]; bowling: BowlRow[] }
 
@@ -367,7 +378,16 @@ function parseCricketAddictor(html: string): Innings[] {
         const nameHtml  = cells[0]
         const name      = firstLinkText(nameHtml) || stripTags(nameHtml).split(' ')[0]
         if (!name) continue
-        const dismissed = !nameHtml.toLowerCase().includes('not out')
+        // The dismissal text lives in the same cell, after the name and a small
+        // arrow-icon <img> (e.g. "Lhuan-dre Pretorius [icon] c A Fletcher b A
+        // Russell" or "Hammad Azam Not out"). Strip the whole cell to plain text,
+        // then peel the name back off the front to leave just the dismissal part.
+        const strippedCell = stripTags(nameHtml)
+        const afterName = strippedCell.startsWith(name)
+          ? strippedCell.slice(name.length).trim()
+          : strippedCell.replace(name, '').trim()
+        const notOut    = afterName === '' || /^not\s*out/i.test(afterName)
+        const dismissed = !notOut
         batting.push({
           name,
           runs:      parseInt(stripTags(cells[1]), 10) || 0,
@@ -375,6 +395,7 @@ function parseCricketAddictor(html: string): Innings[] {
           fours:     parseInt(stripTags(cells[3]), 10) || 0,
           sixes:     parseInt(stripTags(cells[4]), 10) || 0,
           dismissed,
+          dismissalText: notOut ? null : afterName,
         })
       }
     }
@@ -420,15 +441,19 @@ function parseBusinessStandard(html: string): Innings[] {
         if (cells.length < 6) continue
         const raw  = stripTags(cells[0])
         // BS puts name and dismissal in same cell separated by whitespace
-        const name = raw.split(/\s{2,}/)[0].trim()
+        const rawParts   = raw.split(/\s{2,}/)
+        const name       = rawParts[0].trim()
+        const dismissalRaw = (rawParts[1] ?? '').trim()
         if (!name || name === 'Extras' || name === 'Total' || name === 'Yet to Bat') continue
+        const notOut = dismissalRaw === '' || /^not\s*out/i.test(dismissalRaw)
         batting.push({
           name,
           runs:      parseInt(stripTags(cells[1]), 10) || 0,
           balls:     parseInt(stripTags(cells[2]), 10) || 0,
           fours:     parseInt(stripTags(cells[3]), 10) || 0,
           sixes:     parseInt(stripTags(cells[4]), 10) || 0,
-          dismissed: !raw.toLowerCase().includes('not out'),
+          dismissed: !notOut,
+          dismissalText: notOut ? null : dismissalRaw,
         })
       }
     }
@@ -454,6 +479,76 @@ function parseBusinessStandard(html: string): Innings[] {
     if (batting.length || bowling.length) innings.push({ teamName, batting, bowling })
   }
   return innings
+}
+
+// ─── Match-completion detection ───────────────────────────────────────────────
+// Previously only poll-cricapi's matchLifecycle() (driven by CricAPI's
+// matchEnded/status fields) could ever flip matches.status to 'completed' — a
+// scraper-sourced match just sat at whatever status it already had until an
+// admin clicked Finalize, or CricAPI later confirmed it. CricketAddictor's
+// pages carry the same signal in plain text: a "LIVE / Match N /" vs
+// "COMPLETED / Match N /" badge near the top, and a result line ("X won by Y
+// wickets/runs", "Match Tied", "No Result", "Match Abandoned") that replaces
+// the live "X need Y runs in Z balls" line once the match actually ends.
+function detectCompletion(html: string): { completed: boolean; resultText: string | null } {
+  const text = stripTags(html)
+  const badgeMatch = text.match(/\b(LIVE|COMPLETED|UPCOMING)\s*\/\s*Match\b/i)
+  const badge = badgeMatch ? badgeMatch[1].toUpperCase() : null
+  const resultMatch = text.match(
+    /([A-Za-z][A-Za-z .'-]+ won by [\w\s]+?(?:wickets?|runs?)(?:\s*\(.*?\))?|Match Tied|Match Drawn|No Result|Match Abandoned)/i,
+  )
+  return {
+    completed : badge === 'COMPLETED' || !!resultMatch,
+    resultText: resultMatch ? resultMatch[1].trim() : null,
+  }
+}
+
+// ─── Dismissal-text parsing (mirrors poll-cricapi's parseDismissalEntry) ──────
+// poll-cricapi gets dismissal type/bowler/fielder already split out as separate
+// JSON fields by CricAPI. Scraped HTML only gives us one free-text blob per
+// batter (e.g. "c A Fletcher b A Russell", "runout (A Fletcher / M Tromp)",
+// "lbw b S Narine", "st U Chand b S Narine", "c & b A Russell", "b SC van
+// Schalkwyk"). This is the scraper-side equivalent: same dismissal grammar,
+// same regex shapes, just parsing it out of plain text instead of JSON fields.
+interface DismissalParse { type: string; bowler: string | null; fielder: string | null; fielder2?: string | null }
+
+function parseScrapedDismissal(raw: string | null): DismissalParse | null {
+  if (!raw) return null
+  const d = raw.toLowerCase().trim()
+  if (!d || d.includes('not out') || d.includes('retired')) return null
+
+  if (/^hit.?wicket/i.test(d)) return { type: 'hit_wicket', bowler: null, fielder: null }
+  if (/^run\s*out/.test(d)) {
+    const parenMatch = d.match(/run\s*out\s*\(([^)]+)\)/i)
+    const parts = parenMatch
+      ? parenMatch[1].split(/\s*[/\\&]\s*/).map(n => n.trim()).filter(Boolean)
+      : []
+    return { type: 'run_out', bowler: null, fielder: parts[0] || null, fielder2: parts[1] || null }
+  }
+
+  let m: RegExpMatchArray | null
+  if ((m = d.match(/^lbw(?:\s+b\s+(.+))?/)))        return { type: 'lbw',     bowler: (m[1] || '').trim() || null, fielder: null }
+  if ((m = d.match(/^c\s*&\s*b\s+(.+)/)))           return { type: 'caught',  bowler: m[1].trim(),                 fielder: m[1].trim() }
+  if ((m = d.match(/^c(?:t)?\s+(.+?)\s+b\s+(.+)/))) return { type: 'caught',  bowler: m[2].trim(),                 fielder: m[1].trim() }
+  if ((m = d.match(/^st\s+(.+?)\s+b\s+(.+)/)))      return { type: 'stumped', bowler: m[2].trim(),                 fielder: m[1].trim() }
+  if ((m = d.match(/^b\s+(.+)/)))                   return { type: 'bowled',  bowler: m[1].trim(),                 fielder: null }
+  return null
+}
+
+/** Match a dismissal's loosely-written bowler reference (e.g. "A Russell") against
+ *  the full names actually listed in that innings's bowling table ("Andre Russell"),
+ *  same exact/surname-fallback strategy as poll-cricapi's matchBowlerName. */
+function matchBowlerNameInInnings(ref: string | null, candidates: string[]): string | null {
+  if (!ref) return null
+  const t = ref.toLowerCase().trim()
+  const exact = candidates.find(c => c.toLowerCase() === t)
+  if (exact) return exact
+  const refSurname = t.split(/\s+/).pop()
+  if (refSurname) {
+    const bySurname = candidates.filter(c => c.toLowerCase().split(/\s+/).pop() === refSurname)
+    if (bySurname.length === 1) return bySurname[0]
+  }
+  return null
 }
 
 // ─── Scoring formula (mirrors index.html calcBatting / calcBowling) ───────────
@@ -535,6 +630,25 @@ const DEFAULT_T20_RULES: Rules = {
   four_wicket_haul: 8, five_wicket_haul: 16,
   economy_below_5: 6, economy_5_to_6: 4, economy_10_to_11: -4, economy_above_11: -6,
   catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
+  lbw_bowled_bonus: 8,
+}
+
+interface FieldRow { catches: number; stumpings: number; runOutDirect: number; runOutIndirect: number }
+
+/** Mirrors index.html's calcFielding / poll-cricapi's calcFielding. */
+function calcFielding(f: FieldRow, r: Rules): number {
+  return f.catches * (r.catch ?? 0)
+    + f.stumpings * (r.stumping ?? 0)
+    + f.runOutDirect * (r.run_out_direct ?? 0)
+    + f.runOutIndirect * (r.run_out_indirect ?? 0)
+}
+
+/** Mirrors poll-cricapi/cricketScoringEngine.js's lbw_bowled_bonus: a bonus to
+ *  the BOWLER (not a fielder) per lbw/bowled wicket, since those dismissal
+ *  types involve no fielder credit at all. */
+function calcLbwBowledBonus(wicketTypes: string[], r: Rules): number {
+  const premium = wicketTypes.filter(t => t === 'lbw' || t === 'bowled').length
+  return premium * (r.lbw_bowled_bonus ?? 0)
 }
 
 // ─── Name resolution ──────────────────────────────────────────────────────────
@@ -570,6 +684,46 @@ function resolvePlayerName(
   }
 
   return { playerId: null, method: 'unmatched' }
+}
+
+interface FielderResolveResult { playerId: string | null; candidates: string[] | null }
+
+/**
+ * Resolve a raw fielder/bowler-credit name (e.g. "A Fletcher") to exactly one
+ * player_id, checked against the FULL tournament roster (exactMap keys) — not
+ * just whoever batted/bowled in this match — so that two squad members
+ * sharing a surname (e.g. sisters) are correctly flagged as ambiguous instead
+ * of one of them silently absorbing the other's fielding credit. Mirrors
+ * index.html's resolveFielder, which was fixed for exactly this bug
+ * (see migration history: "Bryce sisters" ambiguity fix).
+ *
+ * Tiers, in order: exact full-name match → roster name ends with " <norm>"
+ * (raw is a surname or "Initial Surname") → norm ends with " <roster surname>"
+ * (raw has a longer/different first name than the roster entry). Ambiguity is
+ * checked within EACH tier before falling through to the next.
+ */
+function resolveFielderName(
+  raw: string,
+  exactMap: Map<string, string>,  // norm full name → player_id (full roster)
+  aliasMap: Map<string, string>,  // norm alias → player_id
+): FielderResolveResult {
+  const norm = raw.toLowerCase().trim()
+  if (aliasMap.has(norm)) return { playerId: aliasMap.get(norm)!, candidates: null }
+  if (exactMap.has(norm)) return { playerId: exactMap.get(norm)!, candidates: null }
+
+  const rosterNames = [...exactMap.keys()]
+  const tiers = [
+    rosterNames.filter(n => n === norm),
+    rosterNames.filter(n => n.endsWith(' ' + norm)),
+    rosterNames.filter(n => norm.endsWith(' ' + n.split(' ').pop())),
+  ]
+  for (const tier of tiers) {
+    if (!tier.length) continue
+    const distinct = [...new Set(tier)]
+    if (distinct.length > 1) return { playerId: null, candidates: distinct }
+    return { playerId: exactMap.get(distinct[0])!, candidates: null }
+  }
+  return { playerId: null, candidates: null }
 }
 
 // ─── XI scoring distribution ─────────────────────────────────────────────────
@@ -805,6 +959,12 @@ Deno.serve(async (req: Request) => {
         continue
       }
 
+      // ── 3a. Completion detection ────────────────────────────────────────
+      // Previously only poll-cricapi could ever flip matches.status to
+      // 'completed' — see detectCompletion() above for why this same signal
+      // is readable straight out of the scraped HTML.
+      const completionInfo = detectCompletion(html)
+
       // ── 3b. Staleness guard ─────────────────────────────────────────────
       // Compare this read's progress against the furthest progress seen so
       // far for this match (across either source — see poll-cricapi for the
@@ -858,13 +1018,65 @@ Deno.serve(async (req: Request) => {
       const rules: Rules = tournament.scoring_rules?.[fmtKey] ?? DEFAULT_T20_RULES
 
       // ── 6. Process innings → stat rows ───────────────────────────────────
-      // player_id → { batting?, bowling?, rawPoints }
-      const statAccum = new Map<string, { batting?: object; bowling?: object; rawPoints: number }>()
+      // player_id → { batting?, bowling?, fielding?, rawPoints }
+      const statAccum = new Map<string, { batting?: object; bowling?: object; fielding?: FieldRow; rawPoints: number }>()
       const unmatched: Array<{ name: string; context: 'batting' | 'bowling' }> = []
       const fuzzyAliases: Array<{ player_id: string; alias: string }> = []
 
+      // Fielding credit derived from dismissal text, and any raw fielder name
+      // that couldn't be resolved (unmatched) or resolved to 2+ players
+      // (ambiguous — e.g. two squad members sharing a surname). Surfaced to
+      // the admin via scraper_fielding_issues instead of silently dropped.
+      const fieldingByPlayer = new Map<string, FieldRow>()
+      const fieldingIssues: Array<{
+        rawName: string; candidates: string[] | null
+        field: 'catches' | 'stumpings' | 'runOutDirect' | 'runOutIndirect'
+        batterName: string; dismissalText: string
+      }> = []
+      const addFieldingCredit = (
+        rawName: string | null | undefined,
+        field: 'catches' | 'stumpings' | 'runOutDirect' | 'runOutIndirect',
+        batterName: string, dismissalText: string,
+      ) => {
+        if (!rawName) return
+        const { playerId, candidates } = resolveFielderName(rawName, exactMap, aliasMap)
+        if (playerId) {
+          const cur = fieldingByPlayer.get(playerId) ?? { catches: 0, stumpings: 0, runOutDirect: 0, runOutIndirect: 0 }
+          cur[field]++
+          fieldingByPlayer.set(playerId, cur)
+        } else {
+          fieldingIssues.push({ rawName, candidates, field, batterName, dismissalText })
+        }
+      }
+
       for (const inn of innings) {
+        // Bowler wicketTypes (for the lbw/bowled bonus) keyed by the exact name
+        // string as it appears in THIS innings's bowling table, so the lookup
+        // below lines up 1:1 regardless of how a dismissal line abbreviates
+        // the bowler's first name (e.g. "A Russell" dismissal vs "Andre
+        // Russell" bowling-table entry — matched via matchBowlerNameInInnings).
+        const bowlerNamesInInnings = inn.bowling.map(b => b.name)
+        const wicketsByBowlerRaw: Record<string, string[]> = {}
+
         for (const bat of inn.batting) {
+          // Fielding/wicket-type derivation runs independently of whether the
+          // BATTER himself resolves to a local player_id — an unmatched
+          // batter's dismissal still names a real fielder/bowler who should
+          // get credit regardless.
+          const parsed = parseScrapedDismissal(bat.dismissalText)
+          if (parsed) {
+            if (parsed.bowler) {
+              const matchedBowlerName = matchBowlerNameInInnings(parsed.bowler, bowlerNamesInInnings) || parsed.bowler
+              ;(wicketsByBowlerRaw[matchedBowlerName] ||= []).push(parsed.type)
+            }
+            if (parsed.type === 'caught')  addFieldingCredit(parsed.fielder, 'catches', bat.name, bat.dismissalText!)
+            if (parsed.type === 'stumped') addFieldingCredit(parsed.fielder, 'stumpings', bat.name, bat.dismissalText!)
+            if (parsed.type === 'run_out') {
+              addFieldingCredit(parsed.fielder,  'runOutDirect',   bat.name, bat.dismissalText!)
+              addFieldingCredit(parsed.fielder2, 'runOutIndirect', bat.name, bat.dismissalText!)
+            }
+          }
+
           const { playerId, method } = resolvePlayerName(bat.name, exactMap, aliasMap)
           if (!playerId) {
             if (!unmatched.some(u => u.name === bat.name)) unmatched.push({ name: bat.name, context: 'batting' })
@@ -895,19 +1107,35 @@ Deno.serve(async (req: Request) => {
           }
           if (method === 'fuzzy') fuzzyAliases.push({ player_id: playerId, alias: bowl.name.toLowerCase().trim() })
 
-          const rawPts   = calcBowling(bowl, fmtKey, rules)
-          const ballsBowled = Math.round(bowl.overs) * 6 + Math.round((bowl.overs % 1) * 10)
+          const wicketTypes  = wicketsByBowlerRaw[bowl.name] ?? []
+          const rawPts       = calcBowling(bowl, fmtKey, rules) + calcLbwBowledBonus(wicketTypes, rules)
+          const ballsBowled  = Math.round(bowl.overs) * 6 + Math.round((bowl.overs % 1) * 10)
 
           const existing = statAccum.get(playerId)
           if (existing) {
-            existing.bowling  = { wickets: bowl.wickets, wicketTypes: [], maidens: bowl.maidens, runsConceded: bowl.runs, ballsBowled, dotBalls: bowl.dots, noBalls: 0, wides: 0 }
+            existing.bowling  = { wickets: bowl.wickets, wicketTypes, maidens: bowl.maidens, runsConceded: bowl.runs, ballsBowled, dotBalls: bowl.dots, noBalls: 0, wides: 0 }
             existing.rawPoints += rawPts
           } else {
             statAccum.set(playerId, {
-              bowling  : { wickets: bowl.wickets, wicketTypes: [], maidens: bowl.maidens, runsConceded: bowl.runs, ballsBowled, dotBalls: bowl.dots, noBalls: 0, wides: 0 },
+              bowling  : { wickets: bowl.wickets, wicketTypes, maidens: bowl.maidens, runsConceded: bowl.runs, ballsBowled, dotBalls: bowl.dots, noBalls: 0, wides: 0 },
               rawPoints: rawPts,
             })
           }
+        }
+      }
+
+      // ── 6a. Apply resolved fielding credit to statAccum ───────────────────
+      // A fielder might be credit-only (never batted/bowled themselves, e.g. a
+      // specialist fielder low in the order who didn't get to bat) — ensure
+      // they still get a statAccum entry rather than being silently dropped.
+      for (const [playerId, fielding] of fieldingByPlayer) {
+        const fieldingPts = calcFielding(fielding, rules)
+        const existing = statAccum.get(playerId)
+        if (existing) {
+          existing.fielding = fielding
+          existing.rawPoints += fieldingPts
+        } else {
+          statAccum.set(playerId, { fielding, rawPoints: fieldingPts })
         }
       }
 
@@ -925,7 +1153,7 @@ Deno.serve(async (req: Request) => {
       // and leave their existing row untouched.
       const { data: existingStatRows } = await sb
         .from('player_match_stats')
-        .select('player_id, batting, bowling, raw_points')
+        .select('player_id, batting, bowling, fielding, raw_points, source')
         .eq('match_id', match.id)
       const existingByPlayer = new Map((existingStatRows ?? []).map(r => [r.player_id, r]))
 
@@ -933,6 +1161,12 @@ Deno.serve(async (req: Request) => {
       for (const [playerId, s] of statAccum) {
         const ex = existingByPlayer.get(playerId)
         if (!ex) continue
+        // An admin who manually entered/corrected this player's fielding via
+        // the Fielding Review panel (source='scraper_manual') always wins —
+        // never let a later auto re-scrape silently overwrite their fielding
+        // correction with whatever the (possibly still-imperfect) dismissal
+        // parser re-derives from the page.
+        if (ex.source === 'scraper_manual') { regressedPlayers.push(playerId); continue }
         const newBattingBalls = (s.batting as any)?.ballsFaced   ?? 0
         const oldBattingBalls = (ex.batting as any)?.ballsFaced  ?? 0
         const newBowlingBalls = (s.bowling as any)?.ballsBowled  ?? 0
@@ -950,7 +1184,11 @@ Deno.serve(async (req: Request) => {
           player_id : playerId,
           batting   : s.batting   ?? null,
           bowling   : s.bowling   ?? null,
-          fielding  : null,   // not available from scrapers
+          // Auto-derived from the dismissal text scraped alongside batting rows
+          // (see parseScrapedDismissal / addFieldingCredit above). Any dismissal
+          // that couldn't be resolved to exactly one squad player is NOT folded
+          // in here — it's queued in `fieldingIssues` for admin review instead.
+          fielding  : s.fielding  ?? null,
           raw_points: Math.round(s.rawPoints * 10) / 10,
           source    : 'scraper',
         }))
@@ -992,6 +1230,40 @@ Deno.serve(async (req: Request) => {
         )
       }
 
+      // ── 9b. Persist fielding events the scraper couldn't auto-resolve ─────
+      // (unmatched fielder name, or ambiguous — matches 2+ squad players).
+      // Mirrors the scraper_unmatched convention: ignoreDuplicates so a row
+      // an admin already resolved doesn't get reset back to unresolved by a
+      // later re-scrape that reproduces the same unresolved dismissal.
+      if (fieldingIssues.length) {
+        await sb.from('scraper_fielding_issues').upsert(
+          fieldingIssues.map(fi => ({
+            tournament_id : tournament.id,
+            match_id      : match.id,
+            raw_name      : fi.rawName,
+            source,
+            field         : fi.field,
+            batter_name   : fi.batterName,
+            dismissal_text: fi.dismissalText,
+            candidates    : fi.candidates,
+          })),
+          { onConflict: 'match_id,raw_name,field,batter_name', ignoreDuplicates: true },
+        )
+      }
+
+      // ── 9c. Let the scraper mark a match completed too ────────────────────
+      // Previously only poll-cricapi (CricAPI-driven matches) could flip
+      // matches.status to 'completed'. Scraper-only tournaments had no way to
+      // ever leave 'live'/'in_progress', which meant locked XIs/squads never
+      // got a final "this match is done" signal from this data source. Once
+      // flipped, the cron query's `.not('status','in','("completed","delayed")')`
+      // filter means this match is never re-scraped again — which is exactly
+      // what protects any admin fielding corrections made afterwards (see the
+      // scraper_manual regression-guard check above) from being clobbered.
+      if (completionInfo.completed && match.status !== 'completed') {
+        await sb.from('matches').update({ status: 'completed' }).eq('id', match.id)
+      }
+
       // ── 10. Distribute raw_points to locked XI scores (SL squads + Daily teams) ──
       // Regressed players keep their existing (already-correct) raw_points
       // here too, so scoring stays consistent with what's actually persisted
@@ -1024,6 +1296,10 @@ Deno.serve(async (req: Request) => {
         regressedPlayersSkipped: regressedPlayers,
         fuzzyAliasesCreated: fuzzyAliases.length,
         dailyTeamsScored,
+        completionDetected: completionInfo.completed,
+        completionMarked: completionInfo.completed && match.status !== 'completed',
+        fieldingCredited: fieldingByPlayer.size,
+        fieldingIssues: fieldingIssues.length,
       })
     }
 

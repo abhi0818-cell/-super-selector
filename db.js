@@ -1121,6 +1121,166 @@ export function createDb(cfg = {}) {
       if (error) throw error;
     },
 
+    // ── Scraper fielding-issue reconciliation ────────────────────────────────
+    // scrape-scorecard auto-derives fielding credit (catches/stumpings/run-outs)
+    // and the bowler LBW/bowled bonus from each dismissal's scraped text. When a
+    // named fielder can't be resolved to exactly one squad player it lands here
+    // instead of being silently dropped — mirrors the scraper_unmatched pattern.
+
+    /** Lightweight unresolved-count per tournament, for the "⚠️ Fielding Issues" badge. */
+    async getFieldingIssuesCounts(tournamentIds) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('scraper_fielding_issues')
+        .select('tournament_id')
+        .in('tournament_id', tournamentIds)
+        .is('resolved_at', null);
+      if (error) throw error;
+      const counts = new Map();
+      for (const id of tournamentIds) counts.set(id, 0);
+      for (const row of data ?? []) {
+        counts.set(row.tournament_id, (counts.get(row.tournament_id) ?? 0) + 1);
+      }
+      return counts;
+    },
+
+    /** All unresolved fielding issues for a tournament, with match context. */
+    async getFieldingIssues(tournamentId) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('scraper_fielding_issues')
+        .select(`
+          id, tournament_id, raw_name, source, field, batter_name, dismissal_text, candidates, created_at,
+          match_id,
+          match:matches!match_id(
+            match_number, format,
+            home_team:teams!home_team_id(name),
+            away_team:teams!away_team_id(name)
+          )
+        `)
+        .eq('tournament_id', tournamentId)
+        .is('resolved_at', null)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data ?? []).map(fi => ({
+        id           : fi.id,
+        tournamentId : fi.tournament_id,
+        rawName      : fi.raw_name,
+        source       : fi.source,
+        field        : fi.field,
+        batterName   : fi.batter_name,
+        dismissalText: fi.dismissal_text,
+        candidates   : fi.candidates,       // null = unmatched, array = ambiguous
+        createdAt    : fi.created_at,
+        matchId      : fi.match_id,
+        matchFormat  : fi.match?.format || 'T20',
+        matchLabel: fi.match
+          ? `M${fi.match.match_number} · ${fi.match.home_team?.name ?? '?'} vs ${fi.match.away_team?.name ?? '?'}`
+          : fi.match_id,
+      }));
+    },
+
+    /**
+     * Resolve a fielding issue by crediting it to a specific player, then
+     * marking the row resolved.
+     *
+     * @param {boolean} createAlias - only pass true for the "unmatched" case
+     *   (candidates === null). For an "ambiguous" issue (candidates is a real
+     *   name list), DON'T create a tournament-wide alias — the raw text itself
+     *   is genuinely ambiguous (e.g. two squad members sharing a surname), so
+     *   aliasing it to whichever one was picked this time would silently
+     *   mis-credit the OTHER one on a future match. Ambiguous issues are
+     *   credited for this match only every time.
+     */
+    async resolveFieldingIssueAsCredit(issue, playerId, fieldingPoints, createAlias) {
+      const sb = await getClient();
+      if (createAlias) {
+        const { error: ae } = await sb.from('player_name_aliases').upsert({
+          player_id    : playerId,
+          tournament_id: issue.tournamentId,
+          alias        : issue.rawName.toLowerCase().trim(),
+          source       : issue.source,
+        }, { onConflict: 'alias,source,tournament_id', ignoreDuplicates: true });
+        if (ae) throw ae;
+      }
+      await this.applyManualFieldingCredit(issue.matchId, playerId, issue.field, 1, fieldingPoints);
+      const { error } = await sb
+        .from('scraper_fielding_issues')
+        .update({ resolved_at: new Date().toISOString(), resolved_by: createAlias ? 'alias' : 'credit_only' })
+        .eq('id', issue.id);
+      if (error) throw error;
+    },
+
+    /** Dismiss a fielding issue without crediting anyone (e.g. a sub fielder, or a mis-scraped dismissal line). */
+    async ignoreFieldingIssue(id) {
+      const sb = await getClient();
+      const { error } = await sb
+        .from('scraper_fielding_issues')
+        .update({ resolved_at: new Date().toISOString(), resolved_by: 'ignored' })
+        .eq('id', id);
+      if (error) throw error;
+    },
+
+    /**
+     * Apply a manual fielding/wicket-bonus credit directly to a player's
+     * player_match_stats row for one match — the fallback the admin reaches for
+     * when auto-derivation can't resolve a dismissal, AND the generic "add
+     * fielding points for this player" entry point for scraper-completed
+     * matches in general (catch/stumping/run-out-direct/run-out-indirect credit
+     * a FIELDER; bowled/lbw credit the BOWLER's wicket-type bonus).
+     *
+     * Always tags the row source='scraper_manual' so a later auto re-scrape of
+     * the same match (e.g. if completion-detection initially missed and the
+     * cron runs again) never silently overwrites this correction — see the
+     * per-player regression guard in scrape-scorecard/index.ts.
+     *
+     * `count` is the number of additional events to credit (usually 1).
+     * `pointsDelta` is the points value of those `count` events — computed by
+     * the caller via calcFielding()/SCORING_RULES so tournament-specific
+     * scoring overrides are respected (this function does no scoring math
+     * itself, matching the rest of this file's client-computes-points convention).
+     *
+     * @param {string} matchId
+     * @param {string} playerId
+     * @param {'catches'|'stumpings'|'runOutDirect'|'runOutIndirect'|'bowled'|'lbw'} field
+     * @param {number} count
+     * @param {number} pointsDelta
+     */
+    async applyManualFieldingCredit(matchId, playerId, field, count, pointsDelta) {
+      const sb = await getClient();
+      const { data: existing, error: fe } = await sb
+        .from('player_match_stats')
+        .select('batting, bowling, fielding, raw_points')
+        .eq('match_id', matchId).eq('player_id', playerId)
+        .maybeSingle();
+      if (fe) throw fe;
+
+      const patch = {
+        match_id  : matchId,
+        player_id : playerId,
+        batting   : existing?.batting ?? null,
+        bowling   : existing?.bowling ?? null,
+        fielding  : existing?.fielding ?? null,
+        raw_points: (Number(existing?.raw_points) || 0) + (Number(pointsDelta) || 0),
+        source    : 'scraper_manual',
+      };
+
+      if (field === 'bowled' || field === 'lbw') {
+        const bowling = { wickets: 0, wicketTypes: [], maidens: 0, runsConceded: 0, ballsBowled: 0, dotBalls: 0, noBalls: 0, wides: 0, ...patch.bowling };
+        bowling.wicketTypes = [...(bowling.wicketTypes || []), ...Array(count).fill(field)];
+        patch.bowling = bowling;
+      } else {
+        const fielding = { catches: 0, stumpings: 0, runOutDirect: 0, runOutIndirect: 0, ...patch.fielding };
+        fielding[field] = (fielding[field] || 0) + count;
+        patch.fielding = fielding;
+      }
+
+      const { error } = await sb
+        .from('player_match_stats')
+        .upsert(patch, { onConflict: 'match_id,player_id' });
+      if (error) throw error;
+    },
+
     // ────────────────────────────────────────────────────────────────────────
 
     /** All matches, newest match_number first. Optional tournament filter. */
