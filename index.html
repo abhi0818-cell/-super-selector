@@ -3736,9 +3736,12 @@ p31,Sample Player,MI,bat,9.0,false
               return;
             }
 
-            // Build player options for dropdown
-            const playerOpts = tPlayers.map(p =>
-              `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${p.role}${p.overseas ? ', ✈️' : ''})</option>`
+            // Build player options for dropdown — sorted by team then name (was player_id order).
+            const sortedPlayersUm = [...tPlayers].sort((a, b) =>
+              a.team === b.team ? a.name.localeCompare(b.name) : a.team.localeCompare(b.team)
+            );
+            const playerOpts = sortedPlayersUm.map(p =>
+              `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${p.team}, ${p.role}${p.overseas ? ', ✈️' : ''})</option>`
             ).join('');
 
             // Build team options
@@ -3966,8 +3969,12 @@ p31,Sample Player,MI,bat,9.0,false
               return;
             }
 
-            const playerOpts = tPlayers.map(p =>
-              `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${p.role}${p.overseas ? ', ✈️' : ''})</option>`
+            // Sort by team then name so the dropdown is browsable instead of player_id order.
+            const sortedPlayers = [...tPlayers].sort((a, b) =>
+              a.team === b.team ? a.name.localeCompare(b.name) : a.team.localeCompare(b.team)
+            );
+            const playerOpts = sortedPlayers.map(p =>
+              `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${p.team}, ${p.role}${p.overseas ? ', ✈️' : ''})</option>`
             ).join('');
 
             panel.innerHTML = `
@@ -3982,12 +3989,18 @@ p31,Sample Player,MI,bat,9.0,false
                 </thead>
                 <tbody>
                   ${issues.map(fi => {
-                    const candidateOpts = fi.candidates
-                      ? fi.candidates.map(name => {
-                          const p = tPlayers.find(tp => tp.name === name);
-                          return p ? `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>` : '';
-                        }).join('')
-                      : '';
+                    // Case/whitespace-insensitive match against the roster; if none of the
+                    // candidate names match (formatting drift between sources), fall back to
+                    // the full roster list rather than leaving the dropdown with nothing to pick.
+                    let candidateOpts = '';
+                    if (fi.candidates) {
+                      candidateOpts = fi.candidates.map(name => {
+                        const norm = name.trim().toLowerCase();
+                        const p = sortedPlayers.find(tp => tp.name.trim().toLowerCase() === norm);
+                        return p ? `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)}</option>` : '';
+                      }).join('');
+                      if (!candidateOpts) candidateOpts = playerOpts;
+                    }
                     return `
                     <tr class="fi-row" data-fid="${fi.id}" data-matchid="${fi.matchId}"
                         data-fmt="${fi.matchFormat}" data-field="${fi.field}"
