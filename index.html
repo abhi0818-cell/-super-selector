@@ -5289,17 +5289,26 @@ p31,Sample Player,MI,bat,9.0,false
       // header table's columns (same pattern as renderHistory / loadSLDetailInto).
       const COLGROUP = '<colgroup><col><col style="width:60px"><col style="width:60px"><col style="width:60px"><col style="width:80px"></colgroup>';
 
+      // Season-wide transfer budget (null = unlimited) — the -Xfer column counts
+      // down from this as transfers are used, instead of just showing the points
+      // penalty (which is usually 0 and told the admin nothing useful).
+      const totalBudget = state.sl.seasonContest?.total_transfers_allowed ?? null;
       let running = 0;
+      let cumXfer = 0;
       const rows = data.matches.map(m => {
         const pen  = penMap[m.match_id] || 0;
         const net  = m.xi_total - pen;
         running   += net;
         const xferCount = (data.transfers || []).filter(t => t.match_id === m.match_id).length;
+        cumXfer += xferCount;
         const xferTxt = xferCount ? ' <span style="font-size:10px;color:var(--muted);">×' + xferCount + ' xfer</span>' : '';
         const detailId    = 'slDetail_' + m.match_id.replace(/-/g, '');
         const pitchPanelId = detailId + '_pitch';
-        // Show "0" when transfers were made but free; "--" when no transfers at all
-        const penCell = xferCount > 0 ? (pen ? '-' + pen : '0') : '--';
+        // Running countdown of the season transfer budget through this match
+        // (Unlimited if no cap is set). Points penalty, if any, shown alongside.
+        const remaining = totalBudget === null ? null : Math.max(0, totalBudget - cumXfer);
+        const penCell = (totalBudget === null ? 'Unlimited' : String(remaining)) +
+          (pen ? ' <span style="color:var(--bad);font-size:9px;">(-' + pen + ')</span>' : '');
 
         // Reuse the shared pitch+breakdown component — reshape SL's per-match player
         // rows (player_name/base_points/multiplier from v_match_xi_with_scores, plus
@@ -5393,7 +5402,7 @@ p31,Sample Player,MI,bat,9.0,false
           '<tr class="sl-match-row" data-detail="slDetailLive" data-pitch="' + pitchPanelId + '" style="cursor:pointer;color:var(--accent);" title="Click to expand">' +
           '<td class="l">' + liveRow.label + ' <span style="font-size:9px;padding:1px 5px;border-radius:8px;background:rgba(201,168,76,0.15);margin-left:4px;text-transform:uppercase;letter-spacing:0.4px;">live</span> <span style="font-size:10px;color:var(--muted);">▾</span></td>' +
           '<td>' + liveRow.total.toFixed(1) + '</td>' +
-          '<td class="pen">--</td>' +
+          '<td class="pen">' + (totalBudget === null ? 'Unlimited' : Math.max(0, totalBudget - cumXfer)) + '</td>' +
           '<td class="pts">' + liveRow.total.toFixed(1) + '</td>' +
           '<td>' + (running + liveRow.total).toFixed(1) + '</td>' +
           '</tr>';
@@ -5406,14 +5415,14 @@ p31,Sample Player,MI,bat,9.0,false
         '<tr style="background:var(--panel-2);font-weight:700;border-bottom:1px solid var(--border);">' +
         '<td class="l" style="padding:6px 8px;">Total</td>' +
         '<td style="padding:6px 8px;">' + (xiGross + (liveRow?.total ?? 0)).toFixed(1) + '</td>' +
-        '<td class="pen" style="padding:6px 8px;">' + (data.transfers?.length ? (totalPenalty ? '-' + totalPenalty : '0') : '--') + '</td>' +
+        '<td class="pen" style="padding:6px 8px;">' + (totalBudget === null ? 'Unlimited' : Math.max(0, totalBudget - cumXfer)) + (totalPenalty ? ' <span style="color:var(--bad);font-size:9px;">(-' + totalPenalty + ')</span>' : '') + '</td>' +
         '<td class="pts" style="padding:6px 8px;">' + grandTotal + '</td>' +
         '<td style="padding:6px 8px;">' + grandTotal + '</td>' +
         '</tr>';
 
       const headerTable = '<table class="sl-season-table hist-header-table">' + COLGROUP +
         '<thead>' +
-        '<tr><th class="l">Match</th><th>XI pts</th><th>-Xfer</th><th>Net</th><th>Running</th></tr>' +
+        '<tr><th class="l">Match</th><th>XI pts</th><th>Xfers Left</th><th>Net</th><th>Running</th></tr>' +
         slTotalRow +
         '</thead>' +
         '</table>';
