@@ -9147,7 +9147,14 @@ p31,Sample Player,MI,bat,9.0,false
                        style="font-size:11px;padding:2px 7px;border-radius:4px;
                               background:rgba(80,160,255,0.10);border:1px solid rgba(80,160,255,0.4);
                               color:rgba(80,160,255,0.9);cursor:pointer;"
-                       title="Delete locked XIs so users can re-pick after the delay">🔓 Revert Lock</button>`
+                       title="Delete locked SL XIs so users can re-pick after the delay">🔓 Revert Lock</button>`
+                  : ''}
+                ${m.status === 'delayed'
+                  ? `<button class="row-revert-daily-lock" data-act="revert-daily-lock"
+                       style="font-size:11px;padding:2px 7px;border-radius:4px;
+                              background:rgba(80,160,255,0.10);border:1px solid rgba(80,160,255,0.4);
+                              color:rgba(80,160,255,0.9);cursor:pointer;"
+                       title="Clear the Locked badge on daily teams for this match (also push lock_time forward — RLS, not this flag, is what actually re-opens daily team edits)">🔓 Revert Daily Lock</button>`
                   : ''}
                 ${isInPlay && isCricApiDriven
                   ? `<button class="row-poll" data-act="poll"
@@ -9315,6 +9322,30 @@ p31,Sample Player,MI,bat,9.0,false
             toast(`🔓 Lock reverted — ${count} XI${count !== 1 ? 's' : ''} unlocked. Users can now re-pick.`, 4000);
           } catch (err) {
             toast('Revert failed: ' + err.message, 5000);
+            btn.disabled = false;
+          }
+        });
+        tr.querySelector('[data-act="revert-daily-lock"]')?.addEventListener('click', async (e) => {
+          const btn = e.currentTarget;
+          const match = state.matches.find(x => x.id === id);
+          const label = match
+            ? `Match ${match.match_number ?? ''} (${match.home_team_id ?? ''} vs ${match.away_team_id ?? ''})`
+            : `match ${id}`;
+          if (!confirm(
+            `Revert daily team lock badge for ${label}?\n\n` +
+            `This only clears the "Locked" badge shown to users — it does NOT ` +
+            `re-open editing by itself. Daily team edits are actually blocked by ` +
+            `RLS against lock_time/start_time, so also push this match's lock_time ` +
+            `forward (e.g. via the delay toggle) or daily edits will still be ` +
+            `rejected on save.\n\nProceed?`
+          )) return;
+          btn.disabled = true;
+          try {
+            const count = await state.db.revertDailyTeamLock(id);
+            toast(`🔓 Daily lock badge cleared on ${count} team${count !== 1 ? 's' : ''}. Remember to push lock_time forward too.`, 5000);
+          } catch (err) {
+            toast('Revert failed: ' + err.message, 5000);
+          } finally {
             btn.disabled = false;
           }
         });

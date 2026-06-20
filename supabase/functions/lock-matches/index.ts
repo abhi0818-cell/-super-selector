@@ -5,14 +5,24 @@
 // Gate = lock_time if set, otherwise start_time.
 // After locking all squads it updates the match status to 'live'.
 //
+// Also stamps locked_at on any DAILY one-off teams (user_teams rows with
+// squad_id IS NULL) for the same match, at the same gate — display/audit
+// only (drives a "Locked" badge). The actual write-blocking for daily teams
+// is enforced by RLS (migration_v27_daily_team_lock_rls.sql), which checks
+// the same lock_time/start_time gate on every request with no cron lag;
+// this stamp just keeps the UI in sync with that boundary.
+//
 // Deploy:
 //   supabase functions deploy lock-matches --no-verify-jwt
 //
-// Then call it every minute from cron-job.org (free tier):
-//   POST https://<project>.supabase.co/functions/v1/lock-matches
-//   Header: Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>
+// Scheduled via pg_cron + pg_net every minute (migration_v26_lock_matches_cron.sql),
+// matching the scrape-scorecard / poll-cricapi pattern already used in this repo:
+//   SELECT net.http_post(url := '.../functions/v1/lock-matches',
+//     headers := jsonb_build_object('Authorization', 'Bearer <SERVICE_ROLE_KEY>'),
+//     body := '{}'::jsonb)
 //
-// The function is idempotent — squads already locked for a match are skipped.
+// The function is idempotent — squads already locked for a match are skipped,
+// and the locked_at stamp only ever moves from NULL to a value.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
@@ -91,6 +101,7 @@ Deno.serve(async (req) => {
     matchesProcessed : 0,
     squadsLocked     : 0,
     squadsSkipped    : 0,
+    dailyTeamsStamped: 0,
     errors           : [] as string[],
   };
 
@@ -141,6 +152,27 @@ Deno.serve(async (req) => {
       .order('match_number', { ascending: true });
 
     const tournamentMatches = (allTournamentMatches ?? []) as Match[];
+
+    // ── 2b. Stamp locked_at on daily one-off teams for this match ───────────
+    // Display/audit only — see header comment. Runs regardless of whether
+    // this tournament has any active SL contests, and is itself idempotent
+    // (locked_at only ever moves NULL → now(), never overwritten again).
+    try {
+      const { error: dailyErr, count } = await sb
+        .from('user_teams')
+        .update({ locked_at: nowISO }, { count: 'exact' })
+        .eq('match_id', match.id)
+        .is('squad_id', null)
+        .is('locked_at', null);
+      if (dailyErr) {
+        summary.errors.push(`Daily lock stamp M${match.match_number}: ${dailyErr.message}`);
+      } else if (count) {
+        summary.dailyTeamsStamped += count;
+        console.log(`[lock-matches] Stamped locked_at on ${count} daily team(s) for M${match.match_number}`);
+      }
+    } catch (e: any) {
+      summary.errors.push(`Daily lock stamp M${match.match_number}: ${e.message}`);
+    }
 
     // Contests for this tournament
     const { data: contests } = await sb
