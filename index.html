@@ -391,17 +391,17 @@
     .admin-table .col-color2 { width: 80px; }
     .admin-table .col-color2 input { padding: 0; height: 24px; }
     /* Schedule (matches) tab — codes like ENG-W / IND-W run longer than the IPL
-       3-4 letter codes the generic .col-team width was sized for. Also: the
-       generic .admin-table forces width:100%, which under auto table-layout
-       lets wide fixed-control columns (the two datetime-local inputs, the
-       Status badge+Delay button, Lock Time) starve narrower ones of space —
-       Home/Away were getting crushed down to a sliver even with col-team's
-       width set, because 100% is a hard cap the browser shrinks everything
-       else to fit inside. Switching to width:auto lets the table grow past
-       the wrapper's min-width and rely on its existing overflow-x:auto to
-       scroll instead of crushing columns. */
-    #adminMatchesTable { width: auto; }
-    #adminMatchesTable .col-team { width: 170px; }
+       3-4 letter codes the generic .col-team width was sized for. The generic
+       .admin-table forces width:100% under auto table-layout, which let wide
+       fixed-control columns (the two datetime-local inputs, the Status
+       badge+Delay button, Lock Time) starve narrower ones of space — Home/Away
+       kept getting crushed to a sliver no matter what width was set on
+       col-team, because auto-layout treats specified widths as hints, not
+       guarantees, once the table itself is capped at 100%. Fixed for good by
+       switching adminMatchesTable to table-layout:fixed with an explicit
+       width on every column (inline, on the <th> elements) — under fixed
+       layout every column gets exactly the pixels it's given, full stop, no
+       starving. See the inline styles on #adminMatchesTable and its <th>s. */
     #adminMatchesTable .col-team select { font-size: 12px; width: 100%; }
     .admin-toolbar { display: flex; gap: 8px; padding: 0 12px 10px; align-items: center; }
     .admin-toolbar input.admin-search-inp { flex: 1; }
@@ -1700,19 +1700,19 @@
           <span id="syncStatus" style="font-size:11px; color:var(--muted);">Sync pulls schedules + start times. Finalize fetches scorecards for completed matches and saves fantasy points.</span>
         </div>
         <div style="overflow-x:auto;">
-        <table class="admin-table" id="adminMatchesTable" style="min-width:900px;">
+        <table class="admin-table" id="adminMatchesTable" style="width:1360px; table-layout:fixed;">
           <thead>
             <tr>
-              <th class="col-id">#</th>
-              <th class="col-team">Home</th>
-              <th class="col-team">Away</th>
-              <th class="col-role">Format</th>
-              <th>Start (local)</th>
-              <th>Type</th>
-              <th>Source</th>
-              <th>Status</th>
-              <th>Lock Time</th>
-              <th class="col-actions"></th>
+              <th class="col-id" style="width:50px;">#</th>
+              <th class="col-team" style="width:170px;">Home</th>
+              <th class="col-team" style="width:170px;">Away</th>
+              <th class="col-role" style="width:90px;">Format</th>
+              <th style="width:200px;">Start (local)</th>
+              <th style="width:90px;">Type</th>
+              <th style="width:110px;">Source</th>
+              <th style="width:150px;">Status</th>
+              <th style="width:200px;">Lock Time</th>
+              <th class="col-actions" style="width:130px;"></th>
             </tr>
           </thead>
           <tbody id="adminMatchesBody"></tbody>
