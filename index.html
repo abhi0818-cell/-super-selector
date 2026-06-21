@@ -6577,10 +6577,14 @@ p31,Sample Player,MI,bat,9.0,false
       return d.toLocaleString();
     }
 
-    function jerseyHtml(c1, c2, initials) {
+    function jerseyHtml(c1, c2, label) {
       const bodyColor   = c1 || '#888888';
       const sleeveColor = c2 || '#333333';
-      const txt         = (initials || '??').toUpperCase().slice(0, 2);
+      // Team codes can run longer than the 2-letter player initials this used to
+      // show (e.g. "LAKR", "AUS-W") — auto-shrink the font so longer codes still
+      // fit on the jersey instead of overflowing or getting clipped.
+      const txt      = (label || '??').toUpperCase().slice(0, 6);
+      const fontSize = txt.length <= 2 ? 36 : txt.length <= 3 ? 30 : txt.length <= 4 ? 24 : 19;
       const bodyPath   = 'M 48,8 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 L 82,8 L 90,18 L 115,32 L 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 105,165 L 65.5,166.3 L 25,166 L 31.5,59.8 L 21.5,78.3 L 3,65 L 14,32 L 42,16 Z';
       const lSleeve    = 'M 3,65 L 21.5,78.3 L 31.5,59.8 L 42,16 L 14,32 Z';
       const rSleeve    = 'M 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 90,18 L 115,32 Z';
@@ -6592,7 +6596,7 @@ p31,Sample Player,MI,bat,9.0,false
         <path d="${collarPath}" fill="${sleeveColor}" opacity="0.92"/>
         <path d="${bodyPath}"   fill="none" stroke="#11111133" stroke-width="2" stroke-linejoin="round"/>
         <text x="65" y="118" text-anchor="middle" dominant-baseline="middle"
-          font-family="Arial Black,Arial,sans-serif" font-size="36" font-weight="900"
+          font-family="Arial Black,Arial,sans-serif" font-size="${fontSize}" font-weight="900"
           fill="white" opacity="0.92">${txt}</text>
       </svg>`;
     }
@@ -6755,11 +6759,14 @@ p31,Sample Player,MI,bat,9.0,false
           </div>` : '';
         const nameSuffix = isCap ? ' <span class="cap-badge">C</span>' : isVc ? ' <span class="vc-badge">VC</span>' : '';
         const tm = teamByCode(p.team);
-        const parts = p.name.trim().split(/\s+/);
-        const initials = parts.length >= 2
-          ? (parts[0][0] + parts[parts.length - 1][0])
-          : p.name.slice(0, 2);
-        const jersey = jerseyHtml(tm?.color, tm?.color2, initials);
+        // Show the team code on the jersey instead of the player's initials —
+        // the card's name/role text already identifies the player, so the
+        // jersey itself is more useful pointing out which team they're on.
+        // Women's team codes carry a "-W" suffix (e.g. "AUS-W") purely to stay
+        // unique from the men's code — drop it for the jersey text only, the
+        // full code with -W still shows in the meta line below the name.
+        const jerseyLabel = p.team.replace(/-W$/, '');
+        const jersey = jerseyHtml(tm?.color, tm?.color2, jerseyLabel);
         return `
           <div class="player-card ${sel?'selected':''} ${disabled?'disabled':''}" data-id="${p.id}">
             <div>
