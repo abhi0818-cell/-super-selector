@@ -655,6 +655,19 @@ function calcLbwBowledBonus(wicketTypes: string[], r: Rules): number {
 
 interface ResolveResult { playerId: string | null; method: 'exact' | 'alias' | 'fuzzy' | 'unmatched' }
 
+// A source (CricketAddictor / Business Standard) can send a literal
+// placeholder instead of a real name when IT can't identify someone. The
+// same literal string recurs for different actual players across different
+// matches, so it can never be aliased to one specific local player — that's
+// exactly how "Player Not Found" ended up permanently (and wrongly) aliased
+// to a real player in player_name_aliases. Skip these entirely: never
+// fuzzy-alias them, never queue them in scraper_unmatched (where an admin
+// could "Map" them to a player by mistake).
+const PLACEHOLDER_NAMES = new Set(['player not found'])
+function isPlaceholderName(name: string): boolean {
+  return PLACEHOLDER_NAMES.has(name.toLowerCase().trim())
+}
+
 function resolvePlayerName(
   name: string,
   exactMap: Map<string, string>,  // normalised full name → player_id
@@ -1072,6 +1085,15 @@ Deno.serve(async (req: Request) => {
       const statAccum = new Map<string, { batting?: object; bowling?: object; fielding?: FieldRow; rawPoints: number }>()
       const unmatched: Array<{ name: string; context: 'batting' | 'bowling' }> = []
       const fuzzyAliases: Array<{ player_id: string; alias: string }> = []
+      // Placeholder rows ("Player Not Found") are never aliased or queued in
+      // scraper_unmatched (see isPlaceholderName), but their points shouldn't
+      // just vanish — capture the raw numbers so an admin can later
+      // force-credit this match/context to the right player. Keyed only by
+      // context (one batting row, one bowling row per match/source): if the
+      // same match has two different unidentified players in the same
+      // discipline, the later one's numbers win — documented limitation, see
+      // migration_v28_placeholder_stats.sql.
+      const placeholderRows = new Map<'batting' | 'bowling', { batting: object | null; bowling: object | null; fielding: object | null; raw_points: number }>()
 
       // Fielding credit derived from dismissal text, and any raw fielder name
       // that couldn't be resolved (unmatched) or resolved to 2+ players
@@ -1127,6 +1149,14 @@ Deno.serve(async (req: Request) => {
             }
           }
 
+          if (isPlaceholderName(bat.name)) {
+            const rawPts = calcBatting(bat, 'bat', fmtKey, rules)
+            placeholderRows.set('batting', {
+              batting: { runs: bat.runs, ballsFaced: bat.balls, fours: bat.fours, sixes: bat.sixes, isDismissed: bat.dismissed },
+              bowling: null, fielding: null, raw_points: rawPts,
+            })
+            continue // never alias or queue the source's own "not found" placeholder
+          }
           const { playerId, method } = resolvePlayerName(bat.name, exactMap, aliasMap)
           if (!playerId) {
             if (!unmatched.some(u => u.name === bat.name)) unmatched.push({ name: bat.name, context: 'batting' })
@@ -1150,6 +1180,16 @@ Deno.serve(async (req: Request) => {
         }
 
         for (const bowl of inn.bowling) {
+          if (isPlaceholderName(bowl.name)) {
+            const wicketTypes = wicketsByBowlerRaw[bowl.name] ?? []
+            const ballsBowled = Math.round(bowl.overs) * 6 + Math.round((bowl.overs % 1) * 10)
+            const rawPts = calcBowling(bowl, fmtKey, rules) + calcLbwBowledBonus(wicketTypes, rules)
+            placeholderRows.set('bowling', {
+              bowling: { wickets: bowl.wickets, wicketTypes, maidens: bowl.maidens, runsConceded: bowl.runs, ballsBowled, dotBalls: bowl.dots, noBalls: 0, wides: 0 },
+              batting: null, fielding: null, raw_points: rawPts,
+            })
+            continue // never alias or queue the source's own "not found" placeholder
+          }
           const { playerId, method } = resolvePlayerName(bowl.name, exactMap, aliasMap)
           if (!playerId) {
             if (!unmatched.some(u => u.name === bowl.name)) unmatched.push({ name: bowl.name, context: 'bowling' })
@@ -1277,6 +1317,25 @@ Deno.serve(async (req: Request) => {
             context      : u.context,
           })),
           { onConflict: 'tournament_id,raw_name,source', ignoreDuplicates: true },
+        )
+      }
+
+      // ── 9a. Persist recoverable placeholder stats ──────────────────────────
+      // Keyed per match+context (not per tournament like scraper_unmatched
+      // above) — every match's "Player Not Found" needs its own resolution,
+      // never auto-resolved by a prior match's fix. Don't overwrite
+      // resolved_at/resolved_by/credited_player_id on a re-scrape — only
+      // raw_stats refreshes (the match may still be live).
+      if (placeholderRows.size) {
+        await sb.from('scraper_placeholder_stats').upsert(
+          Array.from(placeholderRows.entries()).map(([context, stats]) => ({
+            tournament_id: tournament.id,
+            match_id     : match.id,
+            source,
+            context,
+            raw_stats    : stats,
+          })),
+          { onConflict: 'match_id,source,context' },
         )
       }
 

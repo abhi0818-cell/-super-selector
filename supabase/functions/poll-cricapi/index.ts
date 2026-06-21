@@ -348,6 +348,19 @@ function matchLifecycle(payload: any): 'completed' | 'live' | 'upcoming' | 'unkn
 
 interface ResolveResult { playerId: string | null; method: 'exact' | 'alias' | 'fuzzy' | 'unmatched' }
 
+// CricAPI sometimes sends a literal placeholder instead of a real name when
+// ITS OWN database can't identify someone (sub fielder, very new/uncapped
+// player, scorecard glitch). The same literal string recurs for different
+// actual players across different matches, so it can never be aliased to one
+// specific local player — that's exactly how "Player Not Found" ended up
+// permanently (and wrongly) aliased to a real player in player_name_aliases.
+// Skip these entirely: never fuzzy-alias them, never queue them in
+// scraper_unmatched (where an admin could "Map" them to a player by mistake).
+const PLACEHOLDER_NAMES = new Set(['player not found'])
+function isPlaceholderName(name: string): boolean {
+  return PLACEHOLDER_NAMES.has(name.toLowerCase().trim())
+}
+
 function resolvePlayerName(name: string, exactMap: Map<string, string>, aliasMap: Map<string, string>): ResolveResult {
   const norm = name.toLowerCase().trim()
   if (exactMap.has(norm)) return { playerId: exactMap.get(norm)!, method: 'exact' }
@@ -688,8 +701,22 @@ Deno.serve(async (req: Request) => {
       const statsByPlayer = new Map<string, PlayerStat>()
       const unmatched: Array<{ name: string; context: 'batting' | 'bowling' }> = []
       const fuzzyAliases: Array<{ player_id: string; alias: string }> = []
+      // Placeholder rows ("Player Not Found") never get aliased or queued in
+      // scraper_unmatched — see isPlaceholderName. But their points shouldn't
+      // just vanish either: capture the raw numbers here so an admin can
+      // later force-credit this one match/row to the right player via
+      // scraper_placeholder_stats, without ever creating a sticky alias.
+      const placeholderRows: Array<{ context: 'batting' | 'bowling'; raw_stats: PlayerStat }> = []
 
       for (const pl of apiPlayers) {
+        if (isPlaceholderName(pl.name)) {
+          const raw = rawPoints({ role: pl.role, batting: pl.batting, bowling: pl.bowling, fielding: pl.fielding }, fmtKey, rules)
+          placeholderRows.push({
+            context: pl.bowling ? 'bowling' : 'batting',
+            raw_stats: { batting: pl.batting ?? null, bowling: pl.bowling ?? null, fielding: pl.fielding ?? null, raw_points: raw },
+          })
+          continue
+        }
         const { playerId, method } = resolvePlayerName(pl.name, exactMap, aliasMap)
         if (!playerId) {
           unmatched.push({ name: pl.name, context: pl.bowling ? 'bowling' : 'batting' })
@@ -734,6 +761,20 @@ Deno.serve(async (req: Request) => {
         await sb.from('scraper_unmatched').upsert(
           unmatched.map(u => ({ tournament_id: match.tournament_id, match_id: match.id, raw_name: u.name, source: 'cricapi', context: u.context })),
           { onConflict: 'tournament_id,raw_name,source', ignoreDuplicates: true },
+        )
+      }
+      // Placeholder rows are keyed per match+context (not per tournament like
+      // scraper_unmatched above) — every match's "Player Not Found" needs its
+      // own resolution, it's never auto-resolved by a prior match's fix. Don't
+      // overwrite resolved_at/resolved_by/credited_player_id on repeat polls —
+      // only raw_stats refreshes (the match may still be live).
+      if (placeholderRows.length) {
+        await sb.from('scraper_placeholder_stats').upsert(
+          placeholderRows.map(r => ({
+            tournament_id: match.tournament_id, match_id: match.id,
+            source: 'cricapi', context: r.context, raw_stats: r.raw_stats,
+          })),
+          { onConflict: 'match_id,source,context' },
         )
       }
 

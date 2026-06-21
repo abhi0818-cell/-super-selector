@@ -1024,6 +1024,20 @@ export function createDb(cfg = {}) {
     },
 
     /**
+     * Names that a source (CricAPI, CricketAddictor, Business Standard) sends
+     * when IT failed to identify a player — not a real name. These can never
+     * be aliased to one specific local player: the same literal string shows
+     * up for different actual players across different matches, so a static
+     * alias just silently mis-credits stats to whoever was picked the first
+     * time (this is exactly how "player not found" → Abayanga Khaka happened).
+     * Add more known placeholder strings here if other sources surface them.
+     */
+    isPlaceholderName(rawName) {
+      const PLACEHOLDER_NAMES = new Set(['player not found']);
+      return PLACEHOLDER_NAMES.has(String(rawName ?? '').toLowerCase().trim());
+    },
+
+    /**
      * Returns all unresolved unmatched player names for a tournament.
      * Each row includes match info (number + team names) for context.
      */
@@ -1062,6 +1076,9 @@ export function createDb(cfg = {}) {
      * Creates a player_name_alias so future scraper runs auto-resolve the name.
      */
     async resolveUnmatchedAsAlias(id, playerId, tournamentId, rawName, source) {
+      if (this.isPlaceholderName(rawName)) {
+        throw new Error(`"${rawName}" is a generic "not found" placeholder from the source feed, not a real name — it can't be mapped to one player. Use Ignore instead.`);
+      }
       const sb = await getClient();
       const { error: ae } = await sb.from('player_name_aliases').upsert({
         player_id    : playerId,
@@ -1084,6 +1101,9 @@ export function createDb(cfg = {}) {
      * poll-cricapi/scrape-scorecard cron jobs too, not just this browser tab.
      */
     async upsertNameAlias(playerId, tournamentId, alias, source = 'cricapi') {
+      if (this.isPlaceholderName(alias)) {
+        throw new Error(`"${alias}" is a generic "not found" placeholder from the source feed, not a real name — it can't be mapped to one player.`);
+      }
       const sb = await getClient();
       const { error } = await sb.from('player_name_aliases').upsert({
         player_id    : playerId,
@@ -1105,6 +1125,9 @@ export function createDb(cfg = {}) {
      * @param {string} source         - 'cricketaddictor' | 'business_standard'
      */
     async resolveUnmatchedAsNewPlayer(id, playerData, tournamentId, rawName, source) {
+      if (this.isPlaceholderName(rawName)) {
+        throw new Error(`"${rawName}" is a generic "not found" placeholder from the source feed, not a real name — adding a player for it would alias every future occurrence to them. Use Ignore instead.`);
+      }
       const sb = await getClient();
       const playerId = playerData.playerId || `scr_${Date.now()}`;
       // 1. Insert into global players pool
@@ -1147,6 +1170,127 @@ export function createDb(cfg = {}) {
       const sb = await getClient();
       const { error } = await sb
         .from('scraper_unmatched')
+        .update({ resolved_at: new Date().toISOString(), resolved_by: 'ignored' })
+        .eq('id', id);
+      if (error) throw error;
+    },
+
+    // ── Placeholder ("Player Not Found") stat recovery ───────────────────────
+    // poll-cricapi/scrape-scorecard capture the raw box-score numbers for a
+    // source's own "couldn't identify this player" placeholder instead of
+    // dropping them (see migration_v28_placeholder_stats.sql). These can NEVER
+    // be resolved via an alias — the same literal string is a different real
+    // player every time — so the only resolution path is a one-time manual
+    // "credit this match's numbers to player X" action.
+
+    /** Lightweight unresolved-count per tournament, for a "🧩 Recoverable Stats" badge. */
+    async getPlaceholderStatsCounts(tournamentIds) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('scraper_placeholder_stats')
+        .select('tournament_id')
+        .in('tournament_id', tournamentIds)
+        .is('resolved_at', null);
+      if (error) throw error;
+      const counts = new Map();
+      for (const id of tournamentIds) counts.set(id, 0);
+      for (const row of data ?? []) {
+        counts.set(row.tournament_id, (counts.get(row.tournament_id) ?? 0) + 1);
+      }
+      return counts;
+    },
+
+    /** All unresolved placeholder-stat rows for a tournament, with match context. */
+    async getPlaceholderStats(tournamentId) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('scraper_placeholder_stats')
+        .select(`
+          id, match_id, source, context, raw_stats, created_at,
+          match:matches!match_id(
+            match_number,
+            home_team:teams!home_team_id(name),
+            away_team:teams!away_team_id(name)
+          )
+        `)
+        .eq('tournament_id', tournamentId)
+        .is('resolved_at', null)
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data ?? []).map(r => ({
+        id        : r.id,
+        matchId   : r.match_id,
+        source    : r.source,
+        context   : r.context,
+        rawStats  : r.raw_stats, // { batting, bowling, fielding, raw_points }
+        createdAt : r.created_at,
+        matchLabel: r.match
+          ? `M${r.match.match_number} · ${r.match.home_team?.name ?? '?'} vs ${r.match.away_team?.name ?? '?'}`
+          : r.match_id,
+      }));
+    },
+
+    /**
+     * Force-credit one placeholder row's captured numbers to a chosen player,
+     * for that one match only — no alias is ever created, so the next
+     * occurrence of the same placeholder string (almost certainly a different
+     * real player) is completely unaffected.
+     *
+     * Merges into player_match_stats rather than blindly overwriting: if the
+     * target player already has real stats for the OTHER discipline in this
+     * match (e.g. they bowled normally but the scraper also produced a
+     * placeholder batting row that's actually them), both are kept. If they
+     * already have real stats for the SAME discipline this row is trying to
+     * credit, that's a genuine conflict (crediting would silently overwrite
+     * real data) — this throws instead of guessing, same as the regression
+     * guard in scrape-scorecard's per-player merge.
+     *
+     * Tags the row source='scraper_manual' (same value applyManualFieldingCredit
+     * uses) so a later auto re-scrape/re-poll of this match can't silently
+     * clobber the correction.
+     */
+    async creditPlaceholderStat(placeholderId, matchId, context, rawStats, playerId) {
+      const sb = await getClient();
+      const { data: existing, error: fe } = await sb
+        .from('player_match_stats')
+        .select('batting, bowling, fielding, raw_points')
+        .eq('match_id', matchId).eq('player_id', playerId)
+        .maybeSingle();
+      if (fe) throw fe;
+
+      if (context === 'batting' && existing?.batting) {
+        throw new Error('This player already has batting stats for this match — crediting would overwrite real data. Resolve manually.');
+      }
+      if (context === 'bowling' && existing?.bowling) {
+        throw new Error('This player already has bowling stats for this match — crediting would overwrite real data. Resolve manually.');
+      }
+
+      const patch = {
+        match_id  : matchId,
+        player_id : playerId,
+        batting   : context === 'batting' ? (rawStats.batting ?? null) : (existing?.batting ?? null),
+        bowling   : context === 'bowling' ? (rawStats.bowling ?? null) : (existing?.bowling ?? null),
+        fielding  : existing?.fielding ?? rawStats.fielding ?? null,
+        raw_points: (Number(existing?.raw_points) || 0) + (Number(rawStats.raw_points) || 0),
+        source    : 'scraper_manual',
+      };
+      const { error } = await sb
+        .from('player_match_stats')
+        .upsert(patch, { onConflict: 'match_id,player_id' });
+      if (error) throw error;
+
+      const { error: re } = await sb
+        .from('scraper_placeholder_stats')
+        .update({ resolved_at: new Date().toISOString(), resolved_by: 'forced_stat', credited_player_id: playerId })
+        .eq('id', placeholderId);
+      if (re) throw re;
+    },
+
+    /** Dismiss a placeholder-stat row without crediting anyone (e.g. clearly a tail-end sub/extras artifact). */
+    async ignorePlaceholderStat(id) {
+      const sb = await getClient();
+      const { error } = await sb
+        .from('scraper_placeholder_stats')
         .update({ resolved_at: new Date().toISOString(), resolved_by: 'ignored' })
         .eq('id', id);
       if (error) throw error;

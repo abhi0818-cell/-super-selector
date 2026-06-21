@@ -3579,6 +3579,21 @@ p31,Sample Player,MI,bat,9.0,false
               <div class="fielding-issues-panel" data-tid="${t.id}"
                    style="display:none; margin-top:6px;"></div>
             </div>
+            <!-- Recoverable placeholder-stat panel ("Player Not Found" etc.) -->
+            <div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
+              <button class="placeholder-stats-toggle" data-tid="${t.id}"
+                      style="display:flex; align-items:center; gap:6px; background:none; border:none;
+                             cursor:pointer; padding:0; width:100%; text-align:left;">
+                <span style="font-size:11px; color:var(--muted);">🧩 Recoverable Stats</span>
+                <span class="placeholder-stats-badge" data-tid="${t.id}"
+                      style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:10px;
+                             background:rgba(220,80,60,0.15); color:rgba(220,80,60,0.9); display:none;">0</span>
+                <span class="placeholder-stats-chevron" data-tid="${t.id}"
+                      style="font-size:10px; color:var(--muted); margin-left:auto;">▶ Load</span>
+              </button>
+              <div class="placeholder-stats-panel" data-tid="${t.id}"
+                   style="display:none; margin-top:6px;"></div>
+            </div>
           </div>`;
       }).join('');
 
@@ -3605,6 +3620,14 @@ p31,Sample Player,MI,bat,9.0,false
             badge.style.display = count ? 'inline' : 'none';
           });
         }).catch(err => console.error('getFieldingIssuesCounts failed:', err));
+        state.db.getPlaceholderStatsCounts(tIds).then(counts => {
+          counts.forEach((count, tid) => {
+            const badge = list.querySelector(`.placeholder-stats-badge[data-tid="${tid}"]`);
+            if (!badge) return;
+            badge.textContent = count;
+            badge.style.display = count ? 'inline' : 'none';
+          });
+        }).catch(err => console.error('getPlaceholderStatsCounts failed:', err));
       }
 
       // Wire active toggles
@@ -3762,7 +3785,14 @@ p31,Sample Player,MI,bat,9.0,false
                   </tr>
                 </thead>
                 <tbody>
-                  ${rows.map(u => `
+                  ${rows.map(u => {
+                    // Generic "the source itself couldn't identify this player" strings
+                    // (e.g. "Player Not Found") can never be mapped to one real player —
+                    // the same literal string recurs for different actual players across
+                    // matches, so aliasing it once permanently mis-credits everyone else
+                    // who triggers it later. Only "Ignore" makes sense for these.
+                    const isPlaceholder = state.db?.isPlaceholderName?.(u.rawName);
+                    return `
                     <tr class="unmatched-row" data-uid="${u.id}" data-rawname="${escapeHtml(u.rawName)}"
                         data-source="${u.source}" data-tid="${tid}" data-matchid="${u.matchId}"
                         style="border-bottom:1px solid var(--border);">
@@ -3772,8 +3802,13 @@ p31,Sample Player,MI,bat,9.0,false
                       </td>
                       <td style="padding:5px 6px; color:var(--muted); font-size:10px;">${escapeHtml(u.matchLabel)}</td>
                       <td style="padding:5px 6px;">
+                        ${isPlaceholder ? `
+                        <div style="font-size:10px; color:var(--muted); margin-bottom:4px;">
+                          ⚠️ Generic "not found" placeholder from the source — can't be mapped to one player.
+                        </div>` : ''}
                         <!-- Mode toggle -->
                         <div class="unmatched-actions" style="display:flex; gap:4px; flex-wrap:wrap; align-items:center;">
+                          ${isPlaceholder ? '' : `
                           <button class="ua-map-btn" title="Map to existing player"
                                   style="font-size:10px; padding:2px 7px; border-radius:4px;
                                          background:rgba(201,168,76,0.12); border:1px solid var(--accent);
@@ -3781,7 +3816,7 @@ p31,Sample Player,MI,bat,9.0,false
                           <button class="ua-add-btn" title="Add as new player"
                                   style="font-size:10px; padding:2px 7px; border-radius:4px;
                                          background:rgba(80,180,120,0.10); border:1px solid rgba(80,180,120,0.5);
-                                         color:rgba(60,160,100,0.9); cursor:pointer; white-space:nowrap;">+ Add</button>
+                                         color:rgba(60,160,100,0.9); cursor:pointer; white-space:nowrap;">+ Add</button>`}
                           <button class="ua-ignore-btn" title="Ignore (extras / sub fielder)"
                                   style="font-size:10px; padding:2px 7px; border-radius:4px;
                                          background:transparent; border:1px solid var(--border);
@@ -3864,12 +3899,15 @@ p31,Sample Player,MI,bat,9.0,false
                 actions.style.display = 'flex';
               }
 
-              row.querySelector('.ua-map-btn').addEventListener('click', () => showForm(mapForm));
-              row.querySelector('.ua-add-btn').addEventListener('click', () => showForm(addForm));
+              // Map/Add buttons (and their forms/save handlers) are omitted entirely
+              // for placeholder rows like "Player Not Found" — guard with ?. so
+              // wiring the rest of the row doesn't throw when they're absent.
+              row.querySelector('.ua-map-btn')?.addEventListener('click', () => showForm(mapForm));
+              row.querySelector('.ua-add-btn')?.addEventListener('click', () => showForm(addForm));
               row.querySelectorAll('.ua-cancel').forEach(b => b.addEventListener('click', resetRow));
 
               // Save alias
-              row.querySelector('.ua-map-save').addEventListener('click', async () => {
+              row.querySelector('.ua-map-save')?.addEventListener('click', async () => {
                 const playerId = row.querySelector('.ua-player-select').value;
                 if (!playerId) { toast('Select a player first.'); return; }
                 try {
@@ -3884,7 +3922,7 @@ p31,Sample Player,MI,bat,9.0,false
               });
 
               // Add new player
-              row.querySelector('.ua-add-save').addEventListener('click', async () => {
+              row.querySelector('.ua-add-save')?.addEventListener('click', async () => {
                 const name    = row.querySelector('.ua-new-name').value.trim();
                 const pid     = row.querySelector('.ua-new-id').value.trim();
                 const role    = row.querySelector('.ua-new-role').value;
@@ -4143,6 +4181,153 @@ p31,Sample Player,MI,bat,9.0,false
                   if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All fielding issues resolved.</span>';
                   toast(`Added ${name} and credited.`);
                 } catch (err) { toast('Failed: ' + err.message, 4000); }
+              });
+            });
+
+          } catch (err) {
+            panel.innerHTML = `<span style="font-size:11px;color:var(--bad);">Error: ${escapeHtml(err.message)}</span>`;
+            if (chevron) chevron.textContent = '▶ Retry';
+          }
+        });
+      });
+
+      // Wire recoverable placeholder-stats panels — rows captured when a source
+      // (CricAPI / CricketAddictor / Business Standard) sent its own generic
+      // "couldn't identify this player" placeholder (e.g. "Player Not Found")
+      // instead of a real name. These can never be auto-resolved via an alias —
+      // the same literal string is a different real player every time — so the
+      // only path here is a one-time manual "credit this match's numbers to
+      // player X" action, which also re-runs the XI/SL score cascade so the
+      // recovered points actually show up everywhere, not just in the raw table.
+      const fmtPlaceholderStat = (rawStats, context) => {
+        if (context === 'batting' && rawStats?.batting) {
+          const b = rawStats.batting;
+          return `${b.runs ?? 0} (${b.ballsFaced ?? 0}b, ${b.fours ?? 0}×4 ${b.sixes ?? 0}×6)${b.isDismissed ? '' : '*'}`;
+        }
+        if (context === 'bowling' && rawStats?.bowling) {
+          const bw = rawStats.bowling;
+          const overs = Math.floor((bw.ballsBowled ?? 0) / 6) + '.' + ((bw.ballsBowled ?? 0) % 6);
+          return `${bw.wickets ?? 0}/${bw.runsConceded ?? 0} (${overs} ov)`;
+        }
+        return '—';
+      };
+      list.querySelectorAll('.placeholder-stats-toggle').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const tid     = btn.dataset.tid;
+          const panel   = list.querySelector(`.placeholder-stats-panel[data-tid="${tid}"]`);
+          const chevron = list.querySelector(`.placeholder-stats-chevron[data-tid="${tid}"]`);
+          const badge   = list.querySelector(`.placeholder-stats-badge[data-tid="${tid}"]`);
+          if (!panel) return;
+
+          if (panel.style.display !== 'none') {
+            panel.style.display = 'none';
+            if (chevron) chevron.textContent = '▶ Load';
+            return;
+          }
+
+          if (chevron) chevron.textContent = '⏳';
+          panel.style.display = 'block';
+          panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">Loading…</span>';
+
+          try {
+            const [rows, tPlayers] = await Promise.all([
+              state.db.getPlaceholderStats(tid),
+              state.db.getPlayersForTournament(tid),
+            ]);
+
+            if (chevron) chevron.textContent = rows.length ? '▼ Hide' : '▼';
+            if (badge) { badge.textContent = rows.length; badge.style.display = rows.length ? 'inline' : 'none'; }
+
+            if (!rows.length) {
+              panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ No recoverable placeholder stats.</span>';
+              return;
+            }
+
+            const sortedPlayersPh = [...tPlayers].sort((a, b) =>
+              a.team === b.team ? a.name.localeCompare(b.name) : a.team.localeCompare(b.team)
+            );
+            const playerOptsPh = sortedPlayersPh.map(p =>
+              `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${p.team}, ${p.role}${p.overseas ? ', ✈️' : ''})</option>`
+            ).join('');
+
+            panel.innerHTML = `
+              <table style="width:100%; border-collapse:collapse; font-size:11px;">
+                <thead>
+                  <tr style="color:var(--muted); border-bottom:1px solid var(--border);">
+                    <th style="text-align:left; padding:4px 6px; font-weight:600;">Source / Ctx</th>
+                    <th style="text-align:left; padding:4px 6px; font-weight:600;">Captured stats</th>
+                    <th style="text-align:left; padding:4px 6px; font-weight:600;">Match</th>
+                    <th style="padding:4px 6px; font-weight:600; min-width:220px;">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${rows.map(r => `
+                    <tr class="ph-row" data-pid="${r.id}" data-matchid="${r.matchId}" data-context="${r.context}" data-tid="${tid}"
+                        style="border-bottom:1px solid var(--border);">
+                      <td style="padding:5px 6px; color:var(--muted);">
+                        ${r.source === 'cricapi' ? 'CricAPI' : r.source === 'cricketaddictor' ? 'CA' : 'BS'} · ${r.context}
+                      </td>
+                      <td style="padding:5px 6px; font-weight:600; color:rgba(220,80,60,0.9);">${escapeHtml(fmtPlaceholderStat(r.rawStats, r.context))}</td>
+                      <td style="padding:5px 6px; color:var(--muted); font-size:10px;">${escapeHtml(r.matchLabel)}</td>
+                      <td style="padding:5px 6px;">
+                        <div class="ph-actions" style="display:flex; gap:4px; flex-wrap:wrap; align-items:center;">
+                          <select class="ph-player-select" style="font-size:11px; max-width:200px;">
+                            <option value="">— who is this really? —</option>
+                            ${playerOptsPh}
+                          </select>
+                          <button class="ph-credit-btn" title="Credit these numbers to the selected player — this match only, no alias"
+                                  style="font-size:10px; padding:2px 7px; border-radius:4px;
+                                         background:rgba(201,168,76,0.12); border:1px solid var(--accent);
+                                         color:var(--accent); cursor:pointer; white-space:nowrap;">Credit &amp; rescore</button>
+                          <button class="ph-ignore-btn" title="Dismiss without crediting anyone"
+                                  style="font-size:10px; padding:2px 7px; border-radius:4px;
+                                         background:transparent; border:1px solid var(--border);
+                                         color:var(--muted); cursor:pointer; white-space:nowrap;">Ignore</button>
+                        </div>
+                      </td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>`;
+
+            panel.querySelectorAll('.ph-row').forEach(row => {
+              const pid      = row.dataset.pid;
+              const matchId  = row.dataset.matchid;
+              const context  = row.dataset.context;
+              const rowData  = rows.find(x => x.id === pid);
+
+              row.querySelector('.ph-credit-btn').addEventListener('click', async btnEvent => {
+                const playerId = row.querySelector('.ph-player-select').value;
+                if (!playerId) { toast('Select who this really is first.'); return; }
+                const creditBtn = btnEvent.target;
+                creditBtn.disabled = true;
+                try {
+                  await state.db.creditPlaceholderStat(pid, matchId, context, rowData.rawStats, playerId);
+                  // Cascade into daily/season-long fantasy scores right away —
+                  // a completed match is never re-polled by poll-cricapi, so this
+                  // browser-side recompute is the only way the recovered points
+                  // actually show up anywhere besides the raw stats table.
+                  const xiSaved = await computeAndSaveXIScoresForMatch(matchId);
+                  await computeAndSaveSLScoresForMatch(matchId);
+                  row.remove();
+                  const remaining = panel.querySelectorAll('.ph-row').length;
+                  if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
+                  if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All recoverable stats resolved.</span>';
+                  toast(`Credited — rescored${xiSaved ? `, ${xiSaved} XI total${xiSaved===1?'':'s'} updated` : ''}.`);
+                } catch (err) {
+                  toast('Failed: ' + err.message, 5000);
+                  creditBtn.disabled = false;
+                }
+              });
+
+              row.querySelector('.ph-ignore-btn').addEventListener('click', async () => {
+                try {
+                  await state.db.ignorePlaceholderStat(pid);
+                  row.remove();
+                  const remaining = panel.querySelectorAll('.ph-row').length;
+                  if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
+                  if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All recoverable stats resolved.</span>';
+                } catch (err) { toast('Failed: ' + err.message); }
               });
             });
 
@@ -10852,6 +11037,17 @@ p31,Sample Player,MI,bat,9.0,false
 
       const localPlayer = PLAYERS.find(p => p.id === playerId);
       if (!localPlayer) { toast('Player not found.'); return; }
+
+      // CricAPI's own generic "couldn't identify this player" placeholder
+      // (e.g. "Player Not Found") can't be linked to one real player — the
+      // same literal string recurs for different actual players across
+      // matches, so a static alias here would silently mis-credit stats to
+      // whoever was picked. (This is exactly how "Player Not Found" ended up
+      // permanently aliased to Abayanga Khaka.)
+      if (state.db?.isPlaceholderName?.(apiName)) {
+        toast(`"${apiName}" is a generic placeholder from the API, not a real name — it can't be linked to one player.`, 4000);
+        return;
+      }
 
       try {
         // 1. Store alias: apiName (lowercase) → local player name
