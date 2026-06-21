@@ -283,6 +283,7 @@ Deno.serve(async (req) => {
           .eq('squad_id', squad.id);
 
         let prevPlayerIds: string[] = [];
+        let prevMatchId: string | null = null;
         if (prevXIRows?.length) {
           const lockedMatchIds = new Set(prevXIRows.map((r: any) => r.match_id));
           const validPrevMatches = tournamentMatches.filter(m =>
@@ -293,6 +294,7 @@ Deno.serve(async (req) => {
           );
           if (validPrevMatches.length) {
             const lastPrev = validPrevMatches[validPrevMatches.length - 1];
+            prevMatchId    = lastPrev.id;
             prevPlayerIds  = prevXIRows
               .filter((r: any) => r.match_id === lastPrev.id)
               .map((r: any) => r.player_id);
@@ -309,7 +311,18 @@ Deno.serve(async (req) => {
         // exists, they've been actively playing and the real baseline must be
         // honored regardless of the previous match's status. (Mirrors the fix
         // applied to lockMatchXI in db.js.)
-        const prevMatchId     = prevXIRows?.find((r: any) => prevPlayerIds.includes(r.player_id))?.match_id;
+        //
+        // NOTE: prevMatchId must come from lastPrev (the actual previous match we
+        // just identified above) — NOT re-derived by searching prevXIRows for a
+        // row whose player_id happens to appear in prevPlayerIds. Squads usually
+        // keep most of their XI from match to match, so that player_id will also
+        // appear in OLDER locked matches; .find() would latch onto whichever row
+        // happens to come first in the (unordered) query result, frequently an
+        // earlier match than the real baseline. That misidentified match's status
+        // then drove "first active lock" detection, intermittently zeroing
+        // baselineIds and silently skipping transfer logging for squads that had
+        // genuinely made transfers — the bug reported as "transfers made but not
+        // registered at lock".
         const prevMatchStatus = tournamentMatches.find(m => m.id === prevMatchId)?.status ?? null;
 
         let baselineIds = prevPlayerIds;
