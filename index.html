@@ -6303,8 +6303,8 @@ p31,Sample Player,MI,bat,9.0,false
     function lockReason() {
       const m = activeMatch();
       if (!m) return '';
-      if (m.status === 'completed')   return `Match completed — XI is final`;
-      if (m.status === 'in_progress') return `Match in progress — XI is locked`;
+      if (m.status === 'completed') return `Match completed — XI is final`;
+      if (m.status === 'in_progress' || m.status === 'live') return `Match in progress — XI is locked`;
       if (hasMatchStarted(m))
         return `Match has started (${new Date(effectiveLockTime(m)).toLocaleString()}) — XI is locked`;
       return '';
@@ -6499,11 +6499,15 @@ p31,Sample Player,MI,bat,9.0,false
       const remaining = t - Date.now();
       const teams = `${m.home_team_id || '?'} vs ${m.away_team_id || '?'}`;
       chip.classList.remove('live', 'urgent');
-      // "Live" should reflect the match's actual broadcast status (in_progress),
-      // not just that the lock-time clock has hit zero — a toss delay or late
-      // start means lock_time can pass well before the match is really live,
-      // and showing "Live" in that window is misleading (it stays SCHEDULED).
-      if (remaining <= 0 && m.status === 'in_progress') {
+      // "Live" should reflect the match's actual broadcast status, not just that
+      // the lock-time clock has hit zero — a toss delay or late start means
+      // lock_time can pass well before the match is really live, and showing
+      // "Live" in that window is misleading (it stays SCHEDULED).
+      // Two different writers use two different status strings for "live":
+      // the client-side CricAPI poller sets 'in_progress', while the server-side
+      // lock-matches cron (the one that actually fires reliably for SL matches)
+      // sets 'live'. Both mean the same thing — recognize either.
+      if (remaining <= 0 && (m.status === 'in_progress' || m.status === 'live')) {
         chip.classList.add('live');
         text.textContent = `Live: M${m.match_number ?? '?'} ${teams}`;
       } else if (remaining <= 0) {
