@@ -391,8 +391,17 @@
     .admin-table .col-color2 { width: 80px; }
     .admin-table .col-color2 input { padding: 0; height: 24px; }
     /* Schedule (matches) tab — codes like ENG-W / IND-W run longer than the IPL
-       3-4 letter codes the generic .col-team width was sized for. */
-    #adminMatchesTable .col-team { width: 150px; }
+       3-4 letter codes the generic .col-team width was sized for. Also: the
+       generic .admin-table forces width:100%, which under auto table-layout
+       lets wide fixed-control columns (the two datetime-local inputs, the
+       Status badge+Delay button, Lock Time) starve narrower ones of space —
+       Home/Away were getting crushed down to a sliver even with col-team's
+       width set, because 100% is a hard cap the browser shrinks everything
+       else to fit inside. Switching to width:auto lets the table grow past
+       the wrapper's min-width and rely on its existing overflow-x:auto to
+       scroll instead of crushing columns. */
+    #adminMatchesTable { width: auto; }
+    #adminMatchesTable .col-team { width: 170px; }
     #adminMatchesTable .col-team select { font-size: 12px; width: 100%; }
     .admin-toolbar { display: flex; gap: 8px; padding: 0 12px 10px; align-items: center; }
     .admin-toolbar input.admin-search-inp { flex: 1; }
