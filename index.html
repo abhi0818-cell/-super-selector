@@ -4687,12 +4687,15 @@ p31,Sample Player,MI,bat,9.0,false
       // SL XI is decoupled from the pool dropdown. The "locked" concept is now
       // season-level: prevXI = last locked XI across all matches.
       // draftChanges = diff between picker and prevXI (pending transfers before next lock).
-      // If the last locked match is completed (auto-locked retroactively), this squad
-      // hasn't had a real active lock yet — treat as first match (no transfer cost).
-      const lastLockedMatchStatus = state.sl.lastLockedXI?.matchId
-        ? (state.matches.find(m => m.id === state.sl.lastLockedXI.matchId)?.status ?? null)
-        : null;
-      const isFirstActiveLock = !prev.length || lastLockedMatchStatus === 'completed';
+      // Only a genuinely empty baseline (no previous locked match at all) means
+      // 0 transfers here. We deliberately do NOT also treat "previous match is
+      // completed" as a first-lock signal — that's the normal, common state for
+      // an actively-playing squad whose prior match simply finished before this
+      // one locked. (This client-side display can't cheaply re-run the async
+      // "any earlier locked match?" check db.js's lockMatchXI does server-side —
+      // but that authoritative check is what actually counts transfers at lock
+      // time, so this is display-only and just needs to not be misleading.)
+      const isFirstActiveLock = !prev.length;
 
       const draftChanges = isFirstActiveLock ? 0 : (prev.length ? slTransferCount() : 0);
 
@@ -5174,13 +5177,11 @@ p31,Sample Player,MI,bat,9.0,false
         state.sl.draft = { playerIds: [...xi], captainId: cap, vcId: vc };
 
         // How many changes from the last locked XI (preview only — not counted yet).
-        // If there is no prior locked XI, OR the last locked match was already completed
-        // (auto-locked retroactively), this is effectively the first active team — 0 transfers.
+        // Only an empty baseline (no prior locked XI at all) means 0 transfers —
+        // see the matching comment in renderSlXiTab for why "previous match
+        // completed" is deliberately NOT treated as a first-lock signal here.
         const prevSet  = new Set(state.sl.prevXI?.playerIds ?? []);
-        const lastLockedMatchStatus = state.sl.lastLockedXI?.matchId
-          ? (state.matches.find(m => m.id === state.sl.lastLockedXI.matchId)?.status ?? null)
-          : null;
-        const isFirstActiveLock = prevSet.size === 0 || lastLockedMatchStatus === 'completed';
+        const isFirstActiveLock = prevSet.size === 0;
         const changes  = isFirstActiveLock ? 0 : xi.filter(id => !prevSet.has(id)).length;
         const nextLock = slNextLockMatch();
         const lockNote = nextLock
