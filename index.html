@@ -215,9 +215,10 @@
     .stat .value { font-size: 16px; font-weight: 700; margin-top: 4px; }
     .stat.ok .value { color: var(--good); }
     .stat.bad .value { color: var(--bad); }
-    .stat.stat-pick { cursor: pointer; }
-    .stat.stat-pick:hover { outline: 1px solid var(--accent-2); outline-offset: -1px; }
+    .stat.stat-pick { cursor: pointer; border: 1.5px solid var(--accent-2); }
+    .stat.stat-pick:hover { background: rgba(166,124,0,0.10); }
     .cap-vc-chev { font-size: 9px; margin-left: 2px; opacity: .6; }
+    .stat.stat-pick .cap-vc-chev { color: var(--accent-2); opacity: 1; }
     .cap-vc-picker { margin: 0 16px 12px; padding: 10px 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; }
     .cap-vc-picker .cvp-title { font-size: 11px; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.3px; }
     .cap-vc-picker .cvp-opts { display: flex; flex-wrap: wrap; gap: 6px; }
