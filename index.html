@@ -4509,6 +4509,13 @@ p31,Sample Player,MI,bat,9.0,false
     async function switchTournament(id) {
       console.log(`[switchTournament] called id=${id} active=${state.activeTournamentId} same=${id === state.activeTournamentId}`);
       if (!id || id === state.activeTournamentId) return;
+      // If Edit Team (the player pool / pitch editor) was left open from the
+      // previous tournament, close it now. Otherwise the pool panel stays
+      // visible after switching and Pick XI opens straight into Edit mode
+      // instead of the read-only summary view for the newly-selected
+      // tournament's own last-saved draft.
+      const poolPanel = $('#poolPanel');
+      if (poolPanel && poolPanel.style.display !== 'none') setPoolOpen(false);
       state.activeTournamentId = id;
       state.matches       = [];
       state.activeMatchId = null;
