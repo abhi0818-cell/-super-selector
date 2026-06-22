@@ -12692,6 +12692,25 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     // ─── Season tab renderer ──────────────────────────────────────────────────
+
+    // Current rank tile — pulled from the live SL leaderboard rather than
+    // season totals, since rank depends on every squad in the contest, not
+    // just this one. Returns null (tile shows "—") if it can't be resolved.
+    async function computeSeasonRank() {
+      const contestId = state.sl?.seasonContest?.id;
+      const squadId   = state.sl?.squad?.id;
+      if (!state.db || !contestId || !squadId) return null;
+      try {
+        const board = await state.db.getLeaderboardSL(contestId);
+        const idx = board.findIndex(r => r.squadId === squadId);
+        if (idx === -1) return null;
+        return { rank: idx + 1, total: board.length };
+      } catch (e) {
+        console.warn('[Season tab] rank lookup failed:', e.message);
+        return null;
+      }
+    }
+
     async function renderPageSeasonTab() {
       const historyEl = $('#seasonMatchHistory');
       historyEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:16px 0;">Loading…</div>';
@@ -12707,6 +12726,13 @@ p31,Sample Player,MI,bat,9.0,false
       }
 
       const data = state.sl?.seasonData;
+
+      // Rank tile applies regardless of which branch below renders — it's
+      // driven by the contest leaderboard, not by this squad's own season data.
+      const rankInfo = await computeSeasonRank();
+      $('#seasonRank').textContent   = rankInfo ? `#${rankInfo.rank}` : '—';
+      $('#seasonRankOf').textContent = rankInfo ? `of ${rankInfo.total}` : '';
+
       if (!data) {
         const hasDraft = state.sl?.squad && (state.sl?.xiPlayers?.length ?? 0) > 0;
         if (hasDraft) {
@@ -12717,7 +12743,7 @@ p31,Sample Player,MI,bat,9.0,false
           $('#seasonTotalPts').textContent  = '0 pts';
           $('#seasonMatchCount').textContent = 'No matches played yet';
           $('#seasonXfers').textContent      = '0';
-          $('#seasonXferPenalty').textContent = 'no penalties';
+          $('#seasonXferPenalty').textContent = '';
           $('#seasonBestPts').textContent    = '—';
           $('#seasonBestMatch').textContent  = '—';
           historyEl.innerHTML = `
@@ -12743,7 +12769,7 @@ p31,Sample Player,MI,bat,9.0,false
       const totalXfers = (data.transfers || []).length;
       const totalPenalty = (data.transfers || []).reduce((s, t) => s + Number(t.points_deducted ?? 0), 0);
       $('#seasonXfers').textContent = totalXfers;
-      $('#seasonXferPenalty').textContent = totalPenalty ? `−${totalPenalty} pts penalty` : 'no penalties';
+      $('#seasonXferPenalty').textContent = totalPenalty ? `−${totalPenalty} pts penalty` : '';
 
       if (!data.matches?.length) {
         // Season data exists (squad joined) but no matches scored yet — same pre-start banner
@@ -12754,7 +12780,7 @@ p31,Sample Player,MI,bat,9.0,false
         $('#seasonMatchCount').textContent = 'No matches played yet';
         $('#seasonXfers').textContent      = (data.transfers || []).length;
         const totalPenalty = (data.transfers || []).reduce((s, t) => s + Number(t.points_deducted ?? 0), 0);
-        $('#seasonXferPenalty').textContent = totalPenalty ? `−${totalPenalty} pts penalty` : 'no penalties';
+        $('#seasonXferPenalty').textContent = totalPenalty ? `−${totalPenalty} pts penalty` : '';
         $('#seasonBestPts').textContent     = '—';
         $('#seasonBestMatch').textContent   = '—';
         historyEl.innerHTML = `
