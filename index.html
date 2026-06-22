@@ -2357,6 +2357,22 @@ p31,Sample Player,MI,bat,9.0,false
       return cap > 0 && cap < 11;
     }
 
+    // TEMP DEBUG — remove once the missing-overseas-badge issue is diagnosed.
+    // This script runs as a module, so its functions aren't on `window` and
+    // the console can't see them directly; this hook exposes just enough to
+    // check live state without needing a full build/redeploy cycle.
+    window.__osDebug = () => ({
+      cap: getOverseasCap(),
+      applies: osCapApplies(),
+      format: state.format,
+      tournamentCapOverride: RULES.maxOverseas._tournament,
+      activeTournamentId: state.activeTournamentId,
+      selectedOverseasPlayers: (state.selected || [])
+        .map(id => playerById(id))
+        .filter(p => p && p.overseas)
+        .map(p => p.name),
+    });
+
     // ─── STATE ───────────────────────────────────────────────────────────────
     const state = {
       format: 'T20',
