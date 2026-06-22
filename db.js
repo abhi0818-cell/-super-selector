@@ -2190,6 +2190,34 @@ export function createDb(cfg = {}) {
         penaltyBySquad[t.squad_id] = (penaltyBySquad[t.squad_id] || 0) + Number(t.points_deducted ?? 0);
       });
 
+      // Contest-level caps for the Booster / Xfers "used / allowed" leaderboard
+      // columns. available_boosters is a JSONB map of booster_key -> uses
+      // allowed per squad (see migration_v12) — sum its values for the total
+      // booster budget. total_transfers_allowed is already a single number
+      // (null = unlimited).
+      const { data: contestRow } = await sb
+        .from('contests')
+        .select('available_boosters, total_transfers_allowed')
+        .eq('id', contestId)
+        .maybeSingle();
+      const boosterAllowed = contestRow?.available_boosters
+        ? Object.values(contestRow.available_boosters).reduce((sum, n) => sum + Number(n || 0), 0)
+        : 0;
+      const transfersAllowed = contestRow?.total_transfers_allowed ?? null;
+
+      // Fetch booster activation counts for all squads in this contest.
+      // Requires the "booster_activations_read_all" policy (migration_v31) —
+      // without it this silently returns only the viewer's own squad's rows,
+      // same RLS pitfall migration_v30 fixed for user_transfers.
+      const { data: boosterRows } = await sb
+        .from('user_booster_activations')
+        .select('squad_id')
+        .in('squad_id', squadIds);
+      const boosterCountBySquad = {};
+      (boosterRows || []).forEach(b => {
+        boosterCountBySquad[b.squad_id] = (boosterCountBySquad[b.squad_id] || 0) + 1;
+      });
+
       // Sum all player points per squad; count distinct matches where squad scored > 0
       const pointsBySquad = {};
       const matchesBySquad = {};
@@ -2211,7 +2239,10 @@ export function createDb(cfg = {}) {
           // Net points = raw fantasy points minus transfer penalties
           totalPoints : (pointsBySquad[s.id] || 0) - (penaltyBySquad[s.id] || 0),
           matchCount  : matchesBySquad[s.id]?.size  || 0,
-          transferCount: (xferRows || []).filter(t => t.squad_id === s.id).length,
+          transferCount   : (xferRows || []).filter(t => t.squad_id === s.id).length,
+          transfersAllowed,
+          boosterCount    : boosterCountBySquad[s.id] || 0,
+          boosterAllowed,
         }))
         .sort((a, b) => b.totalPoints - a.totalPoints);
     },

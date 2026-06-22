@@ -2730,8 +2730,24 @@ p31,Sample Player,MI,bat,9.0,false
             return { m, net, runningAtMatch: running };
           });
 
-        // Shared colgroup so each match's mini table lines up with the header table.
-        const COLGROUP = '<colgroup><col><col style="width:70px"><col style="width:90px"></colgroup>';
+        // Boosters used by this squad, keyed by match — one query for the whole
+        // season rather than one per match row. Requires the
+        // "booster_activations_read_all" RLS policy (migration_v31) when squadId
+        // isn't the viewer's own squad.
+        const boosterRows = await state.db.getBoosterActivations(squadId).catch(() => []);
+        const boosterByMatch = {};
+        (boosterRows || []).forEach(b => {
+          (boosterByMatch[b.match_id] ??= []).push(b.booster);
+        });
+        // Per-match transfer count (distinct from the season-total penalty map above).
+        const xferCountByMatch = {};
+        (season.transfers || []).forEach(t => {
+          xferCountByMatch[t.match_id] = (xferCountByMatch[t.match_id] || 0) + 1;
+        });
+
+        // Shared colgroup so each match's mini table lines up with the header table:
+        // Match | C | VC | Boost | Xfer | Net | Running.
+        const COLGROUP = '<colgroup><col><col style="width:46px"><col style="width:46px"><col style="width:40px"><col style="width:36px"><col style="width:60px"><col style="width:80px"></colgroup>';
 
         const blocks = [...matchRowData]
           .reverse()
@@ -2755,16 +2771,34 @@ p31,Sample Player,MI,bat,9.0,false
               raw_points: p.raw_points,
               multiplier: p.multiplier,
             }));
-            const captainId = sortedPlayers.find(p => p.is_captain)?.player_id ?? null;
-            const vcId      = sortedPlayers.find(p => p.is_vc)?.player_id ?? null;
+            const captain = sortedPlayers.find(p => p.is_captain) ?? null;
+            const vc      = sortedPlayers.find(p => p.is_vc) ?? null;
+            const captainId = captain?.player_id ?? null;
+            const vcId      = vc?.player_id ?? null;
             const matchFmt  = (state.matches || []).find(x => x.id === m.match_id)?.format;
             const fmt       = (matchFmt || state.format || 'T20').toUpperCase();
             const pitchTeam = { players: pitchPlayers, captain_id: captainId, vice_captain_id: vcId, total_points: m.xi_total };
             const pitchDetailHtml = histTeamPanelHtml(pitchTeam, fmt);
 
+            // Short surname for the cramped C/VC columns; full name on hover.
+            const shortName = (n) => (n || '').trim().split(/\s+/).pop() || '—';
+            const captainCell = captain ? `<span title="${escapeHtml(captain.player_name || '')}">${escapeHtml(shortName(captain.player_name))}</span>` : '—';
+            const vcCell      = vc      ? `<span title="${escapeHtml(vc.player_name || '')}">${escapeHtml(shortName(vc.player_name))}</span>`           : '—';
+
+            const boosters    = boosterByMatch[m.match_id] || [];
+            const boostCell   = boosters.length
+              ? boosters.map(b => `<span title="${escapeHtml(BOOSTER_META[b]?.label || b)}">${BOOSTER_META[b]?.icon || '★'}</span>`).join('')
+              : '<span style="color:var(--muted);">—</span>';
+            const xferCount   = xferCountByMatch[m.match_id] || 0;
+            const xferCell    = xferCount || '<span style="color:var(--muted);">0</span>';
+
             const matchRow =
               '<tr class="sl-match-row" data-detail="' + innerDetailId + '" data-pitch="' + pitchPanelId + '" style="cursor:pointer;" title="Click to expand">' +
               '<td class="l">M' + (m.match_number ?? '?') + ' · ' + escapeHtml((m.home_team_id ?? '?') + ' vs ' + (m.away_team_id ?? '?')) + ' <span style="font-size:10px;color:var(--muted);">▾</span></td>' +
+              '<td>' + captainCell + '</td>' +
+              '<td>' + vcCell + '</td>' +
+              '<td>' + boostCell + '</td>' +
+              '<td>' + xferCell + '</td>' +
               '<td class="pts">' + net.toFixed(1) + '</td>' +
               '<td>' + runningAtMatch.toFixed(1) + '</td>' +
               '</tr>';
@@ -2778,7 +2812,7 @@ p31,Sample Player,MI,bat,9.0,false
 
         const headerTable =
           '<table class="sl-season-table hist-header-table">' + COLGROUP +
-          '<thead><tr><th class="l">Match</th><th>Net</th><th>Running</th></tr></thead>' +
+          '<thead><tr><th class="l">Match</th><th>C</th><th>VC</th><th>Boost</th><th>Xfer</th><th>Net</th><th>Running</th></tr></thead>' +
           '</table>';
 
         cell.innerHTML = headerTable + blocks;
@@ -12565,11 +12599,12 @@ p31,Sample Player,MI,bat,9.0,false
             content.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:16px 0;">No scores yet.</div>';
             return;
           }
-          content.innerHTML = `<div style="display:grid;grid-template-columns:32px 1fr 80px 60px;gap:0;background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+          content.innerHTML = `<div style="display:grid;grid-template-columns:32px 1fr 60px 70px 70px;gap:0;background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
             <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">#</div>
             <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">Squad <span style="font-size:9px;">(tap to expand)</span></div>
-            <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Points</div>
+            <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Booster</div>
             <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Xfers</div>
+            <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Points</div>
             ${rows.map((r, i) => {
               const isMe = r.squadId === state.sl?.squad?.id;
               const bg   = isMe ? 'background:rgba(201,168,76,0.12);' : '';
@@ -12579,12 +12614,15 @@ p31,Sample Player,MI,bat,9.0,false
               const entityId = r.squadId;
               const key = 'sl_' + (entityId || i);
               const detailId = `inlineLbDetail_${key.replace(/[^a-zA-Z0-9]/g, '')}`;
+              const boosterLabel = r.boosterAllowed ? `${r.boosterCount ?? 0}/${r.boosterAllowed}` : '—';
+              const xferLabel    = `${r.transferCount ?? 0}/${r.transfersAllowed ?? '∞'}`;
               return `<div style="padding:8px 10px;font-size:12px;${bg}border-bottom:1px solid var(--border);">${rank}</div>
                 <div class="inline-lb-row" data-kind="sl" data-entity="${entityId || ''}" data-key="${key}" data-detail="${detailId}" style="cursor:pointer;padding:8px 10px;font-size:12px;font-weight:${isMe?'600':'400'};${bg}border-bottom:1px solid var(--border);">
                   ${isMe ? `<span style="color:var(--accent);">★</span> ` : ''}${squadName}${sub} <span class="inline-lb-caret" style="font-size:10px;color:var(--muted);">▾</span>
                 </div>
+                <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${boosterLabel}</div>
+                <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${xferLabel}</div>
                 <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${r.totalPoints ?? '—'}</div>
-                <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${r.transferCount ?? 0}</div>
                 <div id="${detailId}" style="grid-column:1/-1;display:none;border-bottom:1px solid var(--border);"></div>`;
             }).join('')}
           </div>`;
