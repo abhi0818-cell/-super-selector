@@ -1860,21 +1860,55 @@ export function createDb(cfg = {}) {
     async getRecentFormForPlayers(playerIds, matchLimit = 3, tournamentId = null) {
       if (!playerIds?.length) return {};
       const sb = await getClient();
-      const { data: stats, error: statsErr } = await sb
-        .from('player_match_stats')
-        .select('player_id, match_id, raw_points')
-        .in('player_id', playerIds);
-      if (statsErr) throw statsErr;
+
+      // Fetch the candidate matches FIRST and scope the stats query to just
+      // those match ids. Querying player_match_stats by player_id alone (no
+      // match/tournament bound) pulls every stats row those players have ever
+      // had across every tournament they've ever played — with dozens of
+      // players that can be thousands of rows, and PostgREST silently caps
+      // unbounded results at 1000. Rows can get truncated before the most
+      // recent match's row even appears, so a player's latest points can
+      // vanish from this batched form-strip lookup while still showing up
+      // fine in the single-player getPlayerMatchHistory() (which only ever
+      // queries one player_id, so it never gets near the cap). Scoping by
+      // tournament's matches up front keeps the result set small and bounded
+      // instead of "all history for all players".
+      let matchQuery = sb.from('matches').select('id, match_number');
+      matchQuery = tournamentId
+        ? matchQuery.eq('tournament_id', tournamentId)
+        : matchQuery; // no tournament given: fall back to old (unbounded) behavior below
+      const { data: tMatches, error: tMatchErr } = await matchQuery;
+      if (tMatchErr) throw tMatchErr;
+
+      let stats, matches;
+      if (tournamentId) {
+        const matchIds = (tMatches || []).map(m => m.id);
+        if (!matchIds.length) return {};
+        const { data, error: statsErr } = await sb
+          .from('player_match_stats')
+          .select('player_id, match_id, raw_points')
+          .in('player_id', playerIds)
+          .in('match_id', matchIds);
+        if (statsErr) throw statsErr;
+        stats   = data;
+        matches = tMatches;
+      } else {
+        // No tournament given — keep prior (unbounded) behavior as a fallback.
+        const { data, error: statsErr } = await sb
+          .from('player_match_stats')
+          .select('player_id, match_id, raw_points')
+          .in('player_id', playerIds);
+        if (statsErr) throw statsErr;
+        stats = data;
+        if (!stats?.length) return {};
+        const matchIds = [...new Set(stats.map(s => s.match_id))];
+        const { data: mData, error: matchErr } = await sb
+          .from('matches').select('id, match_number').in('id', matchIds);
+        if (matchErr) throw matchErr;
+        matches = mData;
+      }
       if (!stats?.length) return {};
 
-      const matchIds = [...new Set(stats.map(s => s.match_id))];
-      let matchQuery = sb
-        .from('matches')
-        .select('id, match_number, tournament_id')
-        .in('id', matchIds);
-      if (tournamentId) matchQuery = matchQuery.eq('tournament_id', tournamentId);
-      const { data: matches, error: matchErr } = await matchQuery;
-      if (matchErr) throw matchErr;
       const matchNumMap = Object.fromEntries((matches || []).map(m => [m.id, m.match_number || 0]));
       const validMatchIds = new Set((matches || []).map(m => m.id));
 
