@@ -212,13 +212,18 @@ export function createDb(cfg = {}) {
       if (error) throw error;
       if (!data.length) return [];   // caller should fall back to getPlayers()
       return data.map(tp => ({
-        id      : tp.players.id,
-        name    : tp.players.name,
-        team    : tp.team_id,                  // tournament-specific team
-        role    : tp.players.role,
-        credits : Number(tp.credit_value),     // tournament-specific credits
-        overseas: !!tp.players.is_overseas,
-        active  : !!tp.is_active,
+        id           : tp.players.id,
+        name         : tp.players.name,
+        team         : tp.team_id,                  // tournament-specific team
+        role         : tp.players.role,
+        credits      : Number(tp.credit_value),     // tournament-specific credits
+        overseas     : !!tp.players.is_overseas,
+        active       : !!tp.is_active,
+        tournamentId : tournamentId,  // firm tag: which tournament this row's stats/team/credits came from,
+                                       // independent of whatever the UI's "active tournament" toggle says later.
+                                       // Lets stat lookups (match history, recent form) filter by the tournament
+                                       // this specific player record actually belongs to, not a shared global flag —
+                                       // important since two tournaments can legitimately be active at once.
       }));
     },
 

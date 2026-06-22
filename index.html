@@ -3262,12 +3262,19 @@ p31,Sample Player,MI,bat,9.0,false
           const tms = await db.getTeams();
           if (tms.length) TEAMS_DATA = tms.map(t => ({ id: t.id, name: t.name, color: t.color, color2: t.color2 ?? null }));
         } catch (e) { console.warn('Teams table empty? Falling back to seed.', e); }
-        // Load tournaments — pick most recent as the active one
+        // Load tournaments — prefer one flagged is_active; fall back to most
+        // recent by start_date. (Picking [0] of the start_date-sorted list
+        // alone is unreliable when multiple tournaments share a null
+        // start_date — Postgres's NULLS FIRST-on-DESC makes that tie
+        // unstable, so the wrong tournament can win and silently hide that
+        // tournament's player stats from history/recent-form lookups.)
         try {
           state.tournaments = await db.getTournaments();
           if (state.tournaments.length) {
-            state.activeTournamentId = state.tournaments[0].id; // already sorted by start_date DESC
-            applyTournamentFormat(state.tournaments[0]);
+            const activeOnes = state.tournaments.filter(t => t.is_active);
+            const defaultTournament = activeOnes[0] || state.tournaments[0];
+            state.activeTournamentId = defaultTournament.id;
+            applyTournamentFormat(defaultTournament);
           }
           renderTournamentSelector();
         } catch (e) { console.warn('Tournaments load failed.', e); }
@@ -7061,10 +7068,15 @@ p31,Sample Player,MI,bat,9.0,false
       if (!state.db || typeof state.db.getRecentFormForPlayers !== 'function') return;
       const ids = PLAYERS.map(p => p.id);
       if (!ids.length) return;
-      const key = state.activeTournamentId + ':' + ids.length + ':' + ids[0] + ':' + ids[ids.length - 1];
+      // Filter by the tournament these PLAYERS rows were actually loaded from
+      // (tagged per-row in getPlayersForTournament), not the global active-tournament
+      // flag — that flag can be ambiguous when multiple tournaments are active at once,
+      // but every player currently on screen came from one specific, known fetch.
+      const formTournamentId = PLAYERS[0]?.tournamentId ?? state.activeTournamentId;
+      const key = formTournamentId + ':' + ids.length + ':' + ids[0] + ':' + ids[ids.length - 1];
       if (state.recentFormKey === key) return;
       try {
-        const form = await state.db.getRecentFormForPlayers(ids, 3, state.activeTournamentId);
+        const form = await state.db.getRecentFormForPlayers(ids, 3, formTournamentId);
         state.recentForm    = form || {};
         state.recentFormKey = key;
         renderPool();
@@ -7079,7 +7091,10 @@ p31,Sample Player,MI,bat,9.0,false
       body.innerHTML = '<div class="sc-empty">Loading…</div>';
       $('#playerStatsModal').classList.add('open');
       try {
-        const rows = await state.db.getPlayerMatchHistory(playerId, 8, state.activeTournamentId);
+        // Use the tournament this player's own record was loaded under, not the
+        // global active-tournament flag — firmer when multiple tournaments are
+        // active at once (see getPlayersForTournament's tournamentId tag).
+        const rows = await state.db.getPlayerMatchHistory(playerId, 8, p.tournamentId ?? state.activeTournamentId);
         if (!rows.length) {
           body.innerHTML = '<div class="sc-empty">No match history yet for this player.</div>';
           return;
