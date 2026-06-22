@@ -623,6 +623,8 @@
     #historyList .hist-match-block.open .hist-match-table td { border-bottom-color: transparent; }
     /* SL Season tab: same accordion table-alignment treatment as Daily's History tab. */
     #slSeasonView .sl-season-table { table-layout: fixed; }
+    #slSeasonView .sl-season-table th { white-space: normal; line-height: 1.3; }
+    #slSeasonView .sl-season-table td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #slSeasonView .hist-match-table { margin: 0; }
     #slSeasonView .hist-match-table td { border-bottom: 1px dashed rgba(214,207,168,0.7); }
     #slSeasonView .hist-match-block:last-child .hist-match-table td { border-bottom: none; }
@@ -633,12 +635,24 @@
        shifts every column to its right out from under the header — the colgroup
        widths only take effect once layout is fixed. */
     #inlineLbContent .sl-season-table { table-layout: fixed; }
-    #inlineLbContent .sl-season-table td,
-    #inlineLbContent .sl-season-table th { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* Header labels (Captain/Vice-Captain/Booster) are allowed to wrap onto a
+       second line rather than truncate — keeps columns narrow without
+       clipping the label to "BOO…"/"XF…". Data cells stay single-line with an
+       ellipsis fallback (title attr on the cell shows the full value). */
+    #inlineLbContent .sl-season-table th { white-space: normal; line-height: 1.3; }
+    #inlineLbContent .sl-season-table td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #inlineLbContent .hist-match-table { margin: 0; }
     #inlineLbContent .hist-match-table td { border-bottom: 1px dashed rgba(214,207,168,0.7); }
     #inlineLbContent .hist-match-block:last-child .hist-match-table td { border-bottom: none; }
     #inlineLbContent .hist-match-block.open .hist-match-table td { border-bottom-color: transparent; }
+    /* Top-level page-nav Season tab: same accordion table-alignment treatment. */
+    #seasonMatchHistory .sl-season-table { table-layout: fixed; }
+    #seasonMatchHistory .sl-season-table th { white-space: normal; line-height: 1.3; }
+    #seasonMatchHistory .sl-season-table td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #seasonMatchHistory .hist-match-table { margin: 0; }
+    #seasonMatchHistory .hist-match-table td { border-bottom: 1px dashed rgba(214,207,168,0.7); }
+    #seasonMatchHistory .hist-match-block:last-child .hist-match-table td { border-bottom: none; }
+    #seasonMatchHistory .hist-match-block.open .hist-match-table td { border-bottom-color: transparent; }
 
     /* ── Leaderboard ──────────────────────────────────────── */
     #lbModal {
@@ -2758,8 +2772,11 @@ p31,Sample Player,MI,bat,9.0,false
         });
 
         // Shared colgroup so each match's mini table lines up with the header table:
-        // Match | C | VC | Boost | Xfer | Net | Running.
-        const COLGROUP = '<colgroup><col><col style="width:46px"><col style="width:46px"><col style="width:52px"><col style="width:40px"><col style="width:60px"><col style="width:80px"></colgroup>';
+        // Match | Captain | Vice-Captain | Booster | Xfer | Net | Running.
+        // "Vice-Captain" wraps onto a second line at this width (see the
+        // white-space:normal header rule above) rather than needing ~90px to
+        // fit on one line.
+        const COLGROUP = '<colgroup><col><col style="width:56px"><col style="width:64px"><col style="width:72px"><col style="width:50px"><col style="width:58px"><col style="width:78px"></colgroup>';
 
         const blocks = [...matchRowData]
           .reverse()
@@ -2824,7 +2841,7 @@ p31,Sample Player,MI,bat,9.0,false
 
         const headerTable =
           '<table class="sl-season-table hist-header-table">' + COLGROUP +
-          '<thead><tr><th class="l">Match</th><th>C</th><th>VC</th><th>Booster</th><th>Xfer</th><th>Net</th><th>Running</th></tr></thead>' +
+          '<thead><tr><th class="l">Match</th><th>Captain</th><th>Vice-Captain</th><th>Booster</th><th>Xfer</th><th>Net</th><th>Running</th></tr></thead>' +
           '</table>';
 
         cell.innerHTML = headerTable + blocks;
@@ -5611,6 +5628,12 @@ p31,Sample Player,MI,bat,9.0,false
       if (!state.db || !state.sl.squad) return;
       try {
         state.sl.seasonData = await state.db.getSquadSeason(state.sl.squad.id);
+        // Pre-load the booster cache so renderSlSeasonTab's per-match Booster
+        // column (and getCachedBoosterForMatch for the live row) has data on
+        // first render, not just after the Pick XI booster pill has loaded it.
+        if (!state.sl.boosterActivations) {
+          state.sl.boosterActivations = await state.db.getBoosterActivations(state.sl.squad.id).catch(() => []);
+        }
       } catch (e) { toast('Season load failed: ' + e.message, 4000); return; }
       renderSlActiveScreen(); // handles tab visibility + calls renderSlSeasonTab
     }
@@ -5635,9 +5658,13 @@ p31,Sample Player,MI,bat,9.0,false
 
       const roleOrder = { wk: 0, bat: 1, ar: 2, bowl: 3 };
 
+      // Short surname for the cramped Captain/Vice-Captain columns; full name on hover.
+      const shortName = (n) => (n || '').trim().split(/\s+/).pop() || '—';
+
       // Shared colgroup so every match's mini single-row table lines up with the
-      // header table's columns (same pattern as renderHistory / loadSLDetailInto).
-      const COLGROUP = '<colgroup><col><col style="width:60px"><col style="width:60px"><col style="width:60px"><col style="width:80px"></colgroup>';
+      // header table's columns (same pattern as renderHistory / loadSLDetailInto):
+      // Match | Captain | Vice-Captain | Booster | XI pts | Xfers Left | Net | Running.
+      const COLGROUP = '<colgroup><col><col style="width:56px"><col style="width:64px"><col style="width:60px"><col style="width:54px"><col style="width:74px"><col style="width:56px"><col style="width:76px"></colgroup>';
 
       // Season-wide transfer budget (null = unlimited) — the -Xfer column counts
       // down from this as transfers are used, instead of just showing the points
@@ -5676,16 +5703,28 @@ p31,Sample Player,MI,bat,9.0,false
           raw_points: p.raw_points,
           multiplier: p.multiplier,
         }));
-        const captainId = sortedPlayers.find(p => p.is_captain)?.player_id ?? null;
-        const vcId      = sortedPlayers.find(p => p.is_vc)?.player_id ?? null;
+        const captain   = sortedPlayers.find(p => p.is_captain) ?? null;
+        const vc        = sortedPlayers.find(p => p.is_vc) ?? null;
+        const captainId = captain?.player_id ?? null;
+        const vcId      = vc?.player_id ?? null;
         const matchFmt  = (state.matches || []).find(x => x.id === m.match_id)?.format;
         const fmt       = (matchFmt || state.format || 'T20').toUpperCase();
         const pitchTeam = { players: pitchPlayers, captain_id: captainId, vice_captain_id: vcId, total_points: m.xi_total };
         const pitchDetailHtml = histTeamPanelHtml(pitchTeam, fmt);
 
+        const captainCell = captain ? `<span title="${escapeHtml(captain.player_name || '')}">${escapeHtml(shortName(captain.player_name))}</span>` : '—';
+        const vcCell      = vc      ? `<span title="${escapeHtml(vc.player_name || '')}">${escapeHtml(shortName(vc.player_name))}</span>`           : '—';
+        const matchBooster = getCachedBoosterForMatch(m.match_id);
+        const boostCell    = matchBooster
+          ? `<span title="${escapeHtml(BOOSTER_META[matchBooster]?.label || matchBooster)}">${BOOSTER_META[matchBooster]?.icon || '★'}</span>`
+          : '<span style="color:var(--muted);">—</span>';
+
         const matchRow =
           '<tr class="sl-match-row" data-detail="' + detailId + '" data-pitch="' + pitchPanelId + '" style="cursor:pointer;" title="Click to expand">' +
           '<td class="l">M' + (m.match_number ?? '?') + ' · ' + escapeHtml((m.home_team_id ?? '?') + ' vs ' + (m.away_team_id ?? '?')) + xferTxt + ' <span style="font-size:10px;color:var(--muted);">▾</span></td>' +
+          '<td>' + captainCell + '</td>' +
+          '<td>' + vcCell + '</td>' +
+          '<td>' + boostCell + '</td>' +
           '<td>' + m.xi_total.toFixed(1) + '</td>' +
           '<td class="pen">' + penCell + '</td>' +
           '<td class="pts">' + net.toFixed(1) + '</td>' +
@@ -5748,9 +5787,20 @@ p31,Sample Player,MI,bat,9.0,false
         const livePitchHtml = histTeamPanelHtml(livePitchTeam, state.format);
         const pitchPanelId  = 'slDetailLive_pitch';
 
+        const liveCapName  = PLAYERS.find(p => p.id === locked.captainId)?.name ?? '';
+        const liveVcName   = PLAYERS.find(p => p.id === locked.vcId)?.name ?? '';
+        const liveCapCell  = liveCapName ? `<span title="${escapeHtml(liveCapName)}">${escapeHtml(shortName(liveCapName))}</span>` : '—';
+        const liveVcCell   = liveVcName  ? `<span title="${escapeHtml(liveVcName)}">${escapeHtml(shortName(liveVcName))}</span>`   : '—';
+        const liveBoostCell = liveBooster
+          ? `<span title="${escapeHtml(BOOSTER_META[liveBooster]?.label || liveBooster)}">${BOOSTER_META[liveBooster]?.icon || '★'}</span>`
+          : '<span style="color:var(--muted);">—</span>';
+
         const liveMatchRow =
           '<tr class="sl-match-row" data-detail="slDetailLive" data-pitch="' + pitchPanelId + '" style="cursor:pointer;color:var(--accent);" title="Click to expand">' +
           '<td class="l">' + liveRow.label + ' <span style="font-size:9px;padding:1px 5px;border-radius:8px;background:rgba(201,168,76,0.15);margin-left:4px;text-transform:uppercase;letter-spacing:0.4px;">live</span> <span style="font-size:10px;color:var(--muted);">▾</span></td>' +
+          '<td>' + liveCapCell + '</td>' +
+          '<td>' + liveVcCell + '</td>' +
+          '<td>' + liveBoostCell + '</td>' +
           '<td>' + liveRow.total.toFixed(1) + '</td>' +
           '<td class="pen">' + (totalBudget === null ? 'Unlimited' : Math.max(0, totalBudget - cumXfer)) + '</td>' +
           '<td class="pts">' + liveRow.total.toFixed(1) + '</td>' +
@@ -5761,9 +5811,19 @@ p31,Sample Player,MI,bat,9.0,false
         liveBlockHtml = '<div class="hist-match-block" data-detail="slDetailLive" data-pitch="' + pitchPanelId + '">' + liveMatchTable + livePitchPanel + '</div>';
       }
 
+      // Season-wide booster usage tally (used/allowed), matching the leaderboard's format.
+      const boosterUsed    = (state.sl.boosterActivations || []).length;
+      const boosterAllowed = state.sl.seasonContest?.available_boosters
+        ? Object.values(state.sl.seasonContest.available_boosters).reduce((s, n) => s + Number(n || 0), 0)
+        : 0;
+      const boosterTotalCell = boosterAllowed ? `${boosterUsed}/${boosterAllowed}` : '—';
+
       const slTotalRow =
         '<tr style="background:var(--panel-2);font-weight:700;border-bottom:1px solid var(--border);">' +
         '<td class="l" style="padding:6px 8px;">Total</td>' +
+        '<td style="padding:6px 8px;"></td>' +
+        '<td style="padding:6px 8px;"></td>' +
+        '<td style="padding:6px 8px;">' + boosterTotalCell + '</td>' +
         '<td style="padding:6px 8px;">' + (xiGross + (liveRow?.total ?? 0)).toFixed(1) + '</td>' +
         '<td class="pen" style="padding:6px 8px;">' + (totalBudget === null ? 'Unlimited' : Math.max(0, totalBudget - cumXfer)) + (totalPenalty ? ' <span style="color:var(--bad);font-size:9px;">(-' + totalPenalty + ')</span>' : '') + '</td>' +
         '<td class="pts" style="padding:6px 8px;">' + grandTotal + '</td>' +
@@ -5772,7 +5832,7 @@ p31,Sample Player,MI,bat,9.0,false
 
       const headerTable = '<table class="sl-season-table hist-header-table">' + COLGROUP +
         '<thead>' +
-        '<tr><th class="l">Match</th><th>XI pts</th><th>Xfers Left</th><th>Net</th><th>Running</th></tr>' +
+        '<tr><th class="l">Match</th><th>Captain</th><th>Vice-Captain</th><th>Booster</th><th>XI pts</th><th>Xfers Left</th><th>Net</th><th>Running</th></tr>' +
         slTotalRow +
         '</thead>' +
         '</table>';
@@ -12774,6 +12834,12 @@ p31,Sample Player,MI,bat,9.0,false
           return;
         }
       }
+      // Booster cache backing the per-match Booster column below — may already
+      // be warm from the My Team > Season tab (loadAndRenderSeason) or the
+      // Pick XI booster pill; load it here too so this tab works standalone.
+      if (!state.sl?.boosterActivations && state.db && state.sl?.squad?.id) {
+        state.sl.boosterActivations = await state.db.getBoosterActivations(state.sl.squad.id).catch(() => []);
+      }
 
       const data = state.sl?.seasonData;
 
@@ -12852,35 +12918,112 @@ p31,Sample Player,MI,bat,9.0,false
       (data.transfers || []).forEach(t => {
         penMap[t.match_id] = (penMap[t.match_id] || 0) + Number(t.points_deducted ?? 0);
       });
+      const roleOrderSeason = { wk: 0, bat: 1, ar: 2, bowl: 3 };
+      const shortNameSeason = (n) => (n || '').trim().split(/\s+/).pop() || '—';
+
+      // Same colgroup/column set as the Leaderboard tab's expand panel and the
+      // My Team > Season sub-tab, for a consistent look across all three SL
+      // match-history views: Match | Captain | Vice-Captain | Booster | Xfer | Net | Running.
+      const COLGROUP = '<colgroup><col><col style="width:56px"><col style="width:64px"><col style="width:72px"><col style="width:50px"><col style="width:58px"><col style="width:78px"></colgroup>';
+
       let bestPts = 0, bestMatchLabel = '';
       let running = 0;
-      const rows = data.matches.map((m, i) => {
+      const blocks = data.matches.map((m, i) => {
         const pen = penMap[m.match_id] || 0;
         const net = +(((m.xi_total ?? 0) - pen).toFixed(1));
         running = +(running + net).toFixed(1);
         const matchNum = m.match_number ?? (i + 1);
-        const matchLabel = m.home_team_id && m.away_team_id
-          ? `${m.home_team_id} vs ${m.away_team_id}` : `Match ${matchNum}`;
         if (net > bestPts) { bestPts = net; bestMatchLabel = `M${matchNum}`; }
         const xferCount = (data.transfers || []).filter(t => t.match_id === m.match_id).length;
-        const xferHtml = xferCount ? `<span style="font-size:10px;color:var(--muted);"> ×${xferCount}</span>` : '';
-        const penHtml = pen > 0 ? `<span style="font-size:10px;color:var(--bad);"> −${pen}</span>` : '';
-        return `<div style="display:grid;grid-template-columns:40px 1fr 80px 60px;align-items:center;
-            padding:10px 14px;background:var(--panel);border:1px solid var(--border);
-            border-radius:8px;margin-bottom:6px;font-size:12px;gap:4px;">
-          <div style="color:var(--muted);font-size:11px;">M${matchNum}</div>
-          <div style="color:var(--text);">${escapeHtml(matchLabel)}</div>
-          <div style="text-align:right;font-weight:600;color:var(--text);">${net} pts${penHtml}${xferHtml}</div>
-          <div style="text-align:right;color:var(--muted);font-size:11px;">${running} tot</div>
-        </div>`;
+        const xferCell   = xferCount || '<span style="color:var(--muted);">0</span>';
+
+        const detailId    = 'pageSeasonDetail_' + (m.match_id || '').replace(/-/g, '');
+        const pitchPanelId = detailId + '_pitch';
+        const sortedPlayers = [...(m.players || [])].sort((a, b) => (roleOrderSeason[a.role] ?? 9) - (roleOrderSeason[b.role] ?? 9));
+        const pitchPlayers = sortedPlayers.map(p => ({
+          player_id : p.player_id,
+          name      : p.player_name,
+          role      : p.role,
+          team_id   : p.team_id,
+          batting   : p.batting,
+          bowling   : p.bowling,
+          fielding  : p.fielding,
+          raw_points: p.raw_points,
+          multiplier: p.multiplier,
+        }));
+        const captain   = sortedPlayers.find(p => p.is_captain) ?? null;
+        const vc        = sortedPlayers.find(p => p.is_vc) ?? null;
+        const captainId = captain?.player_id ?? null;
+        const vcId      = vc?.player_id ?? null;
+        const matchFmt  = (state.matches || []).find(x => x.id === m.match_id)?.format;
+        const fmt       = (matchFmt || state.format || 'T20').toUpperCase();
+        const pitchTeam = { players: pitchPlayers, captain_id: captainId, vice_captain_id: vcId, total_points: m.xi_total };
+        const pitchDetailHtml = histTeamPanelHtml(pitchTeam, fmt);
+
+        const captainCell = captain ? `<span title="${escapeHtml(captain.player_name || '')}">${escapeHtml(shortNameSeason(captain.player_name))}</span>` : '—';
+        const vcCell      = vc      ? `<span title="${escapeHtml(vc.player_name || '')}">${escapeHtml(shortNameSeason(vc.player_name))}</span>`           : '—';
+        const matchBooster = getCachedBoosterForMatch(m.match_id);
+        const boostCell    = matchBooster
+          ? `<span title="${escapeHtml(BOOSTER_META[matchBooster]?.label || matchBooster)}">${BOOSTER_META[matchBooster]?.icon || '★'}</span>`
+          : '<span style="color:var(--muted);">—</span>';
+
+        const matchRow =
+          '<tr class="sl-match-row" data-detail="' + detailId + '" data-pitch="' + pitchPanelId + '" style="cursor:pointer;" title="Click to expand">' +
+          '<td class="l">M' + matchNum + ' · ' + escapeHtml((m.home_team_id ?? '?') + ' vs ' + (m.away_team_id ?? '?')) + ' <span style="font-size:10px;color:var(--muted);">▾</span></td>' +
+          '<td>' + captainCell + '</td>' +
+          '<td>' + vcCell + '</td>' +
+          '<td>' + boostCell + '</td>' +
+          '<td>' + xferCell + '</td>' +
+          '<td class="pts">' + net.toFixed(1) + (pen > 0 ? ' <span style="color:var(--bad);font-size:9px;">(−' + pen + ')</span>' : '') + '</td>' +
+          '<td>' + running.toFixed(1) + '</td>' +
+          '</tr>';
+
+        const matchTable = '<table class="sl-season-table hist-match-table">' + COLGROUP + '<tbody>' + matchRow + '</tbody></table>';
+        const pitchPanel = '<div id="' + pitchPanelId + '" style="display:none;">' + pitchDetailHtml + '</div>';
+        return '<div class="hist-match-block" data-detail="' + detailId + '" data-pitch="' + pitchPanelId + '">' + matchTable + pitchPanel + '</div>';
       });
 
       $('#seasonBestPts').textContent = bestPts + ' pts';
       $('#seasonBestMatch').textContent = bestMatchLabel;
+
+      const headerTable =
+        '<table class="sl-season-table hist-header-table">' + COLGROUP +
+        '<thead><tr><th class="l">Match</th><th>Captain</th><th>Vice-Captain</th><th>Booster</th><th>Xfer</th><th>Net</th><th>Running</th></tr></thead>' +
+        '</table>';
+
       // data.matches is sorted ascending (oldest match first) so the running-total
       // math above accumulates correctly — reverse only for display so the most
       // recent match shows at the top, matching the in-app SL Season tab.
-      historyEl.innerHTML = rows.reverse().join('');
+      historyEl.innerHTML = headerTable + [...blocks].reverse().join('');
+
+      // Wire expand/collapse, accordion-style — same pattern as loadSLDetailInto
+      // / renderSlSeasonTab.
+      historyEl.querySelectorAll('.sl-match-row').forEach(row => {
+        row.addEventListener('click', () => {
+          const pitchPanel = historyEl.querySelector('#' + row.dataset.pitch);
+          if (!pitchPanel) return;
+          const opening = pitchPanel.style.display === 'none';
+
+          historyEl.querySelectorAll('.sl-match-row').forEach(otherRow => {
+            if (otherRow === row) return;
+            const otherPanel = historyEl.querySelector('#' + otherRow.dataset.pitch);
+            if (otherPanel) otherPanel.style.display = 'none';
+            otherRow.closest('.hist-match-block')?.classList.remove('open');
+            const otherCaret = otherRow.querySelector('span[style*="▾"], span[style*="▴"]');
+            if (otherCaret) otherCaret.textContent = '▾';
+          });
+
+          pitchPanel.style.display = opening ? '' : 'none';
+          row.closest('.hist-match-block')?.classList.toggle('open', opening);
+          const caret = row.querySelector('span[style*="▾"], span[style*="▴"]');
+          if (caret) caret.textContent = opening ? '▴' : '▾';
+          if (opening) {
+            requestAnimationFrame(() => {
+              pitchPanel.querySelectorAll('.pitch-oval-hist').forEach(ov => fitHistOval(ov));
+            });
+          }
+        });
+      });
     }
     // ── Login tab switcher ────────────────────────────────────────────────
     $('#tabSignIn').addEventListener('click', () => switchLoginTab('signin'));
