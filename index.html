@@ -4866,6 +4866,11 @@ p31,Sample Player,MI,bat,9.0,false
             console.log('[SL] Auto-loaded mobile XI from user_match_xi for M' + (nextUpcoming?.match_number ?? '?'));
           }
         }
+        // Snapshot this as the "last saved" baseline for Save XI dirty-checking
+        // below — covers whichever source populated the picker above (draft,
+        // lastLocked, or mobile XI), since that's what the user is now viewing
+        // as their saved team.
+        state.sl.lastSavedXI = { playerIds: [...state.sl.xiPlayers], captainId: state.sl.xiCaptain, vcId: state.sl.xiVc };
       }
 
       // 3b. Free Hit revert: if the last locked match had a free_hit active AND
@@ -4891,6 +4896,7 @@ p31,Sample Player,MI,bat,9.0,false
                 state.sl.xiPlayers = [...revertDraft.playerIds];
                 state.sl.xiCaptain = revertDraft.captainId ?? null;
                 state.sl.xiVc      = revertDraft.vcId      ?? null;
+                state.sl.lastSavedXI = { playerIds: [...revertDraft.playerIds], captainId: revertDraft.captainId, vcId: revertDraft.vcId };
                 console.log('[SL free_hit] Reverted draft to pre-free-hit snapshot.');
               }
             }
@@ -5123,8 +5129,29 @@ p31,Sample Player,MI,bat,9.0,false
       const ready = xi.length === 11 && cap && vc && cap !== vc &&
                     !!state.activeMatchId && !wouldExceedCap && budgetLeft >= 0;
       const saveBtn = $('#slSaveXiBtn');
-      saveBtn.disabled = !ready;
-      if (savingForNext && ready) {
+
+      // Gate Save XI the same way as Daily Pick XI: only arm it when the
+      // player composition still matches the last saved draft and just
+      // Captain/Vice-Captain changed — that's a quick tweak. A composition
+      // change (e.g. removing a player via the pitch-hover ×) must go through
+      // Edit Team → Save XI instead, so it stays disabled here (in practice it
+      // also drops xi.length below 11, which already fails `ready`).
+      const slPoolOpenNow = $('#poolPanel') && $('#poolPanel').style.display !== 'none';
+      const draftBaseline = state.sl.lastSavedXI;
+      let saveEnabled, noSlChangesYet = false;
+      if (!draftBaseline || !draftBaseline.playerIds?.length) {
+        saveEnabled = ready; // nothing saved yet — normal first save
+      } else if (slPoolOpenNow) {
+        saveEnabled = ready; // editing via Edit Team — existing flow, unchanged
+      } else {
+        const baseSet = new Set(draftBaseline.playerIds);
+        const sameComposition = xi.length === 11 && baseSet.size === 11 && xi.every(id => baseSet.has(id));
+        const capVcChanged = cap !== draftBaseline.captainId || vc !== draftBaseline.vcId;
+        saveEnabled = ready && sameComposition && capVcChanged;
+        noSlChangesYet = ready && sameComposition && !capVcChanged;
+      }
+      saveBtn.disabled = !saveEnabled;
+      if (savingForNext && saveEnabled) {
         const nextNum  = slSaveTarget.match_number ?? '?';
         const nextHome = slSaveTarget.home_team_id ?? '?';
         const nextAway = slSaveTarget.away_team_id ?? '?';
@@ -5134,11 +5161,15 @@ p31,Sample Player,MI,bat,9.0,false
             ? 'Cap reached: only ' + seasonRemaining + ' transfer' + (seasonRemaining !== 1 ? 's' : '') + ' remaining.'
             : budgetLeft < 0
               ? 'Over budget by ' + Math.abs(budgetLeft).toFixed(1) + ' cr.'
-              : ready
+              : saveEnabled
                 ? 'XI ready — ' + capName + ' (C), ' + vcName + ' (VC)'
-                : !state.activeMatchId ? 'Select a match above to save.'
-                : xi.length < 11 ? 'Pick ' + (11 - xi.length) + ' more from the pool.'
-                : !cap ? 'Set a captain (tap C).' : !vc ? 'Set a vice-captain (tap V).' : 'C and VC must differ.';
+                : noSlChangesYet
+                  ? 'No changes to save.'
+                  : ready
+                    ? 'Open Edit Team to change your XI, then save.'
+                    : !state.activeMatchId ? 'Select a match above to save.'
+                    : xi.length < 11 ? 'Pick ' + (11 - xi.length) + ' more from the pool.'
+                    : !cap ? 'Set a captain (tap C).' : !vc ? 'Set a vice-captain (tap V).' : 'C and VC must differ.';
       }
 
       // Booster pills — async, fire-and-forget; renders into #slBoosterBar independently
@@ -5500,6 +5531,7 @@ p31,Sample Player,MI,bat,9.0,false
 
         // 2. Update in-memory draft state
         state.sl.draft = { playerIds: [...xi], captainId: cap, vcId: vc };
+        state.sl.lastSavedXI = { playerIds: [...xi], captainId: cap, vcId: vc };
 
         // How many changes from the last locked XI (preview only — not counted yet).
         // Only an empty baseline (no prior locked XI at all) means 0 transfers —
@@ -7216,6 +7248,32 @@ p31,Sample Player,MI,bat,9.0,false
       }
 
       renderMessages(sel, counts, used, maxTeam, overseasCount, overseasCap);
+
+      // ── Save XI button gating ────────────────────────────────────────────
+      // Pick XI normally shows whatever's already saved for the target match.
+      // Only arm Save XI when the player composition still matches what's
+      // saved and just Captain/Vice-Captain changed — that's a quick tweak.
+      // A composition change (e.g. removing a player via the pitch-hover ×)
+      // must go through Edit Team → Save XI instead, so it stays disabled here.
+      const saveXiBtnEl = $('#saveXiBtn');
+      if (saveXiBtnEl) {
+        const poolOpenNow = $('#poolPanel') && $('#poolPanel').style.display !== 'none';
+        const validXI = sel.length === 11 && !!state.captain && !!state.viceCaptain && state.captain !== state.viceCaptain;
+        const tm = saveTargetMatch();
+        const existingXi = tm ? (state.savedTeams || []).find(t => t.matchId === tm.id && !t.squadId) : null;
+        let saveEnabled;
+        if (!existingXi) {
+          saveEnabled = validXI; // nothing saved yet for this match — normal first save
+        } else if (poolOpenNow) {
+          saveEnabled = validXI; // editing via Edit Team — existing flow, unchanged
+        } else {
+          const sameComposition = existingXi.playerIds.length === 11 && sel.length === 11 &&
+            existingXi.playerIds.every(id => state.selected.includes(id));
+          const capVcChanged = existingXi.captainId !== state.captain || existingXi.viceCaptainId !== state.viceCaptain;
+          saveEnabled = validXI && sameComposition && capVcChanged;
+        }
+        saveXiBtnEl.disabled = !saveEnabled;
+      }
     }
 
     function renderMessages(sel, counts, used, maxTeam, overseasCount, overseasCap){
@@ -12528,6 +12586,12 @@ p31,Sample Player,MI,bat,9.0,false
         if (sliv) sliv.style.display = 'none';
         if (sse)  sse.style.display  = 'none';
         if (slg)  slg.style.display  = 'none';
+
+        // Re-render the active Pick XI's stats so Save XI's enabled/disabled
+        // state immediately reflects "Edit Team mode is now open" (composition
+        // changes are allowed to arm Save XI while editing).
+        if (state.mode === 'daily') { if (typeof renderSquadStats === 'function') renderSquadStats(); }
+        else { if (typeof renderSlXiTab === 'function') renderSlXiTab(); }
       } else {
         // Restore sub-tabs to whichever was last active
         if (state.mode === 'daily') renderDailyActiveScreen();
@@ -13271,6 +13335,7 @@ p31,Sample Player,MI,bat,9.0,false
       state.sl.xiCaptain       = null;
       state.sl.xiVc            = null;
       state.sl.lastLockedXI    = null;
+      state.sl.lastSavedXI     = null;
       state.sl.seasonData      = null;
       state.sl.seasonXferCount = 0;
       state.sl.seasonXferCap   = null;
