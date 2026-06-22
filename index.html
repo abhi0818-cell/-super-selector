@@ -7096,7 +7096,7 @@ p31,Sample Player,MI,bat,9.0,false
           <div class="xi-av" style="background:${roleBg[p.role]};color:${roleTc[p.role]};">${initials(p.name)}</div>
           <div class="xi-info">
             <div class="xi-nm">${p.name.split(' ').pop()} ${badge}</div>
-            <div class="xi-mt">${roleLabel[p.role]} · ${p.team}</div>
+            <div class="xi-mt">${roleLabel[p.role]} · ${p.team}${p.overseas ? ' <span class="os-tag" title="Overseas player">✈️</span>' : ''}</div>
           </div>
           <button class="cap-btn ${isCap?'captain':''}" data-act="cap" title="Captain (2×)">C</button>
           <button class="cap-btn ${isVc?'vc':''}"      data-act="vc"  title="Vice-captain (1.5×)">V</button>
