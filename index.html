@@ -627,6 +627,18 @@
     #slSeasonView .hist-match-table td { border-bottom: 1px dashed rgba(214,207,168,0.7); }
     #slSeasonView .hist-match-block:last-child .hist-match-table td { border-bottom: none; }
     #slSeasonView .hist-match-block.open .hist-match-table td { border-bottom-color: transparent; }
+    /* Leaderboard tab's inline expand panel: same accordion table-alignment
+       treatment. Without table-layout:fixed here, a long name like "Pretorius"
+       widens its own <td> (table-layout:auto sizes columns by content), which
+       shifts every column to its right out from under the header — the colgroup
+       widths only take effect once layout is fixed. */
+    #inlineLbContent .sl-season-table { table-layout: fixed; }
+    #inlineLbContent .sl-season-table td,
+    #inlineLbContent .sl-season-table th { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #inlineLbContent .hist-match-table { margin: 0; }
+    #inlineLbContent .hist-match-table td { border-bottom: 1px dashed rgba(214,207,168,0.7); }
+    #inlineLbContent .hist-match-block:last-child .hist-match-table td { border-bottom: none; }
+    #inlineLbContent .hist-match-block.open .hist-match-table td { border-bottom-color: transparent; }
 
     /* ── Leaderboard ──────────────────────────────────────── */
     #lbModal {
@@ -2747,7 +2759,7 @@ p31,Sample Player,MI,bat,9.0,false
 
         // Shared colgroup so each match's mini table lines up with the header table:
         // Match | C | VC | Boost | Xfer | Net | Running.
-        const COLGROUP = '<colgroup><col><col style="width:46px"><col style="width:46px"><col style="width:40px"><col style="width:36px"><col style="width:60px"><col style="width:80px"></colgroup>';
+        const COLGROUP = '<colgroup><col><col style="width:46px"><col style="width:46px"><col style="width:52px"><col style="width:40px"><col style="width:60px"><col style="width:80px"></colgroup>';
 
         const blocks = [...matchRowData]
           .reverse()
@@ -2812,7 +2824,7 @@ p31,Sample Player,MI,bat,9.0,false
 
         const headerTable =
           '<table class="sl-season-table hist-header-table">' + COLGROUP +
-          '<thead><tr><th class="l">Match</th><th>C</th><th>VC</th><th>Boost</th><th>Xfer</th><th>Net</th><th>Running</th></tr></thead>' +
+          '<thead><tr><th class="l">Match</th><th>C</th><th>VC</th><th>Booster</th><th>Xfer</th><th>Net</th><th>Running</th></tr></thead>' +
           '</table>';
 
         cell.innerHTML = headerTable + blocks;
