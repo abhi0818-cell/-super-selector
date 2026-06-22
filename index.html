@@ -5172,7 +5172,7 @@ p31,Sample Player,MI,bat,9.0,false
       if (!box) return;
       if (!state.sl.capPick) { box.style.display = 'none'; box.innerHTML = ''; return; }
       const which = state.sl.capPick;
-      const sel = state.sl.xiPlayers.map(id => PLAYERS.find(p => p.id === id)).filter(Boolean);
+      const sel = sortByRole(state.sl.xiPlayers).map(id => PLAYERS.find(p => p.id === id)).filter(Boolean);
       box.style.display = '';
       box.innerHTML = `<div class="cvp-title">Set ${which === 'cap' ? 'captain' : 'vice-captain'} — choose from your XI</div>`
         + '<div class="cvp-opts">' + sel.map(p => {
@@ -7597,7 +7597,7 @@ p31,Sample Player,MI,bat,9.0,false
       if (!box) return;
       if (!state.capPick) { box.style.display = 'none'; box.innerHTML = ''; return; }
       const which = state.capPick;
-      const sel = state.selected.map(playerById).filter(Boolean);
+      const sel = sortByRole(state.selected).map(playerById).filter(Boolean);
       box.style.display = '';
       box.innerHTML = `<div class="cvp-title">Set ${which === 'cap' ? 'captain' : 'vice-captain'} — choose from your XI</div>`
         + '<div class="cvp-opts">' + sel.map(p => {
