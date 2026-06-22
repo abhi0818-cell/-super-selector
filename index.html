@@ -12801,7 +12801,10 @@ p31,Sample Player,MI,bat,9.0,false
 
       $('#seasonBestPts').textContent = bestPts + ' pts';
       $('#seasonBestMatch').textContent = bestMatchLabel;
-      historyEl.innerHTML = rows.join('');
+      // data.matches is sorted ascending (oldest match first) so the running-total
+      // math above accumulates correctly — reverse only for display so the most
+      // recent match shows at the top, matching the in-app SL Season tab.
+      historyEl.innerHTML = rows.reverse().join('');
     }
     // ── Login tab switcher ────────────────────────────────────────────────
     $('#tabSignIn').addEventListener('click', () => switchLoginTab('signin'));
