@@ -897,6 +897,13 @@
     }
     .pitch-cbadge.c  { background:#C9A84C; color:#1C1F26; }
     .pitch-cbadge.vc { background:#ffffffee; color:#7a5500; }
+    .pitch-os-badge {
+      position:absolute; top:calc(var(--tsz,34px)*-0.15); left:calc(var(--tsz,34px)*-0.18);
+      width:calc(var(--tsz,34px)*0.44); height:calc(var(--tsz,34px)*0.44);
+      font-size:calc(var(--tsz,34px)*0.32);
+      display:flex; align-items:center; justify-content:center;
+      filter:drop-shadow(0 1px 3px rgba(0,0,0,0.85));
+    }
     .pitch-nametag {
       font-size:calc(var(--tsz,34px)*0.28); font-weight:700; color:#fff;
       text-shadow:0 1px 4px rgba(0,0,0,1),0 0 6px rgba(0,0,0,.8);
@@ -2339,6 +2346,15 @@ p31,Sample Player,MI,bat,9.0,false
         return RULES.maxOverseas._tournament;
       }
       return RULES.maxOverseas[state.format] ?? 11;
+    }
+
+    // True only when this tournament/format actually enforces an overseas cap —
+    // same condition already used to show/hide the OS filter chip (#osFilterChip)
+    // and the Overseas stat tile. A cap of 0 or 11+ means "no restriction", so
+    // the overseas badge on pitch jerseys is only worth showing when it does.
+    function osCapApplies() {
+      const cap = getOverseasCap();
+      return cap > 0 && cap < 11;
     }
 
     // ─── STATE ───────────────────────────────────────────────────────────────
@@ -7096,7 +7112,7 @@ p31,Sample Player,MI,bat,9.0,false
           <div class="xi-av" style="background:${roleBg[p.role]};color:${roleTc[p.role]};">${initials(p.name)}</div>
           <div class="xi-info">
             <div class="xi-nm">${p.name.split(' ').pop()} ${badge}</div>
-            <div class="xi-mt">${roleLabel[p.role]} · ${p.team}${p.overseas ? ' <span class="os-tag" title="Overseas player">✈️</span>' : ''}</div>
+            <div class="xi-mt">${roleLabel[p.role]} · ${p.team}</div>
           </div>
           <button class="cap-btn ${isCap?'captain':''}" data-act="cap" title="Captain (2×)">C</button>
           <button class="cap-btn ${isVc?'vc':''}"      data-act="vc"  title="Vice-captain (1.5×)">V</button>
@@ -13264,10 +13280,13 @@ p31,Sample Player,MI,bat,9.0,false
       var tm = teamByCode(p.team);
       var c1 = (tm && tm.color)  || '#888888';
       var c2 = (tm && tm.color2) || '#333333';
+      var osBadge = (p.overseas && osCapApplies())
+        ? '<span class="pitch-os-badge" title="Overseas player">✈️</span>' : '';
       return '<div class="pitch-player" data-pid="' + id + '">'
         + '<div class="pitch-jwrap">'
         + pitchJerseyHtml(pitchTeamLabel(p.team), c1, c2)
         + badge
+        + osBadge
         + '<img class="pitch-role-icon" src="' + ROLE_ICON_P[p.role] + '" alt="' + p.role + '"/>'
         + '<div class="pitch-controls">'
         + '<button class="pitch-ctrl-btn' + (isCap ? ' c-on' : '') + '" data-act="cap">C</button>'
@@ -13305,10 +13324,17 @@ p31,Sample Player,MI,bat,9.0,false
       var pts = rawPts !== null ? (rawPts * mult).toFixed(1) : '—';
       var roleKey = p.role || 'bat';
       var iconSrc = ROLE_ICON_P[roleKey] || ROLE_ICON_P['bat'];
+      // History/Live Score rows come from player_match_stats joins, which don't
+      // carry is_overseas — fall back to the live player pool (same tournament)
+      // for that flag, same way teamByCode() above is relied on for jersey colors.
+      var isOverseas = (p.is_overseas ?? p.overseas ?? playerById(p.player_id)?.overseas) || false;
+      var osBadge = (isOverseas && osCapApplies())
+        ? '<span class="pitch-os-badge" title="Overseas player">✈️</span>' : '';
       return '<div class="pitch-player">'
         + '<div class="pitch-jwrap">'
         + pitchJerseyHtml(pitchTeamLabel(p.team_id), c1, c2)
         + badge
+        + osBadge
         + '<img class="pitch-role-icon" src="' + iconSrc + '" alt="' + roleKey + '"/>'
         + '</div>'
         + '<div class="pitch-nametag">' + escapeHtml(ln) + '</div>'
