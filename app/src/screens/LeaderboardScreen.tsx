@@ -25,6 +25,10 @@ import { useContestStore } from '../store/contestStore';
 import { useLeaderboardStore, LBEntry } from '../store/leaderboardStore';
 import { useAuthStore } from '../store/authStore';
 import { getSquadSeasonHistory, MatchWeek, MatchPlayer, MatchTeam } from '../lib/seasonHistory';
+import {
+  getDailyMatchOptions, loadDailyLeaderboard, getDailyUserHistory,
+  DailyMatchOption,
+} from '../lib/dailyLeaderboard';
 
 // ─── Domain types ─────────────────────────────────────────────────────────────
 
@@ -118,37 +122,48 @@ const CONTEST_ICONS_LB: Record<string, string> = {
 // ─── Team Detail Modal ────────────────────────────────────────────────────────
 
 interface TeamDetailModalProps {
-  entry:   LeaderboardEntry | null;
-  onClose: () => void;
+  entry:        LeaderboardEntry | null;
+  onClose:      () => void;
+  contestId:    string;                          // needed for Daily's user-history lookup
+  contestType:  'daily' | 'sl' | 'private';
+  initialMwId?: string;                           // Daily: default to the match tapped from, not "latest"
 }
 
-function TeamDetailModal({ entry, onClose }: TeamDetailModalProps) {
+function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }: TeamDetailModalProps) {
   const [matchWeeks, setMatchWeeks] = useState<MatchWeek[]>([]);
   const [history, setHistory]       = useState<MatchTeam[]>([]);
   const [loadingHist, setLoadingHist] = useState(false);
   const [mwId, setMwId]             = useState<string>('');
 
   useEffect(() => {
-    if (!entry?.squadId) {
+    if (!entry) {
       setMatchWeeks([]);
       setHistory([]);
       setMwId('');
       return;
     }
+    // Daily has no persistent squad — pull this user's full pick history
+    // across every match instead (mirrors web's getMatchHistoryDetailed).
+    // SL/private keep the squad/season model.
+    const fetchHistory = contestType === 'daily'
+      ? getDailyUserHistory(contestId, entry.userId)
+      : getSquadSeasonHistory(entry.squadId);
+
     setLoadingHist(true);
-    getSquadSeasonHistory(entry.squadId)
+    fetchHistory
       .then(({ matchWeeks: mws, history: hist }) => {
         setMatchWeeks(mws);
         setHistory(hist);
-        setMwId(mws[mws.length - 1]?.id ?? '');
+        const fallback = mws[mws.length - 1]?.id ?? '';
+        setMwId(initialMwId && mws.some(w => w.id === initialMwId) ? initialMwId : fallback);
       })
       .catch(err => {
-        console.warn('[LeaderboardScreen] getSquadSeasonHistory failed:', err);
+        console.warn('[LeaderboardScreen] history fetch failed:', err);
         setMatchWeeks([]);
         setHistory([]);
       })
       .finally(() => setLoadingHist(false));
-  }, [entry?.squadId]);
+  }, [entry?.userId, entry?.squadId, contestId, contestType]);
 
   if (!entry) return null;
 
@@ -178,7 +193,7 @@ function TeamDetailModal({ entry, onClose }: TeamDetailModalProps) {
             </View>
             <View style={styles.modalTotalBox}>
               <Text style={styles.modalTotalPts}>{entry.points.toLocaleString()}</Text>
-              <Text style={styles.modalTotalSub}>total pts</Text>
+              <Text style={styles.modalTotalSub}>{contestType === 'daily' ? 'match pts' : 'total pts'}</Text>
             </View>
           </LinearGradient>
 
@@ -459,6 +474,15 @@ export default function LeaderboardScreen() {
   const [activeTab, setActiveTab]         = useState<string>(tabs[0]?.id ?? 'daily');
   const [selectedEntry, setSelectedEntry] = useState<LeaderboardEntry | null>(null);
 
+  // ── Daily-only state ────────────────────────────────────────────────────────
+  // Daily has no persistent squad, so it ranks ONE match at a time (mirrors
+  // web's getLeaderboardDaily) instead of the squad/season aggregate SL and
+  // private leagues use — see dailyLeaderboard.ts for why.
+  const [dailyMatchOptions, setDailyMatchOptions] = useState<DailyMatchOption[]>([]);
+  const [selectedDailyMatchId, setSelectedDailyMatchId] = useState<string>('');
+  const [dailyEntries, setDailyEntries] = useState<LeaderboardEntry[]>([]);
+  const [dailyLoading, setDailyLoading] = useState(false);
+
   // Sync active tab when contests load for the first time
   useEffect(() => {
     if (tabs.length > 0 && !tabs.find(t => t.id === activeTab)) {
@@ -471,18 +495,66 @@ export default function LeaderboardScreen() {
     setCurrentUser(user?.id ?? null);
   }, [user?.id]);
 
+  const activeContestType = tabs.find(t => t.id === activeTab)?.type;
+  const isDailyTab = activeContestType === 'daily';
+
   // Load leaderboard whenever tab changes (only for real contest UUIDs)
   useEffect(() => {
     const isRealUuid = activeTab.includes('-'); // UUID contains hyphens; mock keys don't
-    if (isRealUuid) loadLeaderboard(activeTab);
-  }, [activeTab]);
+    if (!isRealUuid) return;
+    if (isDailyTab) return; // handled by the match-options effect below
+    loadLeaderboard(activeTab);
+  }, [activeTab, isDailyTab]);
 
-  const entries = sbEntries[activeTab] ?? [];
+  // Daily: fetch which match-days have any entries, default to the most
+  // recent locked one. Re-runs whenever the Daily tab itself is selected.
+  useEffect(() => {
+    if (!isDailyTab) { setDailyMatchOptions([]); setSelectedDailyMatchId(''); return; }
+    const isRealUuid = activeTab.includes('-');
+    if (!isRealUuid) return;
+    getDailyMatchOptions(activeTab)
+      .then(opts => {
+        setDailyMatchOptions(opts);
+        setSelectedDailyMatchId(opts[0]?.id ?? '');
+      })
+      .catch(err => {
+        console.warn('[LeaderboardScreen] getDailyMatchOptions failed:', err);
+        setDailyMatchOptions([]);
+        setSelectedDailyMatchId('');
+      });
+  }, [activeTab, isDailyTab]);
+
+  // Daily: load the ranked entries for whichever match is selected.
+  useEffect(() => {
+    if (!isDailyTab || !selectedDailyMatchId) { setDailyEntries([]); return; }
+    setDailyLoading(true);
+    loadDailyLeaderboard(selectedDailyMatchId, user?.id ?? null)
+      .then(rows => {
+        // Adapt DailyEntry → LBEntry shape so EntryRow/UserHighlight/the modal
+        // can render either contest type with no branching of their own.
+        setDailyEntries(rows.map(r => ({
+          rank:          r.rank,
+          userId:        r.userId,
+          squadId:       r.teamId,   // N/A for Daily — only used as a key elsewhere
+          displayName:   r.displayName,
+          teamName:      r.teamName,
+          points:        r.points,
+          isCurrentUser: r.isCurrentUser,
+        })));
+      })
+      .catch(err => {
+        console.warn('[LeaderboardScreen] loadDailyLeaderboard failed:', err);
+        setDailyEntries([]);
+      })
+      .finally(() => setDailyLoading(false));
+  }, [selectedDailyMatchId, isDailyTab, user?.id]);
+
+  const entries = isDailyTab ? dailyEntries : (sbEntries[activeTab] ?? []);
   const myEntry = entries.find(e => e.isCurrentUser);
+  const listLoading = isDailyTab ? dailyLoading : loading;
   // SL and private leagues share the squad/booster/transfer system — daily
   // contests don't, so only they get the Booster/Xfer columns (mirrors
   // web's `contestType === 'season_long'` check in renderInlineLeaderboard).
-  const activeContestType = tabs.find(t => t.id === activeTab)?.type;
   const showSlCols = activeContestType === 'sl' || activeContestType === 'private';
 
   return (
@@ -533,6 +605,29 @@ export default function LeaderboardScreen() {
         ))}
       </ScrollView>
 
+      {/* ── Daily match selector — Daily ranks one match at a time, never a
+            season aggregate, so this picker IS the equivalent of "which
+            matchweek" for this tab. ── */}
+      {isDailyTab && dailyMatchOptions.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.mwTabs}
+        >
+          {dailyMatchOptions.map(opt => (
+            <Pressable
+              key={opt.id}
+              style={[styles.mwTab, selectedDailyMatchId === opt.id && styles.mwTabActive]}
+              onPress={() => setSelectedDailyMatchId(opt.id)}
+            >
+              <Text style={[styles.mwTabLabel, selectedDailyMatchId === opt.id && styles.mwTabLabelActive]}>
+                {opt.label}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      )}
+
       {/* ── User highlight ── */}
       {myEntry && <UserHighlight entry={myEntry} showSlCols={showSlCols} />}
 
@@ -544,7 +639,7 @@ export default function LeaderboardScreen() {
       </View>
 
       {/* ── Rankings list (or spinner while first load) ── */}
-      {loading && entries.length === 0 ? (
+      {listLoading && entries.length === 0 ? (
         <View style={styles.spinnerWrap}>
           <ActivityIndicator size="large" color="#C9A84C" />
         </View>
@@ -562,7 +657,11 @@ export default function LeaderboardScreen() {
           contentContainerStyle={styles.list}
           ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
           ListEmptyComponent={
-            <Text style={styles.empty}>No leaderboard data yet for this contest</Text>
+            <Text style={styles.empty}>
+              {isDailyTab && dailyMatchOptions.length === 0
+                ? 'No locked Daily matches yet'
+                : 'No leaderboard data yet for this contest'}
+            </Text>
           }
           showsVerticalScrollIndicator={false}
         />
@@ -573,6 +672,9 @@ export default function LeaderboardScreen() {
         <TeamDetailModal
           entry={selectedEntry}
           onClose={() => setSelectedEntry(null)}
+          contestId={activeTab}
+          contestType={isDailyTab ? 'daily' : (activeContestType === 'private' ? 'private' : 'sl')}
+          initialMwId={isDailyTab ? selectedDailyMatchId : undefined}
         />
       )}
     </View>

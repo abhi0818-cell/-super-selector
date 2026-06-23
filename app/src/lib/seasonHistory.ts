@@ -31,6 +31,7 @@ import {
 } from '../engine/cricketScoringEngine';
 import { MatchFormat, PlayerRole, CaptaincyRole } from '../types';
 import { BOOSTER_META } from '../store/boosterStore';
+import { isMatchLocked } from './matchLock';
 
 export type MatchWeek = { id: string; label: string; match: string; date: string };
 
@@ -81,7 +82,7 @@ export async function getSquadSeasonHistory(squadId: string): Promise<{
     supabase.from('player_match_stats')
       .select('match_id, player_id, batting, bowling, fielding')
       .in('match_id', matchIds).in('player_id', playerIds),
-    supabase.from('matches').select('id, format').in('id', matchIds),
+    supabase.from('matches').select('id, format, lock_time, start_time').in('id', matchIds),
   ]);
 
   // Real role from `players`, not the role stored on user_match_xi (which was
@@ -97,6 +98,14 @@ export async function getSquadSeasonHistory(squadId: string): Promise<{
 
   const formatById: Record<string, MatchFormat> = {};
   (matchRows || []).forEach((m: any) => { formatById[m.id] = (m.format ?? 'T20') as MatchFormat; });
+
+  // Don't show a match in history until its XI lock gate has actually
+  // passed — a squad may have a saved/pre-picked XI for an upcoming match
+  // (carry-forward etc.), but that match hasn't "happened" yet so it
+  // shouldn't appear as a completed matchweek.
+  const lockedMatchIds = new Set(
+    (matchRows || []).filter(isMatchLocked).map((m: any) => m.id),
+  );
 
   const penaltyByMatch: Record<string, number> = {};
   (xferRows || []).forEach((t: any) => {
@@ -127,8 +136,11 @@ export async function getSquadSeasonHistory(squadId: string): Promise<{
   });
 
   // Ascending by match number — tabs read left-to-right, oldest first, and
-  // the screen defaults to the LAST (most recent) tab on open.
-  const groups = Object.values(byMatch).sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0));
+  // the screen defaults to the LAST (most recent) tab on open. Unlocked
+  // matches (lock gate not yet passed) are excluded — see lockedMatchIds above.
+  const groups = Object.values(byMatch)
+    .filter(g => lockedMatchIds.has(g.match_id))
+    .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0));
 
   const matchWeeks: MatchWeek[] = groups.map(g => ({
     id:    g.match_id,
