@@ -481,6 +481,31 @@ function parseBusinessStandard(html: string): Innings[] {
   return innings
 }
 
+// Format's regulation overs, for corroborating a weak completion signal
+// against the last parsed innings (see lastInningsLooksDone() / detectCompletion()
+// below). Test has no fixed cap, so it's intentionally absent here — only the
+// all-out check applies for that format.
+const FORMAT_MAX_OVERS: Record<string, number> = { T20: 20, ODI: 50 }
+
+/** Does the last parsed innings actually look finished — all out, or overs
+ *  exhausted for the format? Used to corroborate a weak ("bare badge", no
+ *  result-sentence-yet) completion signal before trusting it. */
+function lastInningsLooksDone(innings: Innings[], formatKey: string | null | undefined): boolean {
+  if (!innings.length) return false
+  const last = innings[innings.length - 1]
+  const wkts = last.batting.filter(b => b.dismissed).length
+  if (wkts >= 10) return true
+  const maxOvers = FORMAT_MAX_OVERS[(formatKey ?? 'T20').toUpperCase()]
+  if (maxOvers != null) {
+    const balls = last.bowling.reduce(
+      (sum, b) => sum + (Math.round(b.overs) * 6 + Math.round((b.overs % 1) * 10)),
+      0,
+    )
+    if (balls >= maxOvers * 6 - 1) return true // tolerate the last legal ball
+  }
+  return false
+}
+
 // ─── Match-completion detection ───────────────────────────────────────────────
 // Previously only poll-cricapi's matchLifecycle() (driven by CricAPI's
 // matchEnded/status fields) could ever flip matches.status to 'completed' — a
@@ -490,7 +515,7 @@ function parseBusinessStandard(html: string): Innings[] {
 // "COMPLETED / Match N /" badge near the top, and a result line ("X won by Y
 // wickets/runs", "Match Tied", "No Result", "Match Abandoned") that replaces
 // the live "X need Y runs in Z balls" line once the match actually ends.
-function detectCompletion(html: string): { completed: boolean; resultText: string | null } {
+function detectCompletion(html: string): { completed: boolean; resultText: string | null; strong: boolean } {
   const text = stripTags(html)
   const badgeMatch = text.match(/\b(LIVE|COMPLETED|UPCOMING)\s*\/\s*Match\b/i)
   const badge = badgeMatch ? badgeMatch[1].toUpperCase() : null
@@ -500,6 +525,14 @@ function detectCompletion(html: string): { completed: boolean; resultText: strin
   return {
     completed : badge === 'COMPLETED' || !!resultMatch,
     resultText: resultMatch ? resultMatch[1].trim() : null,
+    // An explicit result sentence is a strong, definitive signal — the page
+    // only prints one once the match actually has an outcome. The bare
+    // "COMPLETED" badge with no result sentence yet is weaker: the badge and
+    // the scorecard table below it are populated by separately-timed feeds,
+    // and the badge has been seen to flip before the table actually finishes
+    // updating (see lastInningsLooksDone() below for the corroboration this
+    // feeds into).
+    strong    : !!resultMatch,
   }
 }
 
@@ -976,7 +1009,19 @@ Deno.serve(async (req: Request) => {
       // Previously only poll-cricapi could ever flip matches.status to
       // 'completed' — see detectCompletion() above for why this same signal
       // is readable straight out of the scraped HTML.
-      const completionInfo = detectCompletion(html)
+      let completionInfo = detectCompletion(html)
+
+      // Weak signal (bare "COMPLETED" badge, no result sentence yet) gets
+      // corroborated against the innings we just parsed before being trusted
+      // — same false-positive shape as poll-cricapi's matchEnded flag (see
+      // that file's matchLifecycle() for the NZ Women vs Scotland Women case
+      // this guards against): the badge can flip before the scorecard table
+      // underneath has actually finished updating. If the last innings here
+      // doesn't look done (not all out, overs not exhausted), treat the
+      // match as still live regardless of what the badge says.
+      if (completionInfo.completed && !completionInfo.strong && !lastInningsLooksDone(innings, (match as any).format)) {
+        completionInfo = { ...completionInfo, completed: false }
+      }
 
       // ── 3b. Staleness guard ─────────────────────────────────────────────
       // Compare this read's progress against the furthest progress seen so

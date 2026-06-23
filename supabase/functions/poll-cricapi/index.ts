@@ -324,12 +324,65 @@ function fromCricAPI(payload: any): ApiPlayer[] {
   return players
 }
 
-function matchLifecycle(payload: any): 'completed' | 'live' | 'upcoming' | 'unknown' {
+// ─── Completion corroboration ───────────────────────────────────────────────
+// CricAPI's matchEnded flag (and vaguer status wording) has been observed to
+// flip/appear before the match has actually finished — the scorecard array
+// itself still shows the chasing side mid-innings (wickets in hand, overs
+// remaining). This is exactly the shape of the false-positive seen with NZ
+// Women vs Scotland Women (19th Match): matchEnded/status implied completion
+// while the scorecard still showed New Zealand batting.
+//
+// Treat the completion signal as authoritative outright only when it's an
+// EXPLICIT result sentence ("X won by Y wickets/runs", "Match Tied", "No
+// Result", "Match Abandoned", "Match Drawn") — CricAPI only writes one of
+// those once it actually has a definitive outcome. Anything weaker (the bare
+// matchEnded boolean, or vaguer "match ended/completed" / bare "result"
+// wording with no result sentence attached) gets corroborated against the
+// last innings's own wickets/overs numbers before being trusted; if the
+// scorecard doesn't back it up, the match is treated as still live instead
+// of being marked completed on a possibly-wrong flag.
+const FORMAT_MAX_OVERS: Record<string, number> = { T20: 20, ODI: 50 }
+
+function lastInningsLooksDone(data: any, formatKey: string): boolean {
+  const innings = data.scorecard ?? data.innings ?? data.scores ?? null
+  if (!Array.isArray(innings) || !innings.length) return false
+  const last: any = innings[innings.length - 1]
+
+  const wkts = Number(last?.w ?? last?.wickets ?? NaN)
+  if (!Number.isNaN(wkts)) {
+    if (wkts >= 10) return true
+  } else {
+    // No innings-level wicket count on this payload shape — fall back to
+    // counting actual dismissals in the innings' own batting rows.
+    const battingRows: any[] = last?.batting ?? []
+    const dismissed = battingRows.filter((b: any) =>
+      !!b?.dismissal && !String(b.dismissal ?? '').toLowerCase().includes('not out'),
+    ).length
+    if (dismissed >= 10) return true
+  }
+
+  const maxOvers = FORMAT_MAX_OVERS[formatKey]
+  const overs = Number(last?.o ?? last?.overs ?? NaN)
+  // Tolerance for the last legal ball rounding (e.g. 19.6 / 49.6 overs).
+  if (maxOvers != null && !Number.isNaN(overs) && overs >= maxOvers - 0.05) return true
+
+  return false
+}
+
+function matchLifecycle(payload: any, formatKey = 'T20'): 'completed' | 'live' | 'upcoming' | 'unknown' {
   const data = payload?.data ?? payload ?? {}
-  if (data.matchEnded === true) return 'completed'
-  if (data.matchStarted === true) return 'live'
   const status = String(data.status || payload?.status || '').toLowerCase()
-  if (/won by|tied|no result|abandoned|match (ended|completed|drawn)|result|drawn/i.test(status)) return 'completed'
+
+  // Strong signal — explicit, definitive result sentence. Trust outright.
+  if (/won by|\btied\b|no result|abandoned|\bdrawn\b/.test(status)) return 'completed'
+
+  // Weak signal — needs corroboration from the scorecard itself.
+  const weakCompletionSignal = data.matchEnded === true || /match (ended|completed)|result/i.test(status)
+  if (weakCompletionSignal) {
+    return lastInningsLooksDone(data, formatKey) ? 'completed' : 'live'
+  }
+
+  if (data.matchStarted === true) return 'live'
   if (/match started|in progress|innings break|live|stumps|tea|lunch|drinks|day [123456789]/i.test(status)) return 'live'
   if (/toss/i.test(status)) return 'live'
   const innings = data.scorecard ?? data.innings ?? data.scores ?? null
@@ -640,7 +693,7 @@ Deno.serve(async (req: Request) => {
         { onConflict: 'match_id' },
       )
 
-      const stage = matchLifecycle(payload)
+      const stage = matchLifecycle(payload, fmtKey)
 
       if (stage === 'upcoming') {
         results.push({ matchId: match.id, status: 'upcoming' })

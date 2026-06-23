@@ -1534,6 +1534,12 @@ export function createDb(cfg = {}) {
       if (patch.notes        !== undefined) row.notes         = patch.notes;
       if (patch.externalId   !== undefined) row.external_id   = patch.externalId;
       if (patch.dataSource   !== undefined) row.data_source   = patch.dataSource ?? 'auto';
+      // Used by the admin "Revert to Live" button — resets the staleness-guard
+      // watermark (migration_v27) when un-completing a match whose completion
+      // signal turned out to be wrong, so the next genuine Poll/Scrape isn't
+      // rejected as a regression against the bad reading that caused this.
+      if (patch.progressInnings !== undefined) row.progress_innings = patch.progressInnings;
+      if (patch.progressBalls   !== undefined) row.progress_balls   = patch.progressBalls;
       const { data, error } = await sb.from('matches').update(row).eq('id', id).select().single();
       if (error) throw error;
       return data;

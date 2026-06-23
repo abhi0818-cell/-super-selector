@@ -2505,16 +2505,69 @@ p31,Sample Player,MI,bat,9.0,false
       return !hasCustomRules && !hasCustomBoosters;
     }
 
+    // ─── Completion corroboration ──────────────────────────────────────────────
+    // CricAPI's matchEnded flag (and vaguer status wording) has been observed to
+    // flip/appear before the match has actually finished — the scorecard array
+    // itself still shows the chasing side mid-innings (wickets in hand, overs
+    // remaining). This is exactly the shape of the false-positive seen with NZ
+    // Women vs Scotland Women (19th Match): matchEnded/status implied completion
+    // while the scorecard still showed New Zealand batting.
+    //
+    // Treat the completion signal as authoritative outright only when it's an
+    // EXPLICIT result sentence ("X won by Y wickets/runs", "Match Tied", "No
+    // Result", "Match Abandoned", "Match Drawn") — CricAPI only writes one of
+    // those once it actually has a definitive outcome. Anything weaker (the bare
+    // matchEnded boolean, or vaguer "match ended/completed" / bare "result"
+    // wording with no result sentence attached) gets corroborated against the
+    // last innings's own wickets/overs numbers before being trusted; if the
+    // scorecard doesn't back it up, the match is treated as still live instead
+    // of being marked completed on a possibly-wrong flag.
+    // Mirrors supabase/functions/poll-cricapi/index.ts — keep in sync.
+    const FORMAT_MAX_OVERS = { T20: 20, ODI: 50 };
+
+    function lastInningsLooksDone(data, formatKey) {
+      const innings = data.scorecard ?? data.innings ?? data.scores ?? null;
+      if (!Array.isArray(innings) || !innings.length) return false;
+      const last = innings[innings.length - 1];
+
+      const wkts = Number(last?.w ?? last?.wickets ?? NaN);
+      if (!Number.isNaN(wkts)) {
+        if (wkts >= 10) return true;
+      } else {
+        // No innings-level wicket count on this payload shape — fall back to
+        // counting actual dismissals in the innings' own batting rows.
+        const battingRows = last?.batting ?? [];
+        const dismissed = battingRows.filter(b =>
+          !!b?.dismissal && !String(b.dismissal ?? '').toLowerCase().includes('not out'),
+        ).length;
+        if (dismissed >= 10) return true;
+      }
+
+      const maxOvers = FORMAT_MAX_OVERS[formatKey];
+      const overs = Number(last?.o ?? last?.overs ?? NaN);
+      // Tolerance for the last legal ball rounding (e.g. 19.6 / 49.6 overs).
+      if (maxOvers != null && !Number.isNaN(overs) && overs >= maxOvers - 0.05) return true;
+
+      return false;
+    }
+
     // Classify a CricAPI match status into a lifecycle stage.
     // Returns: 'completed' | 'live' | 'upcoming' | 'unknown'
-    function matchLifecycle(payload) {
+    function matchLifecycle(payload, formatKey) {
+      formatKey = formatKey || 'T20';
       const data = payload?.data ?? payload ?? {};
-      // Some CricAPI responses include matchEnded / matchStarted booleans
-      if (data.matchEnded === true) return 'completed';
-      if (data.matchStarted === true) return 'live';
       const status = String(data.status || payload?.status || '').toLowerCase();
-      // Completion indicators (varied API copy)
-      if (/won by|tied|no result|abandoned|match (ended|completed|drawn)|result|drawn/i.test(status)) return 'completed';
+
+      // Strong signal — explicit, definitive result sentence. Trust outright.
+      if (/won by|\btied\b|no result|abandoned|\bdrawn\b/.test(status)) return 'completed';
+
+      // Weak signal — needs corroboration from the scorecard itself.
+      const weakCompletionSignal = data.matchEnded === true || /match (ended|completed)|result/i.test(status);
+      if (weakCompletionSignal) {
+        return lastInningsLooksDone(data, formatKey) ? 'completed' : 'live';
+      }
+
+      if (data.matchStarted === true) return 'live';
       // Live indicators — explicit keywords
       if (/match started|in progress|innings break|live|stumps|tea|lunch|drinks|day [123456789]/i.test(status)) return 'live';
       // Toss done = match is effectively live (lineups confirmed, play about to start)
@@ -8351,7 +8404,7 @@ p31,Sample Player,MI,bat,9.0,false
           // If the match row says 'scheduled' or 'live', ignore the cached scorecard and
           // poll live — a stale finalize run during testing shouldn't block live polling.
           const matchIsComplete = localMatch.status === 'completed';
-          if (cached && matchIsComplete && matchLifecycle(cached) === 'completed') {
+          if (cached && matchIsComplete && matchLifecycle(cached, localMatch?.format) === 'completed') {
             state.lastScorecard = cached;
             saveScorecard(id, cached);           // warm localStorage too
             const players = fromCricAPI(cached, squad, state.format);
@@ -8466,7 +8519,7 @@ p31,Sample Player,MI,bat,9.0,false
           state._lastSyncedAt = syncedAt;
 
           // ── Auto-update match status on every poll ─────────────────────────
-          const stage = matchLifecycle(payload);
+          const stage = matchLifecycle(payload, state.format);
           const pollLocalMatch = state.matches.find(m => m.external_id === id);
 
           // Derive target status:
@@ -9773,6 +9826,13 @@ p31,Sample Player,MI,bat,9.0,false
                               color:var(--accent);cursor:pointer;"
                        title="Manually add catch/stumping/run-out/bowled/LBW credit for a player in this match">🥎 Fielding</button>`
                   : ''}
+                ${isFinished
+                  ? `<button class="row-revert-live" data-act="revert-live"
+                       style="font-size:11px;padding:2px 7px;border-radius:4px;
+                              background:rgba(220,80,80,0.10);border:1px solid rgba(220,80,80,0.4);
+                              color:rgba(220,80,80,0.95);cursor:pointer;"
+                       title="Match got marked Completed but the scorecard isn't actually finished (bad/early signal from the data source). Set it back to In Progress so Poll/Scrape can run again.">↩ Revert to Live</button>`
+                  : ''}
                 ${m.status === 'delayed'
                   ? `<button class="row-revert-lock" data-act="revert-lock"
                        style="font-size:11px;padding:2px 7px;border-radius:4px;
@@ -9995,6 +10055,36 @@ p31,Sample Player,MI,bat,9.0,false
             toast('Revert failed: ' + err.message, 5000);
           } finally {
             btn.disabled = false;
+          }
+        });
+        tr.querySelector('[data-act="revert-live"]')?.addEventListener('click', async (e) => {
+          const btn = e.currentTarget;
+          const match = state.matches.find(x => x.id === id);
+          const label = match
+            ? `Match ${match.match_number ?? ''} (${match.home_team_id ?? ''} vs ${match.away_team_id ?? ''})`
+            : `match ${id}`;
+          if (!confirm(
+            `Revert ${label} from Completed back to In Progress?\n\n` +
+            `Use this when the data source (CricAPI/scraper) marked the match ` +
+            `completed but the scorecard shows it's still actually live — this ` +
+            `re-enables Poll/Scrape for it and resets the stored progress ` +
+            `watermark so the next read isn't rejected as "stale".\n\n` +
+            `It does NOT delete the player_match_stats already saved — those get ` +
+            `overwritten by the next Poll/Scrape/Recalc once real data comes in.\n\n` +
+            `Proceed?`
+          )) return;
+          btn.disabled = true; btn.textContent = '…';
+          try {
+            const upd = await state.db.updateMatch(id, {
+              status: 'in_progress', progressInnings: 0, progressBalls: 0,
+            });
+            const idx = state.matches.findIndex(x => x.id === id);
+            if (idx >= 0) state.matches[idx] = upd;
+            renderMatchesAdmin();
+            toast('↩ Reverted to In Progress — Poll/Scrape are available again.', 4500);
+          } catch (err) {
+            toast('Revert failed: ' + err.message, 5000);
+            btn.disabled = false; btn.textContent = '↩ Revert to Live';
           }
         });
         tr.querySelector('[data-act="fielding"]')?.addEventListener('click', () => toggleFieldingCreditRow(id, tr));
@@ -10490,7 +10580,7 @@ p31,Sample Player,MI,bat,9.0,false
       // it was still in progress. Once mislabeled, every status!=='completed'
       // filter elsewhere in the app (live polling, "needs finalization" lists,
       // etc.) would skip it forever, freezing it on a partial snapshot.
-      const lifecycle = matchLifecycle(json);
+      const lifecycle = matchLifecycle(json, m.format);
       const looksFinished = lifecycle === 'completed';
       if (looksFinished && m.status !== 'completed') {
         const upd = await state.db.updateMatch(m.id, { status: 'completed' });
@@ -10650,7 +10740,7 @@ p31,Sample Player,MI,bat,9.0,false
         let json;
         let cached = null;
         try { cached = await state.db.getMatchScorecard(matchId); } catch (_) {}
-        const cachedLooksFinished = cached && matchLifecycle(cached) === 'completed';
+        const cachedLooksFinished = cached && matchLifecycle(cached, m.format) === 'completed';
 
         if (cachedLooksFinished) {
           json = cached;
@@ -10712,7 +10802,7 @@ p31,Sample Player,MI,bat,9.0,false
         await computeAndSaveSLScoresForMatch(matchId);
 
         const fIssues2 = players.fieldingIssues || [];
-        const notFinished = matchLifecycle(json) !== 'completed';
+        const notFinished = matchLifecycle(json, m.format) !== 'completed';
         const liveStatusText = json?.data?.status ?? json?.status ?? '';
         let issueText = '';
         if (notFinished) issueText += ` ⚠ Scorecard doesn't look finished yet (status: "${liveStatusText || 'unknown'}") — recalculate again once the match actually ends.`;
