@@ -225,8 +225,9 @@ export default function MyXIScreen({ route }: Props) {
     }
 
     const err = await saveXI({
-      matchId:   currentMatchId,
-      contestId: activeContext.contestId,
+      matchId:     currentMatchId,
+      contestId:   activeContext.contestId,
+      contestType: activeContext.contestType,
     });
 
     if (err) {

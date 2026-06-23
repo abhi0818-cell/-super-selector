@@ -132,8 +132,78 @@ interface TeamState {
 }
 
 interface SaveXIOpts {
-  matchId:   string;  // matches.id UUID
-  contestId: string;  // contests.id UUID
+  matchId:     string;  // matches.id UUID
+  contestId:   string;  // contests.id UUID
+  contestType: 'daily' | 'sl' | 'private';
+}
+
+// ── Mirror a saved XI into user_teams + user_team_players ─────────────────
+// Web's display/scoring reads (db.js getUserTeamForMatch, getAllDailyTeamsForMatch,
+// listUserTeams) read user_teams FIRST and only fall back to user_match_xi if no
+// complete (11-player) user_teams row exists. Without this mirror, a save made on
+// mobile (which only writes user_squads/user_match_xi) is invisible to those reads —
+// web keeps showing whatever team was last saved there ("old team"). This mirrors,
+// in the opposite direction, the same dual-write web already does for itself
+// (saveUserTeam's user_match_xi mirror; the SL lock flow's upsertSlTeam call).
+// Best-effort: a failure here must not fail the primary save.
+async function mirrorToUserTeams(opts: {
+  contestType:   'daily' | 'sl' | 'private';
+  squadId:       string;
+  matchId:       string;
+  userId:        string;
+  playerIds:     string[];
+  captainId:     string;
+  viceCaptainId: string;
+  format:        MatchFormat;
+}) {
+  const { contestType, squadId, matchId, userId, playerIds, captainId, viceCaptainId, format } = opts;
+  const isDaily = contestType === 'daily';
+  let teamId: string | null = null;
+
+  if (isDaily) {
+    // One daily team per (user, match) — squad_id IS NULL distinguishes it from
+    // SL rows (see migration_v6's partial unique indexes). Clear any existing
+    // row first so re-saves don't collide with that constraint.
+    await supabase.from('user_teams').delete()
+      .eq('match_id', matchId).eq('user_id', userId).is('squad_id', null);
+
+    const { data: ut, error } = await supabase.from('user_teams').insert({
+      name: 'My XI', format,
+      captain_id: captainId, vice_captain_id: viceCaptainId,
+      match_id: matchId, squad_id: null, user_id: userId,
+    }).select('id').single();
+    if (error) throw error;
+    teamId = ut?.id ?? null;
+  } else {
+    // One SL team per (squad, match) — update in place if it already exists
+    // (mirrors db.js's upsertSlTeam exactly).
+    const { data: existing } = await supabase.from('user_teams')
+      .select('id').eq('squad_id', squadId).eq('match_id', matchId).limit(1);
+
+    if (existing?.length) {
+      teamId = existing[0].id;
+      const { error: updErr } = await supabase.from('user_teams')
+        .update({ captain_id: captainId, vice_captain_id: viceCaptainId })
+        .eq('id', teamId);
+      if (updErr) throw updErr;
+      const { error: delErr } = await supabase.from('user_team_players')
+        .delete().eq('user_team_id', teamId);
+      if (delErr) throw delErr;
+    } else {
+      const { data: ut, error } = await supabase.from('user_teams').insert({
+        name: 'SL XI', format,
+        captain_id: captainId, vice_captain_id: viceCaptainId,
+        match_id: matchId, squad_id: squadId, user_id: userId,
+      }).select('id').single();
+      if (error) throw error;
+      teamId = ut?.id ?? null;
+    }
+  }
+
+  if (!teamId) return;
+  const rows = playerIds.map(pid => ({ user_team_id: teamId as string, player_id: pid }));
+  const { error: insErr } = await supabase.from('user_team_players').insert(rows);
+  if (insErr) throw insErr;
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -421,7 +491,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   },
 
   // ── 4. Save XI → user_squads + user_match_xi (one row per player) ─────────
-  saveXI: async ({ matchId, contestId }) => {
+  saveXI: async ({ matchId, contestId, contestType }) => {
     const { selected } = get();
     set({ saveError: null });
 
@@ -485,6 +555,30 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         .insert(rows);
 
       if (insertErr) throw insertErr;
+
+      // 3d. Mirror into user_teams + user_team_players. Web's "my team" reads
+      // (db.js getUserTeamForMatch/getAllDailyTeamsForMatch/listUserTeams) check
+      // user_teams FIRST and only fall back to user_match_xi if no complete row
+      // exists there — without this, a mobile-only save is invisible to web and
+      // it keeps showing the last team saved there. Best-effort: a failure here
+      // must not fail the save the user actually asked for.
+      const captainId     = selected.find(p => p.captaincy === 'captain')?.id;
+      const viceCaptainId = selected.find(p => p.captaincy === 'vice_captain')?.id;
+
+      if (selected.length === 11 && captainId && viceCaptainId) {
+        try {
+          await mirrorToUserTeams({
+            contestType, squadId, matchId, userId: user.id,
+            playerIds: selected.map(p => p.id),
+            captainId, viceCaptainId,
+            format: get().format,
+          });
+        } catch (mirrorErr) {
+          console.warn('[teamStore] user_teams mirror failed (non-fatal, web may show a stale team):', mirrorErr);
+        }
+      } else {
+        console.warn('[teamStore] saveXI: skipped user_teams mirror (XI incomplete or missing C/VC)');
+      }
 
       return null; // success
     } catch (err: any) {
