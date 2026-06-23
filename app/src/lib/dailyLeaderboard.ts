@@ -23,7 +23,7 @@ import {
   calcFieldingPoints,
 } from '../engine/cricketScoringEngine';
 import { MatchFormat, PlayerRole, CaptaincyRole } from '../types';
-import { isMatchLocked } from './matchLock';
+import { isMatchPlayed } from './matchLock';
 import { MatchWeek, MatchPlayer, MatchTeam } from './seasonHistory';
 
 // ─── Match picker (for the main ranked list) ──────────────────────────────────
@@ -31,8 +31,11 @@ import { MatchWeek, MatchPlayer, MatchTeam } from './seasonHistory';
 export type DailyMatchOption = { id: string; label: string; matchNumber: number; date: string };
 
 /**
- * Which match-days have at least one Daily entry for this contest, locked
- * only (an upcoming match nobody's leaderboard should show yet), newest first.
+ * Which match-days have at least one Daily entry for this contest, already
+ * played (an upcoming/scheduled match nobody's leaderboard should show yet),
+ * newest first. Gated on match status, not lock_time/start_time — those are
+ * for edit-locking only and most matches never get them populated, which
+ * would otherwise make every match disappear here. See matchLock.ts.
  */
 export async function getDailyMatchOptions(contestId: string): Promise<DailyMatchOption[]> {
   if (!contestId) return [];
@@ -49,12 +52,12 @@ export async function getDailyMatchOptions(contestId: string): Promise<DailyMatc
 
   const { data: matches, error: e2 } = await supabase
     .from('matches')
-    .select('id, match_number, played_on, lock_time, start_time')
+    .select('id, match_number, played_on, status')
     .in('id', matchIds);
   if (e2) throw e2;
 
   return (matches || [])
-    .filter(isMatchLocked)
+    .filter(isMatchPlayed)
     .sort((a: any, b: any) => (b.match_number ?? 0) - (a.match_number ?? 0))
     .map((m: any) => ({
       id:          m.id,
@@ -143,13 +146,14 @@ export async function getDailyUserHistory(contestId: string, userId: string): Pr
     supabase.from('user_team_match_scores').select('user_team_id, total_points').in('user_team_id', teamIds),
     supabase.from('user_team_players').select('user_team_id, player_id').in('user_team_id', teamIds),
     supabase.from('matches')
-      .select('id, match_number, played_on, home_team_id, away_team_id, format, lock_time, start_time')
+      .select('id, match_number, played_on, home_team_id, away_team_id, format, status')
       .in('id', matchIds),
   ]);
 
   const matchById: Record<string, any> = {};
   (matches || []).forEach((m: any) => { matchById[m.id] = m; });
-  const lockedMatchIds = new Set((matches || []).filter(isMatchLocked).map((m: any) => m.id));
+  // Status-gated, not lock_time/start_time — see getDailyMatchOptions above.
+  const playedMatchIds = new Set((matches || []).filter(isMatchPlayed).map((m: any) => m.id));
 
   const playerIdsByTeam: Record<string, string[]> = {};
   (teamPlayers || []).forEach((tp: any) => {
@@ -171,10 +175,10 @@ export async function getDailyUserHistory(contestId: string, userId: string): Pr
   const scoreByTeam: Record<string, number> = {};
   (scores || []).forEach((s: any) => { scoreByTeam[s.user_team_id] = Number(s.total_points ?? 0); });
 
-  // Only locked matches, oldest first (tabs read left-to-right; screen
-  // defaults to the most recent tab, same convention as seasonHistory.ts).
+  // Only matches actually played, oldest first (tabs read left-to-right;
+  // screen defaults to the most recent tab, same convention as seasonHistory.ts).
   const groups = teams
-    .filter((t: any) => t.match_id && lockedMatchIds.has(t.match_id) && matchById[t.match_id])
+    .filter((t: any) => t.match_id && playedMatchIds.has(t.match_id) && matchById[t.match_id])
     .map((t: any) => ({ team: t, match: matchById[t.match_id] }))
     .sort((a: any, b: any) => (a.match.match_number ?? 0) - (b.match.match_number ?? 0));
 

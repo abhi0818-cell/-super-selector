@@ -5,10 +5,27 @@
  *   COALESCE(lock_time, start_time) <= now()
  *
  * A match with neither lock_time nor start_time set has no lock gate yet
- * (e.g. not fully scheduled) and is treated as NOT locked — it shouldn't
- * appear in any "history" view until it actually locks.
+ * (e.g. not fully scheduled) and is treated as NOT locked.
+ *
+ * NOTE: this is for "can the user still edit/save their XI" checks only.
+ * Do NOT use this to decide whether a match should appear in history/
+ * leaderboards — many matches never get lock_time/start_time populated at
+ * all, which made every match fail this gate and disappear from history.
+ * Use isMatchPlayed() below for that instead (mirrors web's own filter).
  */
 export function isMatchLocked(m: { lock_time?: string | null; start_time?: string | null }): boolean {
   const lockAt = m.lock_time ?? m.start_time ?? null;
   return !!lockAt && new Date(lockAt).getTime() <= Date.now();
+}
+
+/**
+ * Has this match actually been played (so it belongs in history/leaderboards)?
+ * Mirrors web's own filter for this exact purpose (index.html's `scoredMatches`):
+ *   status === 'completed' || status === 'in_progress'
+ * Status is set reliably by the scoring pipeline (poll-cricapi / scrape-scorecard)
+ * regardless of whether lock_time/start_time are populated, so this is the
+ * correct gate for "should this show as a matchweek" — not isMatchLocked.
+ */
+export function isMatchPlayed(m: { status?: string | null }): boolean {
+  return m.status === 'completed' || m.status === 'in_progress';
 }
