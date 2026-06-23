@@ -31,30 +31,35 @@ import { MatchWeek, MatchPlayer, MatchTeam } from './seasonHistory';
 export type DailyMatchOption = { id: string; label: string; matchNumber: number; date: string };
 
 /**
- * Which match-days have at least one Daily entry for this contest, already
- * played (an upcoming/scheduled match nobody's leaderboard should show yet),
- * newest first. Gated on match status, not lock_time/start_time — those are
- * for edit-locking only and most matches never get them populated, which
- * would otherwise make every match disappear here. See matchLock.ts.
+ * Every played match (completed/in_progress) in this contest's tournament,
+ * newest first — mirrors web's own Daily match-picker exactly (index.html's
+ * `scoredMatches`), which lists ALL played matches regardless of whether
+ * anyone's saved a team for them yet (the per-match leaderboard handles the
+ * "no teams saved" empty case separately).
+ *
+ * IMPORTANT: this does NOT filter `user_teams` by `contest_id`. Web's own
+ * saveUserTeam() never writes contest_id on the row it inserts (see db.js) —
+ * it's effectively always null for Daily picks — so any query that filters
+ * user_teams.contest_id will always return zero rows. Scope by tournament
+ * (via this contest's tournament_id → matches) instead, same as web does.
  */
 export async function getDailyMatchOptions(contestId: string): Promise<DailyMatchOption[]> {
   if (!contestId) return [];
 
-  const { data: teamRows, error: e1 } = await supabase
-    .from('user_teams')
-    .select('match_id')
-    .eq('contest_id', contestId)
-    .is('squad_id', null);
-  if (e1) throw e1;
+  const { data: contestRow, error: e0 } = await supabase
+    .from('contests')
+    .select('tournament_id')
+    .eq('id', contestId)
+    .maybeSingle();
+  if (e0) throw e0;
+  const tournamentId = contestRow?.tournament_id;
+  if (!tournamentId) return [];
 
-  const matchIds = [...new Set((teamRows || []).map((r: any) => r.match_id).filter(Boolean))];
-  if (matchIds.length === 0) return [];
-
-  const { data: matches, error: e2 } = await supabase
+  const { data: matches, error: e1 } = await supabase
     .from('matches')
     .select('id, match_number, played_on, status')
-    .in('id', matchIds);
-  if (e2) throw e2;
+    .eq('tournament_id', tournamentId);
+  if (e1) throw e1;
 
   return (matches || [])
     .filter(isMatchPlayed)
@@ -119,9 +124,15 @@ export async function loadDailyLeaderboard(matchId: string, currentUserId: strin
 
 /**
  * One user's full Daily pick history across every match they've played in
- * this contest. Mirrors web's getMatchHistoryDetailed, reshaped into the same
- * MatchWeek/MatchTeam/MatchPlayer types seasonHistory.ts uses so the existing
- * TeamDetailModal UI can render either source interchangeably.
+ * this contest's tournament. Mirrors web's renderHistory()/getMatchHistoryDetailed,
+ * reshaped into the same MatchWeek/MatchTeam/MatchPlayer types seasonHistory.ts
+ * uses so the existing TeamDetailModal UI can render either source interchangeably.
+ *
+ * Same caveat as getDailyMatchOptions: user_teams.contest_id is never
+ * populated by web's saveUserTeam(), so we can't filter user_teams by it.
+ * Instead pull ALL of this user's Daily (squad_id IS NULL) teams, then keep
+ * only the ones whose match belongs to this contest's tournament — mirrors
+ * web's `activeTournamentMatchIds` filter in renderHistory().
  */
 export async function getDailyUserHistory(contestId: string, userId: string): Promise<{
   matchWeeks: MatchWeek[];
@@ -129,31 +140,45 @@ export async function getDailyUserHistory(contestId: string, userId: string): Pr
 }> {
   if (!contestId || !userId) return { matchWeeks: [], history: [] };
 
-  const { data: teams, error: e1 } = await supabase
+  const { data: contestRow, error: e0 } = await supabase
+    .from('contests')
+    .select('tournament_id')
+    .eq('id', contestId)
+    .maybeSingle();
+  if (e0) throw e0;
+  const tournamentId = contestRow?.tournament_id;
+  if (!tournamentId) return { matchWeeks: [], history: [] };
+
+  const { data: tMatches, error: e1 } = await supabase
+    .from('matches')
+    .select('id, match_number, played_on, home_team_id, away_team_id, format, status')
+    .eq('tournament_id', tournamentId);
+  if (e1) throw e1;
+  const matchById: Record<string, any> = {};
+  (tMatches || []).forEach((m: any) => { matchById[m.id] = m; });
+  const tournamentMatchIds = new Set(Object.keys(matchById));
+
+  const { data: allTeams, error: e2 } = await supabase
     .from('user_teams')
     .select('id, match_id, captain_id, vice_captain_id')
-    .eq('contest_id', contestId)
     .eq('user_id', userId)
     .is('squad_id', null)
     .not('match_id', 'is', null);
-  if (e1) throw e1;
-  if (!teams?.length) return { matchWeeks: [], history: [] };
+  if (e2) throw e2;
+
+  const teams = (allTeams || []).filter((t: any) => tournamentMatchIds.has(t.match_id));
+  if (!teams.length) return { matchWeeks: [], history: [] };
 
   const teamIds  = teams.map((t: any) => t.id);
   const matchIds = [...new Set(teams.map((t: any) => t.match_id))];
 
-  const [{ data: scores }, { data: teamPlayers }, { data: matches }] = await Promise.all([
+  const [{ data: scores }, { data: teamPlayers }] = await Promise.all([
     supabase.from('user_team_match_scores').select('user_team_id, total_points').in('user_team_id', teamIds),
     supabase.from('user_team_players').select('user_team_id, player_id').in('user_team_id', teamIds),
-    supabase.from('matches')
-      .select('id, match_number, played_on, home_team_id, away_team_id, format, status')
-      .in('id', matchIds),
   ]);
 
-  const matchById: Record<string, any> = {};
-  (matches || []).forEach((m: any) => { matchById[m.id] = m; });
   // Status-gated, not lock_time/start_time — see getDailyMatchOptions above.
-  const playedMatchIds = new Set((matches || []).filter(isMatchPlayed).map((m: any) => m.id));
+  const playedMatchIds = new Set((tMatches || []).filter(isMatchPlayed).map((m: any) => m.id));
 
   const playerIdsByTeam: Record<string, string[]> = {};
   (teamPlayers || []).forEach((tp: any) => {
