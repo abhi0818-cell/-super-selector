@@ -25,7 +25,16 @@ export function isMatchLocked(m: { lock_time?: string | null; start_time?: strin
  * Status is set reliably by the scoring pipeline (poll-cricapi / scrape-scorecard)
  * regardless of whether lock_time/start_time are populated, so this is the
  * correct gate for "should this show as a matchweek" — not isMatchLocked.
+ *
+ * Also includes 'live': lock-matches sets status='live' at kickoff, and
+ * poll-cricapi only flips it to 'in_progress' once CricAPI confirms play has
+ * started — there's a window where a match is genuinely underway but still
+ * reads 'live'. Every other status consumer in the app (teamStore.ts,
+ * PlayerPickerScreen.tsx, liveScore.ts) already treats 'live' and
+ * 'in_progress' as the same "currently live" state; this was the one place
+ * still missing 'live', which made a freshly-locked live match invisible to
+ * history/leaderboard drill-downs until poll-cricapi caught up.
  */
 export function isMatchPlayed(m: { status?: string | null }): boolean {
-  return m.status === 'completed' || m.status === 'in_progress';
+  return m.status === 'completed' || m.status === 'in_progress' || m.status === 'live';
 }

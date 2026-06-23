@@ -31,7 +31,7 @@ import {
   DailyMatchOption,
 } from '../lib/dailyLeaderboard';
 import { useLiveMatch, useLiveScore, formatLiveScoreLine } from '../lib/liveScore';
-import LiveScorecardModal from '../components/LiveScorecardModal';
+import MyLiveTeamModal from '../components/MyLiveTeamModal';
 
 // ─── Domain types ─────────────────────────────────────────────────────────────
 
@@ -469,11 +469,26 @@ export default function LeaderboardScreen() {
 
   // Live score — same match_scorecards source as HomeScreen's pill (see
   // lib/liveScore.ts). Shown as a banner above the Daily match-picker chips,
-  // tap to open the full scorecard.
+  // tap to open the current user's own live team (Daily and/or SL,
+  // whichever applies) for the live match — same as HomeScreen's pill.
   const liveMatch              = useLiveMatch(selectedTournamentId);
   const { score: liveScore }   = useLiveScore(liveMatch?.id ?? null);
   const liveScoreLine          = formatLiveScoreLine(liveScore);
   const [liveModalVisible, setLiveModalVisible] = useState(false);
+
+  // Resolve the user's own Daily contest id + SL squad id regardless of
+  // which tab is active, so the live-team modal can show "both, whichever
+  // applies" rather than only whatever contest type happens to be selected.
+  const liveDailyContestId = contests.find(c => c.contestType === 'daily' && !c.isPrivate)?.id ?? null;
+  const liveSlContestId    = contests.find(c => c.contestType === 'sl'    && !c.isPrivate)?.id ?? null;
+  const mySlSquadId        = (sbEntries[liveSlContestId ?? ''] ?? []).find(e => e.isCurrentUser)?.squadId ?? null;
+
+  // Preload the SL leaderboard (for mySlSquadId above) even if the user
+  // hasn't visited the SL tab yet — cheap, and keeps the live-team modal
+  // correct regardless of which tab they opened the banner from.
+  useEffect(() => {
+    if (liveSlContestId) loadLeaderboard(liveSlContestId);
+  }, [liveSlContestId]);
 
   // Build tabs from real contests, fall back to hardcoded placeholders
   const tabs: ContestTab[] = useMemo(() => {
@@ -716,10 +731,13 @@ export default function LeaderboardScreen() {
         />
       )}
 
-      <LiveScorecardModal
+      <MyLiveTeamModal
         visible={liveModalVisible}
         matchId={liveMatch?.id ?? null}
         title={liveMatch ? `${liveMatch.homeTeamId ?? '?'} vs ${liveMatch.awayTeamId ?? '?'}` : undefined}
+        dailyContestId={liveDailyContestId}
+        squadId={mySlSquadId}
+        userId={user?.id ?? null}
         onClose={() => setLiveModalVisible(false)}
       />
     </View>

@@ -28,7 +28,7 @@ import {
 } from '../store/contestStore';
 import { useLeaderboardStore } from '../store/leaderboardStore';
 import LeagueSelector from '../components/LeagueSelector';
-import LiveScorecardModal from '../components/LiveScorecardModal';
+import MyLiveTeamModal from '../components/MyLiveTeamModal';
 import { useLiveMatch, useLiveScore, formatLiveScoreLine } from '../lib/liveScore';
 import { fontSize, radius, spacing, shadow } from '../theme';
 
@@ -723,10 +723,13 @@ export default function HomeScreen() {
         onDismiss={() => setSelectorVisible(false)}
       />
 
-      <LiveScorecardModal
+      <MyLiveTeamModal
         visible={liveModalVisible}
         matchId={liveMatch?.id ?? null}
         title={liveMatchTitle}
+        dailyContestId={dailyContest?.id ?? null}
+        squadId={slStats.squadId ?? null}
+        userId={user?.id ?? null}
         onClose={() => setLiveModalVisible(false)}
       />
     </SafeAreaView>

@@ -68,8 +68,22 @@ function dismissalText(b: any): string {
   return raw || (b.isDismissed || b.out ? 'out' : 'not out');
 }
 
-function parseInnings(raw: any): LiveInnings {
+/**
+ * Some CricAPI payloads carry per-innings totals (r/w/o) directly on the
+ * `scorecard` entry; others (e.g. the live women's T20 WC feed) leave that
+ * entry as just { extras, inning, totals, batting, bowling, catching } with
+ * `totals` empty, and put the actual r/w/o in a separate top-level `score`
+ * array — { inning, r, w, o } — one per innings, linked by the `inning`
+ * name. Read that already-computed summary instead of re-deriving totals
+ * from the batting rows ourselves.
+ */
+function scoreKey(name: string): string {
+  return (name || '').toLowerCase().trim();
+}
+
+function parseInnings(raw: any, scoreByInning: Map<string, any>): LiveInnings {
   const team = raw.inning || raw.battingteam || raw.batting_team || 'Innings';
+  const summary = scoreByInning.get(scoreKey(team));
   const batting: LiveBatter[] = (raw.batting || []).map((b: any) => ({
     name:      b.batsman?.name || b.batsman || b.name || b.player?.name || 'Unknown',
     runs:      num(b.r ?? b.runs),
@@ -87,9 +101,9 @@ function parseInnings(raw: any): LiveInnings {
   }));
   return {
     team,
-    runs:    num(raw.r ?? raw.runs),
-    wickets: num(raw.w ?? raw.wickets),
-    overs:   num(raw.o ?? raw.overs),
+    runs:    num(raw.r ?? raw.runs ?? summary?.r ?? summary?.runs),
+    wickets: num(raw.w ?? raw.wickets ?? summary?.w ?? summary?.wickets),
+    overs:   num(raw.o ?? raw.overs ?? summary?.o ?? summary?.overs),
     batting,
     bowling,
   };
@@ -139,14 +153,22 @@ export async function getLiveScore(matchId: string | null): Promise<LiveScore | 
 
   const payload: any = data.payload;
   const body         = payload.data ?? payload;
-  const rawInnings: any[] = body.scorecard ?? body.innings ?? body.scores ?? [];
+  const rawInnings: any[] = body.scorecard ?? body.innings ?? body.score ?? body.scores ?? [];
   const info          = body.matchInfo || body;
   const status        = info.status || body.status || '';
+
+  // Per-innings totals (r/w/o) sometimes live on the scorecard entry itself,
+  // sometimes only in this separate top-level summary array — see parseInnings.
+  const scoreByInning = new Map<string, any>();
+  for (const s of (Array.isArray(body.score) ? body.score : [])) {
+    const key = scoreKey(s.inning || s.battingteam || s.batting_team || '');
+    if (key) scoreByInning.set(key, s);
+  }
 
   return {
     matchId,
     status,
-    innings:   rawInnings.map(parseInnings),
+    innings:   rawInnings.map(raw => parseInnings(raw, scoreByInning)),
     fetchedAt: data.fetched_at ?? null,
   };
 }
