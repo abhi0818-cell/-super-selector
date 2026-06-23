@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { CaptaincyRole, PlayerRole, SelectedPlayer } from '../types';
 import { useBoosterStore, getActiveTileBoosts } from '../store/boosterStore';
+import Jersey from './Jersey';
 
 // ─── Field palette ────────────────────────────────────────────────────────────
 
@@ -24,16 +25,6 @@ const FIELD_OVAL   = '#2D6A35';   // medium green oval
 const PITCH_SANDY  = '#B8935A';   // warmer sandy/clay pitch
 const CREASE_LINE  = 'rgba(255,255,255,0.45)';
 const DIVIDER      = 'rgba(0,0,0,0.08)';
-
-// ─── Role colours (fallback when no team color is set) ────────────────────────
-// Used only for the avatar background when player.teamColor is null.
-
-const ROLE_COLOR: Record<PlayerRole, string> = {
-  wk:   '#C9A84C',   // gold
-  bat:  '#1A2744',   // dark navy
-  ar:   '#2D6A35',   // dark green
-  bowl: '#7A3012',   // dark terracotta
-};
 
 // ─── Role chip colours — must be legible on the dark green field ──────────────
 // Bright/light tones that stand out against FIELD_BG (#1A3B1E) and FIELD_OVAL (#2D6A35).
@@ -101,14 +92,15 @@ function PlayerTile({ player, onSetCaptaincy, onRemove, readOnly }: TileProps) {
         </View>
       )}
 
-      <View style={[
-        styles.avatar,
-        { backgroundColor: player.teamColor ?? ROLE_COLOR[player.role] },
-        (isCap || isVC) && styles.avatarHighlight,
-      ]}>
-        <Text style={styles.avatarInitial}>
-          {player.name.charAt(0).toUpperCase()}
-        </Text>
+      <View style={[styles.avatarWrap, (isCap || isVC) && styles.avatarWrapHighlight]}>
+        <Jersey
+          code={player.team}
+          color1={player.teamColor}
+          color2={player.teamColor2}
+          size={32}
+          variant="pitch"
+          boosted={tileBoosts.length > 0}
+        />
       </View>
 
       <Text style={styles.tileName} numberOfLines={1}>{shortName}</Text>
@@ -333,22 +325,15 @@ const styles = StyleSheet.create({
     transform:       [{ scale: 0.96 }],
   },
 
-  // Avatar
-  avatar: {
-    width:          34,
-    height:         34,
-    borderRadius:   17,
-    alignItems:     'center',
-    justifyContent: 'center',
+  // Jersey wrapper — highlight ring shows for the active C/VC tile
+  avatarWrap: {
+    padding:      2,
+    borderRadius: 6,
   },
-  avatarHighlight: {
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.65)',
-  },
-  avatarInitial: {
-    color:      '#fff',
-    fontSize:   15,
-    fontWeight: '800',
+  avatarWrapHighlight: {
+    borderWidth:     2,
+    borderColor:     'rgba(255,255,255,0.65)',
+    backgroundColor: 'rgba(255,255,255,0.12)',
   },
 
   // Name / team text

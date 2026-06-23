@@ -19,6 +19,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CaptaincyRole, PlayerRole, SelectedPlayer } from '../types';
 import CricketPitch from './CricketPitch';
+import Jersey from './Jersey';
 import { fontSize, radius, spacing, shadow } from '../theme';
 
 // ─── Role colours (fallback when no teamColor set) ────────────────────────────
@@ -156,8 +157,8 @@ function CaptainStep({ players, onAssign, onNext }: CaptainStepProps) {
                 </View>
               )}
 
-              <View style={[styles.capTileAvatar, { backgroundColor: p.teamColor ?? ROLE_COLOR[p.role] }]}>
-                <Text style={styles.capTileInitial}>{p.name.charAt(0).toUpperCase()}</Text>
+              <View style={styles.capTileAvatar}>
+                <Jersey code={p.team} color1={p.teamColor} color2={p.teamColor2} size={32} variant="pool" />
               </View>
 
               <Text style={styles.capTileName} numberOfLines={2}>{shortenName(p.name)}</Text>
@@ -524,13 +525,9 @@ const styles = StyleSheet.create({
   capTileBadgeText: { color: '#1C1F26', fontSize: 9, fontWeight: '900' },
 
   capTileAvatar: {
-    width:          44,
-    height:         44,
-    borderRadius:   22,
     alignItems:     'center',
     justifyContent: 'center',
   },
-  capTileInitial: { color: '#fff', fontSize: fontSize.lg, fontWeight: '800' },
 
   capTileName: {
     color:      C.text,

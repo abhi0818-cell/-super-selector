@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Player } from '../types';
 import { fontSize, radius, spacing, shadow } from '../theme';
 import RoleTag from './RoleTag';
+import Jersey from './Jersey';
 
 interface Props {
   player:   Player;
@@ -33,6 +34,14 @@ export default function PlayerCard({ player, selected, disabled, onPress }: Prop
         pressed   && styles.cardPressed,
       ]}
     >
+      <Jersey
+        code={player.team}
+        color1={player.teamColor}
+        color2={player.teamColor2}
+        size={34}
+        variant="pool"
+      />
+
       <View style={styles.left}>
         <Text style={styles.name} numberOfLines={1}>{player.name}</Text>
         <View style={styles.meta}>

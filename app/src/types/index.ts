@@ -12,6 +12,7 @@ export interface Player {
   credits: number;
   overseas: boolean;
   teamColor: string | null;   // hex color from admin teams table, e.g. '#fbbf24'
+  teamColor2: string | null;  // secondary/sleeve hex color from admin teams table (teams.color2)
 }
 
 export interface SelectedPlayer extends Player {
