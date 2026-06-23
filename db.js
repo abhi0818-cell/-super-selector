@@ -550,16 +550,28 @@ export function createDb(cfg = {}) {
                   .eq('squad_id', squadId)
                   .eq('match_id', matchId);
 
+                // user_match_xi.role is NOT NULL with a check constraint
+                // (wk/bat/ar/bowl) — look up each player's real role instead
+                // of inserting null, which would violate that constraint and
+                // make this insert fail silently every time (caught below).
+                const { data: roleRows } = await sb
+                  .from('players')
+                  .select('id, role')
+                  .in('id', playerIds);
+                const roleById = {};
+                (roleRows || []).forEach(p => { roleById[p.id] = p.role; });
+
                 const xiRows = playerIds.map(pid => ({
                   squad_id:   squadId,
                   match_id:   matchId,
                   player_id:  pid,
                   is_captain: pid === captainId,
                   is_vc:      pid === viceCaptainId,
-                  role:       null,   // role not tracked in daily web save
+                  role:       roleById[pid] || 'bat',
                   user_id:    uid,
                 }));
-                await sb.from('user_match_xi').insert(xiRows);
+                const { error: xiErr } = await sb.from('user_match_xi').insert(xiRows);
+                if (xiErr) throw xiErr;
                 console.log(`[saveUserTeam] Mirrored ${xiRows.length} rows to user_match_xi for mobile sync.`);
               }
             }
