@@ -328,8 +328,10 @@ function TeamDetailModal({ entry, onClose }: TeamDetailModalProps) {
 
 // ─── User highlight card ──────────────────────────────────────────────────────
 
-function UserHighlight({ entry }: { entry: LeaderboardEntry | undefined }) {
+function UserHighlight({ entry, showSlCols }: { entry: LeaderboardEntry | undefined; showSlCols: boolean }) {
   if (!entry) return null;
+  const boosterLabel = entry.boosterAllowed ? `${entry.boosterCount ?? 0}/${entry.boosterAllowed}` : '—';
+  const xferLabel     = `${entry.transferCount ?? 0}/${entry.transfersAllowed ?? '∞'}`;
   return (
     <LinearGradient
       colors={G.highlight}
@@ -343,6 +345,12 @@ function UserHighlight({ entry }: { entry: LeaderboardEntry | undefined }) {
         <View style={styles.highlightMeta}>
           <Text style={styles.highlightTeam}>{entry.teamName}</Text>
           <Text style={styles.highlightPts}>{entry.points.toLocaleString()} pts</Text>
+          {showSlCols && (
+            <View style={styles.slColsRow}>
+              <Text style={styles.slColTextOnHighlight}>🎯 {boosterLabel}</Text>
+              <Text style={styles.slColTextOnHighlight}>🔄 {xferLabel}</Text>
+            </View>
+          )}
         </View>
       </View>
     </LinearGradient>
@@ -354,11 +362,14 @@ function UserHighlight({ entry }: { entry: LeaderboardEntry | undefined }) {
 interface EntryRowProps {
   entry:   LeaderboardEntry;
   onPress: () => void;
+  showSlCols?: boolean; // SL/private contests only — mirrors web's Booster/Xfer columns
 }
 
-function EntryRow({ entry, onPress }: EntryRowProps) {
+function EntryRow({ entry, onPress, showSlCols }: EntryRowProps) {
   const isTop3    = entry.rank <= 3;
   const podGrad   = podiumGrad(entry.rank);
+  const boosterLabel = entry.boosterAllowed ? `${entry.boosterCount ?? 0}/${entry.boosterAllowed}` : '—';
+  const xferLabel     = `${entry.transferCount ?? 0}/${entry.transfersAllowed ?? '∞'}`;
 
   const inner = (
     <View style={styles.rowInner}>
@@ -385,6 +396,12 @@ function EntryRow({ entry, onPress }: EntryRowProps) {
           {entry.isCurrentUser && <Text style={styles.youBadge}> (you)</Text>}
         </Text>
         <Text style={styles.teamName}>{entry.teamName}</Text>
+        {showSlCols && (
+          <View style={styles.slColsRow}>
+            <Text style={styles.slColText}>🎯 {boosterLabel}</Text>
+            <Text style={styles.slColText}>🔄 {xferLabel}</Text>
+          </View>
+        )}
       </View>
 
       {/* Points */}
@@ -462,6 +479,11 @@ export default function LeaderboardScreen() {
 
   const entries = sbEntries[activeTab] ?? [];
   const myEntry = entries.find(e => e.isCurrentUser);
+  // SL and private leagues share the squad/booster/transfer system — daily
+  // contests don't, so only they get the Booster/Xfer columns (mirrors
+  // web's `contestType === 'season_long'` check in renderInlineLeaderboard).
+  const activeContestType = tabs.find(t => t.id === activeTab)?.type;
+  const showSlCols = activeContestType === 'sl' || activeContestType === 'private';
 
   return (
     <View style={styles.container}>
@@ -512,7 +534,7 @@ export default function LeaderboardScreen() {
       </ScrollView>
 
       {/* ── User highlight ── */}
-      {myEntry && <UserHighlight entry={myEntry} />}
+      {myEntry && <UserHighlight entry={myEntry} showSlCols={showSlCols} />}
 
       {/* ── Section label ── */}
       <View style={styles.divider}>
@@ -534,6 +556,7 @@ export default function LeaderboardScreen() {
             <EntryRow
               entry={item}
               onPress={() => setSelectedEntry(item)}
+              showSlCols={showSlCols}
             />
           )}
           contentContainerStyle={styles.list}
@@ -718,6 +741,12 @@ const styles = StyleSheet.create({
   displayNameMe: { color: C.accent },
   youBadge:      { color: C.accent, fontSize: fontSize.xs, fontWeight: '500' },
   teamName:      { color: C.muted, fontSize: fontSize.xs },
+
+  // SL/private-only Booster/Xfer pills — mirrors web's leaderboard columns
+  slColsRow:     { flexDirection: 'row', gap: spacing.sm, marginTop: 2 },
+  slColText:     { color: C.muted, fontSize: 10, fontWeight: '600' },
+  slColTextOnHighlight: { color: C.gold, fontSize: fontSize.xs, fontWeight: '700' },
+
   pts:           { color: C.text, fontSize: fontSize.base, fontWeight: '700' },
   ptsMe:         { color: C.accent },
   ptsSuffix:     { color: C.muted, fontSize: fontSize.xs, fontWeight: '400' },

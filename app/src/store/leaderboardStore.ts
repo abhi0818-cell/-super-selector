@@ -22,6 +22,11 @@ export type LBEntry = {
   teamName:      string;
   points:        number;
   isCurrentUser: boolean;
+  // SL/private-league only (mirrors web's getLeaderboardSL) — undefined for daily contests.
+  transferCount?:    number;
+  transfersAllowed?: number | null; // null = unlimited, shown as '∞'
+  boosterCount?:     number;
+  boosterAllowed?:   number;        // 0 = contest has no booster budget configured
 };
 
 // ─── Store interface ──────────────────────────────────────────────────────────
@@ -78,15 +83,43 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
         pointsBySquad[s.squad_id] = (pointsBySquad[s.squad_id] ?? 0) + Number(s.total_points);
       });
 
-      // Step 2b: fetch transfer penalties and subtract from totals
+      // Step 2b: fetch transfer penalties and subtract from totals; also
+      // count rows per squad for the SL "Xfers used/allowed" column (mirrors
+      // db.js's getLeaderboardSL).
       const { data: transfers } = await supabase
         .from('user_transfers')
         .select('squad_id, points_deducted')
         .in('squad_id', squadIds);
 
       const penaltyBySquad: Record<string, number> = {};
+      const transferCountBySquad: Record<string, number> = {};
       (transfers ?? []).forEach((t: any) => {
-        penaltyBySquad[t.squad_id] = (penaltyBySquad[t.squad_id] ?? 0) + Number(t.points_deducted ?? 0);
+        penaltyBySquad[t.squad_id]      = (penaltyBySquad[t.squad_id] ?? 0) + Number(t.points_deducted ?? 0);
+        transferCountBySquad[t.squad_id] = (transferCountBySquad[t.squad_id] ?? 0) + 1;
+      });
+
+      // Step 2c: SL/private-league-only columns — contest-level booster/transfer
+      // caps, plus each squad's booster-activation count. Cheap no-ops for
+      // daily contests (booster_allowed comes back 0, counts come back empty),
+      // so it's safe to always fetch rather than branch on contest type here.
+      const { data: contestRow } = await supabase
+        .from('contests')
+        .select('available_boosters, total_transfers_allowed')
+        .eq('id', contestId)
+        .maybeSingle();
+      const boosterAllowed = contestRow?.available_boosters
+        ? Object.values(contestRow.available_boosters as Record<string, number>)
+            .reduce((sum: number, n) => sum + Number(n || 0), 0)
+        : 0;
+      const transfersAllowed = contestRow?.total_transfers_allowed ?? null;
+
+      const { data: boosterRows } = await supabase
+        .from('user_booster_activations')
+        .select('squad_id')
+        .in('squad_id', squadIds);
+      const boosterCountBySquad: Record<string, number> = {};
+      (boosterRows ?? []).forEach((b: any) => {
+        boosterCountBySquad[b.squad_id] = (boosterCountBySquad[b.squad_id] ?? 0) + 1;
       });
 
       // Step 3: fetch display names from profiles
@@ -102,12 +135,16 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
       // Step 4: build ranked entries
       const uid = get().currentUserId;
       const unsorted: Omit<LBEntry, 'rank'>[] = squads.map((sq: any) => ({
-        userId:        sq.user_id,
-        squadId:       sq.id,
-        displayName:   nameById[sq.user_id] ?? 'Player',
-        teamName:      sq.name ?? 'My Squad',
-        points:        (pointsBySquad[sq.id] ?? 0) - (penaltyBySquad[sq.id] ?? 0),
-        isCurrentUser: sq.user_id === uid,
+        userId:           sq.user_id,
+        squadId:          sq.id,
+        displayName:      nameById[sq.user_id] ?? 'Player',
+        teamName:         sq.name ?? 'My Squad',
+        points:           (pointsBySquad[sq.id] ?? 0) - (penaltyBySquad[sq.id] ?? 0),
+        isCurrentUser:    sq.user_id === uid,
+        transferCount:    transferCountBySquad[sq.id] ?? 0,
+        transfersAllowed,
+        boosterCount:     boosterCountBySquad[sq.id] ?? 0,
+        boosterAllowed,
       }));
 
       const sorted = unsorted
