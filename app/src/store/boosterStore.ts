@@ -43,7 +43,7 @@ interface BoosterMeta {
   slot:  BoosterSlot;
 }
 
-const BOOSTER_META: Record<string, BoosterMeta> = {
+export const BOOSTER_META: Record<string, BoosterMeta> = {
   triple_captain: {
     icon:  '⚡',
     name:  'Triple Captain',

@@ -77,15 +77,30 @@ export const useContestStore = create<ContestState>((set) => ({
     // Clear stale contests immediately so the UI never shows data from a previous tournament
     set({ contests: [], contestsLoading: true });
     try {
-      const { data, error } = await supabase
-        .from('contests')
-        .select('id, name, contest_type, is_private, invite_code, is_active')
-        .eq('tournament_id', tournamentId)
-        .eq('is_active', true)
-        .order('is_private', { ascending: true })   // public contests first
-        .order('contest_type', { ascending: true }); // daily before season_long
+      const [{ data, error }, { data: nextMatches }] = await Promise.all([
+        supabase
+          .from('contests')
+          .select('id, name, contest_type, is_private, invite_code, is_active')
+          .eq('tournament_id', tournamentId)
+          .eq('is_active', true)
+          .order('is_private', { ascending: true })   // public contests first
+          .order('contest_type', { ascending: true }), // daily before season_long
+        // Real deadline = kickoff of the next not-yet-completed match in this
+        // tournament — same "next match" definition teamStore.loadTournamentContext
+        // uses for nextMatchTime. Falls back to a far-future placeholder only if
+        // every match is already completed (e.g. the season has ended).
+        supabase
+          .from('matches')
+          .select('start_time')
+          .eq('tournament_id', tournamentId)
+          .neq('status', 'completed')
+          .order('match_number', { ascending: true })
+          .limit(1),
+      ]);
 
       if (error) throw error;
+
+      const nextMatchTime = nextMatches?.[0]?.start_time ?? '2099-01-01T00:00:00Z';
 
       const mapped: RealContest[] = (data ?? []).map((c: any) => ({
         id:          c.id,
@@ -93,7 +108,7 @@ export const useContestStore = create<ContestState>((set) => ({
         contestType: mapContestType(c.contest_type, c.is_private),
         isPrivate:   Boolean(c.is_private),
         inviteCode:  c.invite_code ?? null,
-        deadline:    '2099-01-01T00:00:00Z',
+        deadline:    nextMatchTime,
       }));
 
       console.log('[contestStore] loaded', mapped.length, 'contests for tournament', tournamentId,

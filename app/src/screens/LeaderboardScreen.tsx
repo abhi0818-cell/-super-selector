@@ -24,6 +24,7 @@ import { fontSize, radius, spacing, shadow } from '../theme';
 import { useContestStore } from '../store/contestStore';
 import { useLeaderboardStore, LBEntry } from '../store/leaderboardStore';
 import { useAuthStore } from '../store/authStore';
+import { getSquadSeasonHistory, MatchWeek, MatchPlayer, MatchTeam } from '../lib/seasonHistory';
 
 // ─── Domain types ─────────────────────────────────────────────────────────────
 
@@ -33,20 +34,6 @@ type ContestTab = {
 
 // Re-alias so existing code doesn't need changes
 type LeaderboardEntry = LBEntry;
-
-type MatchWeek = { id: string; label: string; match: string; date: string };
-
-type MatchPlayer = {
-  name: string; team: string; role: PlayerRole; captaincy: CaptaincyRole;
-  bat: number; bowl: number; field: number; bonus: number;
-};
-
-type MatchTeam = {
-  mwId:     string;
-  pts:      number;
-  boosters: Array<{ icon: string; name: string }>;
-  players:  MatchPlayer[];
-};
 
 // ─── Gradient palette ─────────────────────────────────────────────────────────
 
@@ -89,14 +76,17 @@ const ROLE_LABEL: Record<PlayerRole, string> = {
 
 // ─── Point helpers ────────────────────────────────────────────────────────────
 
-function capMult(c: CaptaincyRole): number {
-  return c === 'captain' ? 2 : c === 'vice_captain' ? 1.5 : 1;
+function capMult(p: MatchPlayer): number {
+  // Real, booster-aware multiplier from the scores view (handles triple
+  // captain / team double / etc., not just plain captain/VC).
+  if (p.multiplier != null) return p.multiplier;
+  return p.captaincy === 'captain' ? 2 : p.captaincy === 'vice_captain' ? 1.5 : 1;
 }
 function rawPts(p: MatchPlayer): number {
   return p.bat + p.bowl + p.field + p.bonus;
 }
 function finalPts(p: MatchPlayer): number {
-  return Math.round(rawPts(p) * capMult(p.captaincy));
+  return Math.round(rawPts(p) * capMult(p));
 }
 
 function rankMedal(rank: number): string {
@@ -125,145 +115,6 @@ const CONTEST_ICONS_LB: Record<string, string> = {
   daily: '📅', sl: '🏅', private: '🔒',
 };
 
-// ─── Mock leaderboard ─────────────────────────────────────────────────────────
-
-const MOCK_LEADERBOARD: Record<string, LeaderboardEntry[]> = {
-  daily: [
-    { rank: 1,  userId: 'u1',  displayName: 'Arjun Shah',    teamName: 'RCB Warriors',     points: 148, isCurrentUser: false },
-    { rank: 2,  userId: 'u2',  displayName: 'Priya Mehta',   teamName: 'Mumbai Mashers',   points: 134, isCurrentUser: false },
-    { rank: 3,  userId: 'u3',  displayName: 'You',           teamName: 'Super Selectors',  points: 127, isCurrentUser: true  },
-    { rank: 4,  userId: 'u4',  displayName: 'Rohan Das',     teamName: 'Delhi Daredevils', points: 119, isCurrentUser: false },
-    { rank: 5,  userId: 'u5',  displayName: 'Sneha Patel',   teamName: 'CSK Loyalists',    points: 112, isCurrentUser: false },
-    { rank: 6,  userId: 'u6',  displayName: 'Vikram Nair',   teamName: 'KKR Knights',      points: 108, isCurrentUser: false },
-    { rank: 7,  userId: 'u7',  displayName: 'Ananya Roy',    teamName: 'Punjab Panthers',  points: 101, isCurrentUser: false },
-    { rank: 8,  userId: 'u8',  displayName: 'Karan Sharma',  teamName: 'GT Titans',        points:  97, isCurrentUser: false },
-    { rank: 9,  userId: 'u9',  displayName: 'Divya Rao',     teamName: 'SRH Strikers',     points:  89, isCurrentUser: false },
-    { rank: 10, userId: 'u10', displayName: 'Harsh Gupta',   teamName: 'MI Blasters',      points:  82, isCurrentUser: false },
-  ],
-  sl: [
-    { rank: 1,  userId: 'u2',  displayName: 'Priya Mehta',   teamName: 'Mumbai Mashers',    points: 1842, isCurrentUser: false },
-    { rank: 2,  userId: 'u5',  displayName: 'Sneha Patel',   teamName: 'CSK Loyalists',     points: 1790, isCurrentUser: false },
-    { rank: 3,  userId: 'u1',  displayName: 'Arjun Shah',    teamName: 'RCB Warriors',      points: 1755, isCurrentUser: false },
-    { rank: 4,  userId: 'u10', displayName: 'You',           teamName: 'Super Selectors',   points: 1701, isCurrentUser: true  },
-    { rank: 5,  userId: 'u4',  displayName: 'Rohan Das',     teamName: 'Delhi Daredevils',  points: 1688, isCurrentUser: false },
-    { rank: 6,  userId: 'u7',  displayName: 'Ananya Roy',    teamName: 'Punjab Panthers',   points: 1632, isCurrentUser: false },
-    { rank: 7,  userId: 'u8',  displayName: 'Karan Sharma',  teamName: 'GT Titans',         points: 1598, isCurrentUser: false },
-    { rank: 8,  userId: 'u6',  displayName: 'Vikram Nair',   teamName: 'KKR Knights',       points: 1554, isCurrentUser: false },
-    { rank: 9,  userId: 'u9',  displayName: 'Divya Rao',     teamName: 'SRH Strikers',      points: 1487, isCurrentUser: false },
-    { rank: 10, userId: 'u3',  displayName: 'Harsh Gupta',   teamName: 'MI Blasters',       points: 1410, isCurrentUser: false },
-  ],
-  pl01: [
-    { rank: 1,  userId: 'u5', displayName: 'Sneha Patel',  teamName: 'CSK Loyalists',   points: 1920, isCurrentUser: false },
-    { rank: 2,  userId: 'u1', displayName: 'Arjun Shah',   teamName: 'RCB Warriors',    points: 1877, isCurrentUser: false },
-    { rank: 3,  userId: 'u3', displayName: 'You',          teamName: 'Super Selectors', points: 1843, isCurrentUser: true  },
-    { rank: 4,  userId: 'u4', displayName: 'Rohan Das',    teamName: 'Delhi Eleven',    points: 1756, isCurrentUser: false },
-    { rank: 5,  userId: 'u8', displayName: 'Karan Sharma', teamName: 'GT Titans',       points: 1699, isCurrentUser: false },
-    { rank: 6,  userId: 'u6', displayName: 'Vikram Nair',  teamName: 'KKR Knights',     points: 1634, isCurrentUser: false },
-    { rank: 7,  userId: 'u7', displayName: 'Ananya Roy',   teamName: 'Punjab Heroes',   points: 1587, isCurrentUser: false },
-    { rank: 8,  userId: 'u2', displayName: 'Priya Mehta',  teamName: 'Mumbai Mashers',  points: 1502, isCurrentUser: false },
-  ],
-  pl02: [
-    { rank: 1,  userId: 'u3', displayName: 'You',          teamName: 'Super Selectors', points: 2104, isCurrentUser: true  },
-    { rank: 2,  userId: 'u9', displayName: 'Divya Rao',    teamName: 'SRH Strikers',    points: 2056, isCurrentUser: false },
-    { rank: 3,  userId: 'u6', displayName: 'Vikram Nair',  teamName: 'KKR Knights',     points: 1988, isCurrentUser: false },
-    { rank: 4,  userId: 'u1', displayName: 'Arjun Shah',   teamName: 'RCB Warriors',    points: 1932, isCurrentUser: false },
-    { rank: 5,  userId: 'u4', displayName: 'Rohan Das',    teamName: 'Delhi Eleven',    points: 1879, isCurrentUser: false },
-  ],
-};
-
-// ─── Mock matchweeks ──────────────────────────────────────────────────────────
-
-const MOCK_MATCH_WEEKS: MatchWeek[] = [
-  { id: 'mw1', label: 'MW 1', match: 'IND vs PAK', date: 'Nov 5'  },
-  { id: 'mw2', label: 'MW 2', match: 'AUS vs ENG', date: 'Nov 12' },
-  { id: 'mw3', label: 'MW 3', match: 'SA vs NZ',   date: 'Nov 19' },
-];
-
-// ─── Mock history generator ───────────────────────────────────────────────────
-
-const PLAYER_POOL: Array<{ name: string; team: string; role: PlayerRole }> = [
-  { name: 'R. Pant',      team: 'DC',   role: 'wk'   },
-  { name: 'K. Rahul',     team: 'LSG',  role: 'wk'   },
-  { name: 'D. Karthik',   team: 'RCB',  role: 'wk'   },
-  { name: 'V. Kohli',     team: 'RCB',  role: 'bat'  },
-  { name: 'R. Sharma',    team: 'MI',   role: 'bat'  },
-  { name: 'S. Gill',      team: 'GT',   role: 'bat'  },
-  { name: 'S. Iyer',      team: 'KKR',  role: 'bat'  },
-  { name: 'D. Warner',    team: 'DC',   role: 'bat'  },
-  { name: 'A. Sharma',    team: 'PBKS', role: 'bat'  },
-  { name: 'R. Jadeja',    team: 'CSK',  role: 'ar'   },
-  { name: 'H. Pandya',    team: 'MI',   role: 'ar'   },
-  { name: 'A. Patel',     team: 'MI',   role: 'ar'   },
-  { name: 'A. Nortje',    team: 'DC',   role: 'ar'   },
-  { name: 'J. Bumrah',    team: 'MI',   role: 'bowl' },
-  { name: 'M. Shami',     team: 'GT',   role: 'bowl' },
-  { name: 'Y. Chahal',    team: 'RR',   role: 'bowl' },
-  { name: 'M. Siraj',     team: 'RCB',  role: 'bowl' },
-  { name: 'R. Bishnoi',   team: 'LSG',  role: 'bowl' },
-  { name: 'T. Natarajan', team: 'SRH',  role: 'bowl' },
-  { name: 'K. Yadav',     team: 'RCB',  role: 'bowl' },
-];
-
-function lcg(seed: number) {
-  let s = (Math.abs(seed) | 1) % 2147483647;
-  return (): number => {
-    s = (s * 1664525 + 1013904223) % 4294967296;
-    return s / 4294967296;
-  };
-}
-
-function buildHistory(userId: string): MatchTeam[] {
-  const base = userId.split('').reduce((a, c) => a * 31 + c.charCodeAt(0), 7);
-
-  return MOCK_MATCH_WEEKS.map((mw, mwIdx) => {
-    const rand = lcg(base + mwIdx * 9973);
-
-    const shuffle = <T,>(arr: T[]): T[] => {
-      const a = [...arr];
-      for (let i = a.length - 1; i > 0; i--) {
-        const j = Math.floor(rand() * (i + 1));
-        const tmp = a[i]; a[i] = a[j]; a[j] = tmp;
-      }
-      return a;
-    };
-
-    const wks   = shuffle(PLAYER_POOL.filter(p => p.role === 'wk')).slice(0, 1);
-    const bats  = shuffle(PLAYER_POOL.filter(p => p.role === 'bat')).slice(0, 4);
-    const ars   = shuffle(PLAYER_POOL.filter(p => p.role === 'ar')).slice(0, 2);
-    const bowls = shuffle(PLAYER_POOL.filter(p => p.role === 'bowl')).slice(0, 4);
-    const eleven = [...wks, ...bats, ...ars, ...bowls];
-
-    const players: MatchPlayer[] = eleven.map((pl, i) => {
-      const isBat  = pl.role === 'bat' || pl.role === 'wk';
-      const isBowl = pl.role === 'bowl' || pl.role === 'ar';
-      return {
-        name:      pl.name,
-        team:      pl.team,
-        role:      pl.role,
-        captaincy: (i === 0 ? 'captain' : i === 1 ? 'vice_captain' : 'normal') as CaptaincyRole,
-        bat:   isBat  ? Math.floor(rand() * 44 + 6)  : Math.floor(rand() * 12),
-        bowl:  isBowl ? Math.floor(rand() * 40 + 4)  : Math.floor(rand() * 8),
-        field: Math.floor(rand() * 10),
-        bonus: Math.floor(rand() * 7),
-      };
-    });
-
-    const totalPts = players.reduce((s, p) => s + finalPts(p), 0);
-
-    const boosterRoll = rand();
-    const boosters: Array<{ icon: string; name: string }> = [];
-    if      (boosterRoll < 0.20) boosters.push({ icon: '⚡', name: 'Super Captain'      });
-    else if (boosterRoll < 0.35) boosters.push({ icon: '🚀', name: 'Super Vice-Captain' });
-    else if (boosterRoll < 0.46) boosters.push({ icon: '🔁', name: 'Team Double'         });
-
-    return { mwId: mw.id, pts: totalPts, boosters, players };
-  });
-}
-
-const MOCK_HISTORY: Record<string, MatchTeam[]> = Object.fromEntries(
-  ['u1','u2','u3','u4','u5','u6','u7','u8','u9','u10'].map(uid => [uid, buildHistory(uid)])
-);
-
 // ─── Team Detail Modal ────────────────────────────────────────────────────────
 
 interface TeamDetailModalProps {
@@ -272,18 +123,37 @@ interface TeamDetailModalProps {
 }
 
 function TeamDetailModal({ entry, onClose }: TeamDetailModalProps) {
-  const lastMwId = MOCK_MATCH_WEEKS[MOCK_MATCH_WEEKS.length - 1].id;
-  const [mwId, setMwId] = useState(lastMwId);
+  const [matchWeeks, setMatchWeeks] = useState<MatchWeek[]>([]);
+  const [history, setHistory]       = useState<MatchTeam[]>([]);
+  const [loadingHist, setLoadingHist] = useState(false);
+  const [mwId, setMwId]             = useState<string>('');
 
   useEffect(() => {
-    if (entry) setMwId(lastMwId);
-  }, [entry?.userId]);
+    if (!entry?.squadId) {
+      setMatchWeeks([]);
+      setHistory([]);
+      setMwId('');
+      return;
+    }
+    setLoadingHist(true);
+    getSquadSeasonHistory(entry.squadId)
+      .then(({ matchWeeks: mws, history: hist }) => {
+        setMatchWeeks(mws);
+        setHistory(hist);
+        setMwId(mws[mws.length - 1]?.id ?? '');
+      })
+      .catch(err => {
+        console.warn('[LeaderboardScreen] getSquadSeasonHistory failed:', err);
+        setMatchWeeks([]);
+        setHistory([]);
+      })
+      .finally(() => setLoadingHist(false));
+  }, [entry?.squadId]);
 
   if (!entry) return null;
 
-  const history = MOCK_HISTORY[entry.userId] ?? [];
-  const team    = history.find(t => t.mwId === mwId);
-  const mw      = MOCK_MATCH_WEEKS.find(m => m.id === mwId)!;
+  const team = history.find(t => t.mwId === mwId);
+  const mw   = matchWeeks.find(m => m.id === mwId);
 
   return (
     <Modal
@@ -319,7 +189,7 @@ function TeamDetailModal({ entry, onClose }: TeamDetailModalProps) {
             style={styles.mwTabsScroll}
             contentContainerStyle={styles.mwTabs}
           >
-            {MOCK_MATCH_WEEKS.map(w => {
+            {matchWeeks.map(w => {
               const mt     = history.find(t => t.mwId === w.id);
               const active = mwId === w.id;
               return active ? (
@@ -349,7 +219,11 @@ function TeamDetailModal({ entry, onClose }: TeamDetailModalProps) {
           </ScrollView>
 
           {/* ── Body ── */}
-          {team ? (
+          {loadingHist ? (
+            <View style={styles.spinnerWrap}>
+              <ActivityIndicator size="large" color="#C9A84C" />
+            </View>
+          ) : team && mw ? (
             <ScrollView
               style={{ flex: 1 }}
               contentContainerStyle={styles.teamBody}
@@ -384,7 +258,7 @@ function TeamDetailModal({ entry, onClose }: TeamDetailModalProps) {
               {team.players.map((p, i) => {
                 const isCap = p.captaincy === 'captain';
                 const isVC  = p.captaincy === 'vice_captain';
-                const mult  = capMult(p.captaincy);
+                const mult  = capMult(p);
                 const fp    = finalPts(p);
 
                 return (
@@ -440,7 +314,9 @@ function TeamDetailModal({ entry, onClose }: TeamDetailModalProps) {
             </ScrollView>
           ) : (
             <View style={styles.noData}>
-              <Text style={styles.noDataText}>No data for this matchweek yet</Text>
+              <Text style={styles.noDataText}>
+                {matchWeeks.length === 0 ? 'No scored matches yet' : 'No data for this matchweek yet'}
+              </Text>
             </View>
           )}
 
@@ -584,8 +460,7 @@ export default function LeaderboardScreen() {
     if (isRealUuid) loadLeaderboard(activeTab);
   }, [activeTab]);
 
-  // Prefer Supabase data; fall back to mock if store has nothing yet
-  const entries = sbEntries[activeTab] ?? MOCK_LEADERBOARD[activeTab] ?? [];
+  const entries = sbEntries[activeTab] ?? [];
   const myEntry = entries.find(e => e.isCurrentUser);
 
   return (

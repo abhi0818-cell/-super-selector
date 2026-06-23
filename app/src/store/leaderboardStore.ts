@@ -17,6 +17,7 @@ import { supabase } from '../lib/supabase';
 export type LBEntry = {
   rank:          number;
   userId:        string;
+  squadId:       string;   // user_squads.id — needed to load this squad's per-match history
   displayName:   string;
   teamName:      string;
   points:        number;
@@ -102,6 +103,7 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
       const uid = get().currentUserId;
       const unsorted: Omit<LBEntry, 'rank'>[] = squads.map((sq: any) => ({
         userId:        sq.user_id,
+        squadId:       sq.id,
         displayName:   nameById[sq.user_id] ?? 'Player',
         teamName:      sq.name ?? 'My Squad',
         points:        (pointsBySquad[sq.id] ?? 0) - (penaltyBySquad[sq.id] ?? 0),
