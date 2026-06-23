@@ -28,6 +28,8 @@ import {
 } from '../store/contestStore';
 import { useLeaderboardStore } from '../store/leaderboardStore';
 import LeagueSelector from '../components/LeagueSelector';
+import LiveScorecardModal from '../components/LiveScorecardModal';
+import { useLiveMatch, useLiveScore, formatLiveScoreLine } from '../lib/liveScore';
 import { fontSize, radius, spacing, shadow } from '../theme';
 
 type NavProp  = BottomTabNavigationProp<RootTabParamList, 'Home'>;
@@ -289,21 +291,34 @@ function PickTeamButton({ onPress, teamReady }: { onPress: () => void; teamReady
   );
 }
 
-function LiveScorePill() {
+function LiveScorePill({ scoreLine, onPress }: { scoreLine: string | null; onPress: () => void }) {
+  if (!scoreLine) {
+    return (
+      <View style={styles.liveScorePill}>
+        <Text style={styles.liveScoreIcon}>📡</Text>
+        <Text style={styles.liveScoreLabel}>No match live right now</Text>
+      </View>
+    );
+  }
   return (
-    <View style={styles.liveScorePill}>
-      <Text style={styles.liveScoreIcon}>📡</Text>
-      <Text style={styles.liveScoreLabel}>Live Score</Text>
-      <View style={styles.phase3Badge}><Text style={styles.phase3Text}>Phase 3</Text></View>
-    </View>
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.liveScorePillActive, pressed && { opacity: 0.85 }]}>
+      <View style={styles.liveDot} />
+      <Text style={styles.liveScoreLabelActive} numberOfLines={1}>{scoreLine}</Text>
+      <Text style={styles.liveScoreArrow}>›</Text>
+    </Pressable>
   );
 }
 
-function ActionBlock({ onPickTeam, teamReady }: { onPickTeam: () => void; teamReady: boolean }) {
+function ActionBlock({
+  onPickTeam, teamReady, liveScoreLine, onOpenLiveScore,
+}: {
+  onPickTeam: () => void; teamReady: boolean;
+  liveScoreLine: string | null; onOpenLiveScore: () => void;
+}) {
   return (
     <View style={styles.actionBlock}>
       <PickTeamButton onPress={onPickTeam} teamReady={teamReady} />
-      <LiveScorePill />
+      <LiveScorePill scoreLine={liveScoreLine} onPress={onOpenLiveScore} />
     </View>
   );
 }
@@ -465,11 +480,21 @@ export default function HomeScreen() {
   const [openTile, setOpenTile]               = useState<TileType>(null);
   const [selectorVisible, setSelectorVisible] = useState(false);
   const [selectorContests, setSelectorContests] = useState<RealContest[]>([]);
+  const [liveModalVisible, setLiveModalVisible] = useState(false);
 
   const firstName        = user?.email?.split('@')[0] ?? 'Player';
   const teamReady        = validation.valid;
   const activeTournament = tournaments.find(t => t.id === selectedTournamentId);
   const nextMatch        = useNextMatch(selectedTournamentId);
+
+  // Live score — ported from web's admin "Live scorecard" panel, reading the
+  // same match_scorecards row the CricAPI/scraper poller keeps fresh.
+  const liveMatch         = useLiveMatch(selectedTournamentId ?? null);
+  const { score: liveScore } = useLiveScore(liveMatch?.id ?? null);
+  const liveScoreLine     = formatLiveScoreLine(liveScore);
+  const liveMatchTitle    = liveMatch
+    ? `${liveMatch.homeTeamId ?? '?'} vs ${liveMatch.awayTeamId ?? '?'}${liveMatch.matchNumber != null ? ` · M${liveMatch.matchNumber}` : ''}`
+    : undefined;
 
   // Derive contest categories from real data
   const dailyContest    = contests.find(c => c.contestType === 'daily' && !c.isPrivate) ?? null;
@@ -618,7 +643,12 @@ export default function HomeScreen() {
             onToggle={() => toggleTile('daily')}
           >
             <MatchHeroCard match={nextMatch} />
-            <ActionBlock onPickTeam={() => handlePickContest(dailyContest)} teamReady={dailyXIReady} />
+            <ActionBlock
+              onPickTeam={() => handlePickContest(dailyContest)}
+              teamReady={dailyXIReady}
+              liveScoreLine={liveScoreLine || null}
+              onOpenLiveScore={() => setLiveModalVisible(true)}
+            />
           </ContestTile>
         )}
 
@@ -649,7 +679,12 @@ export default function HomeScreen() {
               </View>
             )}
 
-            <ActionBlock onPickTeam={() => handlePickContest(slContest)} teamReady={slXIReady} />
+            <ActionBlock
+              onPickTeam={() => handlePickContest(slContest)}
+              teamReady={slXIReady}
+              liveScoreLine={liveScoreLine || null}
+              onOpenLiveScore={() => setLiveModalVisible(true)}
+            />
 
             {/* Private leagues nested under SL */}
             {privateContests.length > 0 && (
@@ -686,6 +721,13 @@ export default function HomeScreen() {
         contestType="private"
         onSelect={(ctx) => { setSelectorVisible(false); pickForContext(ctx); }}
         onDismiss={() => setSelectorVisible(false)}
+      />
+
+      <LiveScorecardModal
+        visible={liveModalVisible}
+        matchId={liveMatch?.id ?? null}
+        title={liveMatchTitle}
+        onClose={() => setLiveModalVisible(false)}
       />
     </SafeAreaView>
   );
@@ -769,8 +811,10 @@ const styles = StyleSheet.create({
   liveScorePill: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, backgroundColor: 'rgba(0,0,0,0.03)', borderWidth: 1, borderColor: 'rgba(0,0,0,0.06)', borderRadius: radius.lg, opacity: 0.5 },
   liveScoreIcon:  { fontSize: 16 },
   liveScoreLabel: { color: C.muted, fontSize: fontSize.sm, fontWeight: '600', flex: 1 },
-  phase3Badge: { paddingHorizontal: spacing.sm, paddingVertical: 2, backgroundColor: 'rgba(0,0,0,0.04)', borderRadius: radius.full, borderWidth: 1, borderColor: 'rgba(0,0,0,0.08)' },
-  phase3Text: { color: C.muted, fontSize: fontSize.xs },
+  liveScorePillActive: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, backgroundColor: 'rgba(192,57,43,0.08)', borderWidth: 1, borderColor: 'rgba(192,57,43,0.3)', borderRadius: radius.lg },
+  liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.bad, flexShrink: 0 },
+  liveScoreLabelActive: { color: C.text, fontSize: fontSize.sm, fontWeight: '700', flex: 1 },
+  liveScoreArrow: { color: C.muted, fontSize: fontSize.lg, fontWeight: '600' },
 
   slHeaderStats: { flexDirection: 'row', alignItems: 'center', gap: 4, marginRight: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: 4, backgroundColor: 'rgba(201,168,76,0.1)', borderRadius: radius.md, borderWidth: 1, borderColor: 'rgba(201,168,76,0.2)' },
   slHeaderPts:     { color: C.accent, fontSize: fontSize.sm, fontWeight: '800' },

@@ -24,11 +24,14 @@ import { fontSize, radius, spacing, shadow } from '../theme';
 import { useContestStore } from '../store/contestStore';
 import { useLeaderboardStore, LBEntry } from '../store/leaderboardStore';
 import { useAuthStore } from '../store/authStore';
+import { useTournamentStore } from '../store/tournamentStore';
 import { getSquadSeasonHistory, MatchWeek, MatchPlayer, MatchTeam } from '../lib/seasonHistory';
 import {
   getDailyMatchOptions, loadDailyLeaderboard, getDailyUserHistory,
   DailyMatchOption,
 } from '../lib/dailyLeaderboard';
+import { useLiveMatch, useLiveScore, formatLiveScoreLine } from '../lib/liveScore';
+import LiveScorecardModal from '../components/LiveScorecardModal';
 
 // ─── Domain types ─────────────────────────────────────────────────────────────
 
@@ -462,6 +465,15 @@ export default function LeaderboardScreen() {
   const { contests }                                     = useContestStore();
   const { entries: sbEntries, loading,
           loadLeaderboard, setCurrentUser }              = useLeaderboardStore();
+  const { selectedTournamentId }                         = useTournamentStore();
+
+  // Live score — same match_scorecards source as HomeScreen's pill (see
+  // lib/liveScore.ts). Shown as a banner above the Daily match-picker chips,
+  // tap to open the full scorecard.
+  const liveMatch              = useLiveMatch(selectedTournamentId);
+  const { score: liveScore }   = useLiveScore(liveMatch?.id ?? null);
+  const liveScoreLine          = formatLiveScoreLine(liveScore);
+  const [liveModalVisible, setLiveModalVisible] = useState(false);
 
   // Build tabs from real contests, fall back to hardcoded placeholders
   const tabs: ContestTab[] = useMemo(() => {
@@ -626,18 +638,32 @@ export default function LeaderboardScreen() {
           contentContainerStyle={styles.mwTabs}
           onContentSizeChange={() => dailyChipsScrollRef.current?.scrollToEnd({ animated: false })}
         >
-          {dailyMatchOptions.map(opt => (
-            <Pressable
-              key={opt.id}
-              style={[styles.mwTab, selectedDailyMatchId === opt.id && styles.mwTabActive]}
-              onPress={() => setSelectedDailyMatchId(opt.id)}
-            >
-              <Text style={[styles.mwTabLabel, selectedDailyMatchId === opt.id && styles.mwTabLabelActive]}>
-                {opt.label}
-              </Text>
-            </Pressable>
-          ))}
+          {dailyMatchOptions.map(opt => {
+            const isLive = liveMatch?.id === opt.id;
+            return (
+              <Pressable
+                key={opt.id}
+                style={[styles.mwTab, selectedDailyMatchId === opt.id && styles.mwTabActive]}
+                onPress={() => setSelectedDailyMatchId(opt.id)}
+              >
+                <Text style={[styles.mwTabLabel, selectedDailyMatchId === opt.id && styles.mwTabLabelActive]}>
+                  {isLive ? '🔴 ' : ''}{opt.label}
+                </Text>
+              </Pressable>
+            );
+          })}
         </ScrollView>
+      )}
+
+      {/* ── Live score banner — tap to open the full scorecard ── */}
+      {isDailyTab && liveMatch && liveScoreLine && (
+        <Pressable onPress={() => setLiveModalVisible(true)} style={({ pressed }) => pressed && { opacity: 0.85 }}>
+          <View style={styles.liveBanner}>
+            <View style={styles.liveBannerDot} />
+            <Text style={styles.liveBannerText} numberOfLines={1}>{liveScoreLine}</Text>
+            <Text style={styles.liveBannerArrow}>›</Text>
+          </View>
+        </Pressable>
       )}
 
       {/* ── User highlight ── */}
@@ -689,6 +715,13 @@ export default function LeaderboardScreen() {
           initialMwId={isDailyTab ? selectedDailyMatchId : undefined}
         />
       )}
+
+      <LiveScorecardModal
+        visible={liveModalVisible}
+        matchId={liveMatch?.id ?? null}
+        title={liveMatch ? `${liveMatch.homeTeamId ?? '?'} vs ${liveMatch.awayTeamId ?? '?'}` : undefined}
+        onClose={() => setLiveModalVisible(false)}
+      />
     </View>
   );
 }
@@ -867,6 +900,18 @@ const styles = StyleSheet.create({
   rowArrow:      { color: C.muted, fontSize: fontSize.lg, fontWeight: '400', marginLeft: -4 },
 
   empty: { color: C.muted, fontSize: fontSize.base, textAlign: 'center', marginTop: spacing.xxl },
+
+  // Live score banner
+  liveBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+    marginHorizontal: spacing.lg, marginBottom: spacing.xs,
+    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
+    backgroundColor: 'rgba(192,57,43,0.08)', borderWidth: 1, borderColor: 'rgba(192,57,43,0.3)',
+    borderRadius: radius.lg,
+  },
+  liveBannerDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.bad, flexShrink: 0 },
+  liveBannerText: { color: C.text, fontSize: fontSize.sm, fontWeight: '700', flex: 1 },
+  liveBannerArrow: { color: C.muted, fontSize: fontSize.lg, fontWeight: '600' },
 
   // ── Team Detail Modal ─────────────────────────────────────────────────────
 
