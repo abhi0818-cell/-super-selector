@@ -127,7 +127,7 @@ interface TeamState {
   setCaptaincy:  (playerId: string, role: CaptaincyRole) => void;
   removePlayer:  (playerId: string) => void;
   resetXI:       () => void;
-  loadSavedXI:   (matchId: string, contestId: string) => Promise<string | null>;
+  loadSavedXI:   (matchId: string, contestId: string, contestType?: 'daily' | 'sl' | 'private') => Promise<string | null>;
   saveXI:        (opts: SaveXIOpts) => Promise<string | null>;
 }
 
@@ -408,7 +408,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   // ── 3. Load last saved XI (user_match_xi primary, user_teams fallback) ────────
   //  user_match_xi  = mobile saves + web-mirrored saves (v116+)
   //  user_teams     = web daily saves made before the mirror was added
-  loadSavedXI: async (matchId, contestId) => {
+  loadSavedXI: async (matchId, contestId, contestType) => {
     const { players, format } = get();
 
     const { data: { user } } = await supabase.auth.getUser();
@@ -447,6 +447,54 @@ export const useTeamStore = create<TeamState>((set, get) => ({
             set({ selected: restored, ...deriveStats(restored, format) });
             console.log(`[teamStore] loadSavedXI: restored ${restored.length} players from user_match_xi`);
             return null; // success
+          }
+        }
+
+        // ── Path A2: SL/private carry-forward ────────────────────────────────
+        // SL squads don't re-save every match — the XI from the most recently
+        // saved match stays "current" until the user makes a transfer. If there's
+        // no row for the exact upcoming matchId yet, fall back to the squad's
+        // most recently saved match (mirrors web's getLatestSavedSlMatchId /
+        // getPreviousMatchXI carry-forward model in db.js). Daily skips this —
+        // each day's match is independent, so no saved row truly means "pick 11".
+        if (contestType !== 'daily') {
+          const { data: allXi, error: allXiErr } = await supabase
+            .from('user_match_xi')
+            .select('player_id, is_captain, is_vc, match_id')
+            .eq('squad_id', squad.id);
+
+          if (allXiErr) throw allXiErr;
+
+          if (allXi && allXi.length > 0) {
+            const matchIds = [...new Set(allXi.map((r: any) => r.match_id))];
+            const { data: matchRows } = await supabase
+              .from('matches')
+              .select('id, match_number')
+              .in('id', matchIds);
+
+            const numOf = (id: string) =>
+              matchRows?.find((m: any) => m.id === id)?.match_number ?? 0;
+            const latestMatchId = matchIds.reduce(
+              (best: string | null, id: string) => (!best || numOf(id) > numOf(best) ? id : best),
+              null as string | null,
+            );
+
+            const latestRows = allXi.filter((r: any) => r.match_id === latestMatchId);
+            const restored: SelectedPlayer[] = latestRows
+              .map((row: any) => {
+                const player = players.find(p => p.id === row.player_id);
+                if (!player) return null;
+                const captaincy: CaptaincyRole =
+                  row.is_captain ? 'captain' : row.is_vc ? 'vice_captain' : 'normal';
+                return { ...player, captaincy };
+              })
+              .filter(Boolean) as SelectedPlayer[];
+
+            if (restored.length > 0) {
+              set({ selected: restored, ...deriveStats(restored, format) });
+              console.log(`[teamStore] loadSavedXI: carried forward ${restored.length} players from squad's most recently saved match`);
+              return null; // success
+            }
           }
         }
       }

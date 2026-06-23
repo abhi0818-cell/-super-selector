@@ -152,13 +152,27 @@ export default function MyXIScreen({ route }: Props) {
   // ── Auto-restore saved XI on mount / contest change ────────────────────────
   // Fires once all three prerequisites are ready: contest known, match known,
   // and player list loaded (needed to reconstruct SelectedPlayer objects).
-  // Skips if selected is already populated — avoids clobbering mid-session edits.
+  //
+  // Keyed by contestId+matchId (not by "is selected empty") so that switching
+  // contests (e.g. Daily → SL from Home) always clears the previous contest's
+  // 11 players and fetches the new contest's own saved squad — `selected`
+  // lives in the shared teamStore, not scoped per-contest, so without this key
+  // check a non-empty `selected` from the contest you just left would look
+  // "already loaded" and the new contest's real saved XI would never load.
+  // Within the SAME contest+match (e.g. switching tabs and back), the key
+  // matches and this correctly stays a no-op, preserving mid-edit work.
+  const loadedForKey = useRef<string | null>(null);
   useEffect(() => {
     if (!activeContext)         return;
     if (!currentMatchId)        return;
     if (players.length === 0)   return;
-    if (selected.length > 0)    return;   // already loaded or user is mid-edit
-    loadSavedXI(currentMatchId, activeContext.contestId);
+
+    const key = `${activeContext.contestId}:${currentMatchId}`;
+    if (loadedForKey.current === key) return;
+    loadedForKey.current = key;
+
+    resetXI();
+    loadSavedXI(currentMatchId, activeContext.contestId, activeContext.contestType);
   }, [activeContext?.contestId, currentMatchId, players.length]);
 
   async function loadTransfers() {
@@ -289,7 +303,7 @@ export default function MyXIScreen({ route }: Props) {
         {
           text: 'Revert',
           onPress: async () => {
-            const err = await loadSavedXI(currentMatchId, activeContext.contestId);
+            const err = await loadSavedXI(currentMatchId, activeContext.contestId, activeContext.contestType);
             if (err) Alert.alert('Could not revert', err);
           },
         },

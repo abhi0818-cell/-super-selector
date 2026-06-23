@@ -137,6 +137,68 @@ function useSlSquadStats(contestId: string | null, userId: string | null): SlSqu
   return stats;
 }
 
+// ─── Saved-XI status hook ──────────────────────────────────────────────────────
+// Home's tiles need to know "does this contest already have a saved XI?"
+// independent of teamStore.selected — that's a single shared in-memory slot
+// that only gets populated once you open MyXIScreen for a given contest, so on
+// a fresh login (or before navigating into a tile) it's empty and every tile
+// would wrongly show "Pick 11" even when a squad is already saved. This hook
+// checks the DB directly per contest instead.
+//
+// `carryForward: true` (SL/private) also accepts a squad's most recently
+// saved match as "ready" if nothing's saved yet for the exact upcoming match —
+// SL squads don't need to re-save every single match, mirrors the same
+// carry-forward fallback teamStore.loadSavedXI uses.
+function useXIStatus(opts: {
+  contestId: string | null;
+  matchId: string | null;
+  userId: string | null;
+  carryForward: boolean;
+}): boolean {
+  const { contestId, matchId, userId, carryForward } = opts;
+  const [hasXI, setHasXI] = useState(false);
+
+  useEffect(() => {
+    if (!contestId || !matchId || !userId) { setHasXI(false); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data: squad } = await supabase
+          .from('user_squads')
+          .select('id')
+          .eq('contest_id', contestId)
+          .eq('user_id', userId)
+          .maybeSingle();
+        if (!squad?.id) { if (!cancelled) setHasXI(false); return; }
+
+        const { count: exactCount } = await supabase
+          .from('user_match_xi')
+          .select('player_id', { count: 'exact', head: true })
+          .eq('squad_id', squad.id)
+          .eq('match_id', matchId);
+        if ((exactCount ?? 0) > 0) { if (!cancelled) setHasXI(true); return; }
+
+        if (carryForward) {
+          const { count: anyCount } = await supabase
+            .from('user_match_xi')
+            .select('player_id', { count: 'exact', head: true })
+            .eq('squad_id', squad.id);
+          if (!cancelled) setHasXI((anyCount ?? 0) > 0);
+          return;
+        }
+
+        if (!cancelled) setHasXI(false);
+      } catch (e) {
+        console.warn('[useXIStatus]', e);
+        if (!cancelled) setHasXI(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [contestId, matchId, userId, carryForward]);
+
+  return hasXI;
+}
+
 // ─── Next-match hook ──────────────────────────────────────────────────────────
 
 interface NextMatch {
@@ -417,6 +479,21 @@ export default function HomeScreen() {
   // Real SL squad stats
   const slStats = useSlSquadStats(slContest?.id ?? null, user?.id ?? null);
 
+  // Per-contest saved-XI status (DB-backed, independent of teamStore.selected —
+  // see useXIStatus above for why that matters)
+  const dailyXIReady = useXIStatus({
+    contestId:    dailyContest?.id ?? null,
+    matchId:      nextMatch?.id ?? null,
+    userId:       user?.id ?? null,
+    carryForward: false,
+  });
+  const slXIReady = useXIStatus({
+    contestId:    slContest?.id ?? null,
+    matchId:      nextMatch?.id ?? null,
+    userId:       user?.id ?? null,
+    carryForward: true,
+  });
+
   // Rank from leaderboard
   const myLbEntry = slContest ? (lbEntries[slContest.id] ?? []).find(e => e.isCurrentUser) : null;
   const myRank    = myLbEntry?.rank ?? null;
@@ -541,7 +618,7 @@ export default function HomeScreen() {
             onToggle={() => toggleTile('daily')}
           >
             <MatchHeroCard match={nextMatch} />
-            <ActionBlock onPickTeam={() => handlePickContest(dailyContest)} teamReady={teamReady} />
+            <ActionBlock onPickTeam={() => handlePickContest(dailyContest)} teamReady={dailyXIReady} />
           </ContestTile>
         )}
 
@@ -572,7 +649,7 @@ export default function HomeScreen() {
               </View>
             )}
 
-            <ActionBlock onPickTeam={() => handlePickContest(slContest)} teamReady={teamReady} />
+            <ActionBlock onPickTeam={() => handlePickContest(slContest)} teamReady={slXIReady} />
 
             {/* Private leagues nested under SL */}
             {privateContests.length > 0 && (
