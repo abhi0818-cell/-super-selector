@@ -167,8 +167,22 @@ async function mirrorToUserTeams(opts: {
     await supabase.from('user_teams').delete()
       .eq('match_id', matchId).eq('user_id', userId).is('squad_id', null);
 
+    // Match web's own default name exactly (index.html's autoXIName():
+    // `M{number} · {home} vs {away}`) — previously this hardcoded 'My XI'
+    // for every match, so a mobile-saved row and a web-saved row for the
+    // same contest showed mismatched, inconsistent-looking team names side
+    // by side on web's Daily leaderboard.
+    const { data: m } = await supabase
+      .from('matches')
+      .select('match_number, home_team_id, away_team_id')
+      .eq('id', matchId)
+      .maybeSingle();
+    const name = m
+      ? `M${m.match_number ?? '?'} · ${m.home_team_id || '—'} vs ${m.away_team_id || '—'}`
+      : 'My XI';
+
     const { data: ut, error } = await supabase.from('user_teams').insert({
-      name: 'My XI', format,
+      name, format,
       captain_id: captainId, vice_captain_id: viceCaptainId,
       match_id: matchId, squad_id: null, user_id: userId,
     }).select('id').single();
