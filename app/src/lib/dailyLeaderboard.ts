@@ -61,9 +61,13 @@ export async function getDailyMatchOptions(contestId: string): Promise<DailyMatc
     .eq('tournament_id', tournamentId);
   if (e1) throw e1;
 
+  // Ascending (oldest → newest) so the chip row reads left-to-right like a
+  // timeline, with the most recent match as the last/rightmost tile —
+  // LeaderboardScreen scrolls the row to the end and selects this last tile
+  // by default, so "scroll left to see earlier matches" feels natural.
   return (matches || [])
     .filter(isMatchPlayed)
-    .sort((a: any, b: any) => (b.match_number ?? 0) - (a.match_number ?? 0))
+    .sort((a: any, b: any) => (a.match_number ?? 0) - (b.match_number ?? 0))
     .map((m: any) => ({
       id:          m.id,
       matchNumber: m.match_number ?? 0,

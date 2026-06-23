@@ -6,7 +6,7 @@
  * Requires: expo-linear-gradient  →  npx expo install expo-linear-gradient
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -134,6 +134,9 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
   const [history, setHistory]       = useState<MatchTeam[]>([]);
   const [loadingHist, setLoadingHist] = useState(false);
   const [mwId, setMwId]             = useState<string>('');
+  // Tabs run oldest → newest left-to-right; scroll to the end by default so
+  // the active (most recent) tab is visible without an extra manual swipe.
+  const mwScrollRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     if (!entry) {
@@ -199,10 +202,12 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
 
           {/* ── Matchweek tabs ── */}
           <ScrollView
+            ref={mwScrollRef}
             horizontal
             showsHorizontalScrollIndicator={false}
             style={styles.mwTabsScroll}
             contentContainerStyle={styles.mwTabs}
+            onContentSizeChange={() => mwScrollRef.current?.scrollToEnd({ animated: false })}
           >
             {matchWeeks.map(w => {
               const mt     = history.find(t => t.mwId === w.id);
@@ -482,6 +487,9 @@ export default function LeaderboardScreen() {
   const [selectedDailyMatchId, setSelectedDailyMatchId] = useState<string>('');
   const [dailyEntries, setDailyEntries] = useState<LeaderboardEntry[]>([]);
   const [dailyLoading, setDailyLoading] = useState(false);
+  // Newest match is the rightmost chip — scroll there by default so the
+  // user doesn't have to manually swipe right to see the active selection.
+  const dailyChipsScrollRef = useRef<ScrollView>(null);
 
   // Sync active tab when contests load for the first time
   useEffect(() => {
@@ -507,7 +515,9 @@ export default function LeaderboardScreen() {
   }, [activeTab, isDailyTab]);
 
   // Daily: fetch which match-days have any entries, default to the most
-  // recent locked one. Re-runs whenever the Daily tab itself is selected.
+  // recent one. Re-runs whenever the Daily tab itself is selected.
+  // getDailyMatchOptions returns oldest → newest, so the newest match is
+  // the LAST entry — default to that, not the first.
   useEffect(() => {
     if (!isDailyTab) { setDailyMatchOptions([]); setSelectedDailyMatchId(''); return; }
     const isRealUuid = activeTab.includes('-');
@@ -515,7 +525,7 @@ export default function LeaderboardScreen() {
     getDailyMatchOptions(activeTab)
       .then(opts => {
         setDailyMatchOptions(opts);
-        setSelectedDailyMatchId(opts[0]?.id ?? '');
+        setSelectedDailyMatchId(opts[opts.length - 1]?.id ?? '');
       })
       .catch(err => {
         console.warn('[LeaderboardScreen] getDailyMatchOptions failed:', err);
@@ -610,9 +620,11 @@ export default function LeaderboardScreen() {
             matchweek" for this tab. ── */}
       {isDailyTab && dailyMatchOptions.length > 0 && (
         <ScrollView
+          ref={dailyChipsScrollRef}
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.mwTabs}
+          onContentSizeChange={() => dailyChipsScrollRef.current?.scrollToEnd({ animated: false })}
         >
           {dailyMatchOptions.map(opt => (
             <Pressable
