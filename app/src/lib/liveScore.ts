@@ -103,11 +103,15 @@ function parseInnings(raw: any): LiveInnings {
  */
 export async function getLiveMatch(tournamentId: string | null): Promise<LiveMatch | null> {
   if (!tournamentId) return null;
+  // Two distinct writers flag a match as "live": lock-matches sets 'live' at
+  // kickoff, poll-cricapi later sets 'in_progress' once CricAPI confirms play.
+  // Every other consumer (teamStore.ts, PlayerPickerScreen.tsx, index.html)
+  // treats both as "currently live" — match this convention.
   const { data, error } = await supabase
     .from('matches')
     .select('id, match_number, home_team_id, away_team_id, format')
     .eq('tournament_id', tournamentId)
-    .eq('status', 'in_progress')
+    .in('status', ['live', 'in_progress'])
     .order('match_number', { ascending: false })
     .limit(1)
     .maybeSingle();
