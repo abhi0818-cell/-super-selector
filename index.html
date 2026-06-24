@@ -2811,14 +2811,18 @@ p31,Sample Player,MI,bat,9.0,false
       const matchPicker = $('#lbMatchPicker');
       if (lbState.tab === 'daily') {
         matchPicker.style.display = '';
-        // Include completed AND in_progress matches — in_progress matches may have
-        // partial/final scores already saved (e.g. M73 scored mid-game).
+        // Include completed AND in_progress/live matches — in_progress/live
+        // matches may have partial/final scores already saved (e.g. M73 scored
+        // mid-game). Two different writers use two different strings for the
+        // same "live" state (poll-cricapi sets 'in_progress', lock-matches
+        // sets 'live' once it locks SL squads at match start) — check both,
+        // same as everywhere else in this file (see line ~7055).
         const scoredMatches = (state.matches || [])
-          .filter(m => m.status === 'completed' || m.status === 'in_progress')
+          .filter(m => m.status === 'completed' || m.status === 'in_progress' || m.status === 'live')
           .sort((a, b) => (b.match_number || 0) - (a.match_number || 0));
         matchPicker.innerHTML = scoredMatches.length
           ? scoredMatches.map(m => {
-              const live = m.status === 'in_progress' ? ' 🔴' : '';
+              const live = (m.status === 'in_progress' || m.status === 'live') ? ' 🔴' : '';
               return `<option value="${m.id}">M${m.match_number} — ${(m.home_team_id||'')} vs ${(m.away_team_id||'')}${live}</option>`;
             }).join('')
           : '<option value="">No matches with scores yet</option>';
@@ -13063,10 +13067,12 @@ p31,Sample Player,MI,bat,9.0,false
         }
 
         // Daily XI — per-match leaderboard. Mirrors the popup's #lbMatchPicker:
-        // default to the most recent scored (completed/in_progress) match, but
-        // let the user switch matches with an inline picker.
+        // default to the most recent scored (completed/in_progress/live) match,
+        // but let the user switch matches with an inline picker. Check both
+        // 'in_progress' and 'live' — two different writers use two different
+        // strings for the same live state (see line ~7055).
         const scoredMatches = (state.matches || [])
-          .filter(m => m.status === 'completed' || m.status === 'in_progress')
+          .filter(m => m.status === 'completed' || m.status === 'in_progress' || m.status === 'live')
           .sort((a, b) => (b.match_number || 0) - (a.match_number || 0));
 
         if (!scoredMatches.length) {
