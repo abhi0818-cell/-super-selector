@@ -262,15 +262,23 @@ export const useBoosterStore = create<BoosterState>((set, get) => ({
     get().toggleBooster(boosterId);
 
     try {
+      // Plain insert, NOT upsert — the table's real unique constraint is on
+      // (squad_id, match_id, booster), a 3-column key (migration_v12_boosters.sql).
+      // upsert(..., { onConflict: 'squad_id,match_id' }) doesn't match any
+      // actual constraint on this table, so PostgREST rejected every call with
+      // "no unique or exclusion constraint matching the ON CONFLICT
+      // specification" — booster activation failed 100% of the time from
+      // mobile. Mirrors db.js's web-side activateBooster, which already used
+      // a plain insert + 23505 (unique violation) catch for this exact reason.
       const { error } = await supabase
         .from('user_booster_activations')
-        .upsert(
-          { squad_id: squadId, match_id: matchId, booster: boosterId },
-          { onConflict: 'squad_id,match_id' },
-        );
+        .insert({ squad_id: squadId, match_id: matchId, booster: boosterId });
       if (error) {
         // Roll back local toggle on failure
         get().toggleBooster(boosterId);
+        if ((error as any).code === '23505') {
+          throw new Error(`${boosterId.replace(/_/g, ' ')} is already active for this match.`);
+        }
         throw error;
       }
     } catch (err) {
