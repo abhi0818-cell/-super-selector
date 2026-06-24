@@ -10819,6 +10819,13 @@ p31,Sample Player,MI,bat,9.0,false
         }
         renderMatchesAdmin();
         renderHistory();
+        // If the Leaderboard modal is already open, it doesn't auto-refresh on
+        // its own — re-render now so a Recalc'd score shows up immediately
+        // instead of looking "stuck" until the modal is closed and reopened.
+        if ($('#lbModal')?.classList.contains('open')) {
+          await renderLeaderboard();
+          maybeStartLbPolling();
+        }
         if (fIssues2.length || notFinished) {
           const bits = [];
           if (notFinished) bits.push('match not finished yet');

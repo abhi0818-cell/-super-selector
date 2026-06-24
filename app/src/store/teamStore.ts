@@ -20,6 +20,7 @@ import {
 } from '../types';
 import { MOCK_PLAYERS } from '../data/mockPlayers';
 import { supabase } from '../lib/supabase';
+import { isMatchLocked } from '../lib/matchLock';
 
 // ─── Rules (defaults; maxOverseas overridden per-tournament from DB) ──────────
 
@@ -563,6 +564,49 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     if (!user) return 'Not signed in';
 
     try {
+      // 0. Guard against saving into an already-locked match. Unlike web's
+      // saveTargetMatch() (index.html), this save path had no lock-time check
+      // at all — a stale screen (e.g. currentMatchId loaded before this match's
+      // lock_time passed) could silently write a real user_teams/user_match_xi
+      // row straight into an already-started match. Mirror web's behavior:
+      // redirect to the next not-yet-started match in the same tournament
+      // instead of writing into the locked one.
+      const { data: targetMatch } = await supabase
+        .from('matches')
+        .select('id, tournament_id, lock_time, start_time, status')
+        .eq('id', matchId)
+        .maybeSingle();
+
+      if (targetMatch && isMatchLocked(targetMatch)) {
+        const tournamentId = targetMatch.tournament_id ?? get().tournamentId;
+        let nextMatchId: string | null = null;
+
+        if (tournamentId) {
+          const { data: candidates } = await supabase
+            .from('matches')
+            .select('id, match_number, lock_time, start_time, status')
+            .eq('tournament_id', tournamentId)
+            .neq('status', 'completed');
+
+          const notLocked = (candidates ?? []).filter(m => !isMatchLocked(m));
+          const withTime = notLocked
+            .filter(m => m.lock_time || m.start_time)
+            .sort((a, b) =>
+              new Date(a.lock_time ?? a.start_time as string).getTime() -
+              new Date(b.lock_time ?? b.start_time as string).getTime());
+          const withoutTime = notLocked
+            .filter(m => !m.lock_time && !m.start_time)
+            .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0));
+
+          nextMatchId = withTime[0]?.id ?? withoutTime[0]?.id ?? null;
+        }
+
+        if (!nextMatchId) {
+          return 'This match has already locked and there is no upcoming match to save against.';
+        }
+        matchId = nextMatchId;
+      }
+
       // 3a. Get or create the user's squad for this contest
       let squadId: string | null = null;
 
