@@ -1491,12 +1491,15 @@ export function createDb(cfg = {}) {
 
     // ────────────────────────────────────────────────────────────────────────
 
-    /** All matches, newest match_number first. Optional tournament filter. */
+    /** Matches for a single tournament, newest match_number first. tournamentId is required —
+     *  without it we'd silently return every tournament's matches, which has caused
+     *  cross-tournament leaks (e.g. other tournaments' saved teams showing up together). */
     async listMatches(tournamentId) {
+      if (!tournamentId) { console.warn('[listMatches] called without tournamentId — returning [] to avoid a cross-tournament leak.'); return []; }
       const sb = await getClient();
-      let q = sb.from('matches').select('*').order('match_number', { ascending: true, nullsFirst: false });
-      if (tournamentId) q = q.eq('tournament_id', tournamentId);
-      const { data, error } = await q;
+      const { data, error } = await sb.from('matches').select('*')
+        .eq('tournament_id', tournamentId)
+        .order('match_number', { ascending: true, nullsFirst: false });
       if (error) throw error;
       return data;
     },
