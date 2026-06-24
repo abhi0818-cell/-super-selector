@@ -5155,15 +5155,20 @@ p31,Sample Player,MI,bat,9.0,false
 
       const draftChanges = isFirstActiveLock ? 0 : (prev.length ? slTransferCount() : 0);
 
+      // Free Hit suspends BOTH caps for this one match — lock-matches already
+      // bypasses transfer-count logging/deduction entirely for a free_hit lock
+      // (bypassTransfers), and snapshots+restores the pre-lock draft afterward,
+      // so neither the credit budget nor the season transfer-count cap should
+      // block what gets picked here; nothing over-cap carries forward.
+      const freeHitActive = slBudgetCapSuspended();
+
       // Would saving the current draft exceed the season budget?
-      const wouldExceedCap = seasonRemaining !== null && draftChanges > seasonRemaining;
+      const wouldExceedCap = !freeHitActive && seasonRemaining !== null && draftChanges > seasonRemaining;
 
       // ── Budget & overseas stats ────────────────────────────────────────────
       const used = xiPlayers.reduce((a, p) => a + p.credits, 0);
       const budgetLeft = RULES.budget - used;
-      // Free Hit suspends the credit cap for this one match — the over-budget
-      // pick never carries forward (lock-matches snapshots/restores the draft).
-      const budgetCapOff = slBudgetCapSuspended();
+      const budgetCapOff = freeHitActive;
       const osCount = xiPlayers.filter(p => p.overseas).length;
       const osCap   = getOverseasCap();
 
@@ -5213,7 +5218,7 @@ p31,Sample Player,MI,bat,9.0,false
       const hasDraft    = !!(state.sl.draft?.playerIds?.length === 11);
       // Pending changes = diff between current draft (what's in the picker) and last locked XI
       const pendingChanges = prev.length ? slTransferCount() : 0;
-      const pendingExceedsCap = seasonRemaining !== null && pendingChanges > seasonRemaining;
+      const pendingExceedsCap = !freeHitActive && seasonRemaining !== null && pendingChanges > seasonRemaining;
 
       if (!hasDraft && prev.length === 0) {
         const budgetNote = seasonCap !== null
@@ -5221,6 +5226,8 @@ p31,Sample Player,MI,bat,9.0,false
         infoBar.innerHTML = 'Pick your XI and save — your team carries forward every match.' + budgetNote;
       } else if (prev.length === 0) {
         infoBar.innerHTML = 'First match — no transfer cost. Your XI carries forward to all future matches.';
+      } else if (freeHitActive && pendingChanges > 0) {
+        infoBar.innerHTML = `<span style="color:var(--accent);">⚡ Free Hit active — ${pendingChanges} change${pendingChanges !== 1 ? 's' : ''} this match free of cost and uncapped. Reverts after the match.</span>`;
       } else if (pendingChanges === 0) {
         const lockNote = nextLock
           ? ` Locks at M${nextLock.match_number ?? '?'} start.` : '';
