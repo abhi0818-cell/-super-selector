@@ -879,7 +879,7 @@ Deno.serve(async (req: Request) => {
         progress_innings, progress_balls,
         home_team:teams!home_team_id(id, name),
         away_team:teams!away_team_id(id, name),
-        tournament:tournaments!tournament_id(id, name, scraper_enabled, scoring_rules)
+        tournament:tournaments!tournament_id(id, name, scraper_enabled, scoring_rules, dot_ball_enabled)
       `)
       .lte('start_time', cutoff)
       .not('status', 'in', '("completed","delayed")')
@@ -1123,7 +1123,15 @@ Deno.serve(async (req: Request) => {
 
       // ── 5. Scoring rules ──────────────────────────────────────────────────
       const fmtKey   = fmt.toUpperCase() === 'ODI' ? 'ODI' : 'T20'
-      const rules: Rules = tournament.scoring_rules?.[fmtKey] ?? DEFAULT_T20_RULES
+      const rules: Rules = { ...(tournament.scoring_rules?.[fmtKey] ?? DEFAULT_T20_RULES) }
+      // dot_ball is forced to 0 unless the tournament's "Dot ball scoring"
+      // toggle is explicitly ON (migration_v30) — independent of whatever
+      // numeric weight happens to be saved in scoring_rules. This used to be
+      // hidden from the rules UI entirely on the assumption that no feed
+      // would ever report per-bowler dot-ball counts; CricketAddictor-scraped
+      // matches do report them, so without this gate dot_ball could silently
+      // score with zero admin visibility or control.
+      if (!tournament.dot_ball_enabled) rules.dot_ball = 0
 
       // ── 6. Process innings → stat rows ───────────────────────────────────
       // player_id → { batting?, bowling?, fielding?, rawPoints }

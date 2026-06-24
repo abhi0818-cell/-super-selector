@@ -534,6 +534,7 @@ async function scoreSLForMatch(
   fmt: string,
   statsByPlayer: Map<string, PlayerStat>,
   metaByPlayer: Map<string, PlayerMeta>,
+  dotBallEnabled: boolean,
 ): Promise<number> {
   const { data: xiRows, error } = await sb
     .from('user_match_xi')
@@ -568,7 +569,11 @@ async function scoreSLForMatch(
     const { data: contests } = await sb.from('contests').select('id, scoring_rules').in('id', contestIds)
     for (const c of contests ?? []) {
       const custom = c.scoring_rules?.[fmt]
-      customRulesByContest.set(c.id, custom ? { ...DEFAULT_RULES[fmt], ...custom } : null)
+      const merged = custom ? { ...DEFAULT_RULES[fmt], ...custom } : null
+      // Same tournament-level dot_ball_enabled gate as the Daily/default path —
+      // a contest's own custom scoring_rules shouldn't be able to bypass it.
+      if (merged && !dotBallEnabled) merged.dot_ball = 0
+      customRulesByContest.set(c.id, merged)
     }
   }
 
@@ -630,7 +635,7 @@ Deno.serve(async (req: Request) => {
       .select(`
         id, match_number, format, status, external_id, tournament_id, start_time, data_source,
         progress_innings, progress_balls,
-        tournament:tournaments!tournament_id(id, name, scraper_enabled, scoring_rules)
+        tournament:tournaments!tournament_id(id, name, scraper_enabled, scoring_rules, dot_ball_enabled)
       `)
       .lte('start_time', cutoff)
       .not('status', 'in', '("completed","delayed")')
@@ -675,7 +680,11 @@ Deno.serve(async (req: Request) => {
     for (const match of liveMatches as any[]) {
       const tournament = match.tournament
       const fmtKey      = (match.format ?? 'T20').toUpperCase()
-      const rules: Rules = tournament?.scoring_rules?.[fmtKey] ?? DEFAULT_RULES[fmtKey] ?? DEFAULT_T20_RULES
+      const rules: Rules = { ...(tournament?.scoring_rules?.[fmtKey] ?? DEFAULT_RULES[fmtKey] ?? DEFAULT_T20_RULES) }
+      // dot_ball forced to 0 unless the tournament's toggle is explicitly ON
+      // (migration_v30) — see the matching comment in scrape-scorecard's
+      // rules-construction step for why this gate exists.
+      if (!tournament?.dot_ball_enabled) rules.dot_ball = 0
 
       // ── 1. Fetch from CricAPI ────────────────────────────────────────────
       let payload: any
@@ -835,7 +844,7 @@ Deno.serve(async (req: Request) => {
       const pointsMap = new Map<string, number>()
       for (const [pid, s] of statsByPlayer) pointsMap.set(pid, s.raw_points)
       const dailyTeamsScored = await scoreDailyTeamsForMatch(match.id, pointsMap)
-      const slScored         = await scoreSLForMatch(match.id, fmtKey, statsByPlayer, metaByPlayer)
+      const slScored         = await scoreSLForMatch(match.id, fmtKey, statsByPlayer, metaByPlayer, !!tournament?.dot_ball_enabled)
 
       // ── 8. Update match status (mirrors the browser poller's apiStatus logic) ──
       const apiStatus = stage === 'completed' ? 'completed' : stage === 'live' ? 'in_progress' : null

@@ -1015,6 +1015,22 @@ export function createDb(cfg = {}) {
       if (!data || data.length === 0) throw new Error('No rows updated — check RLS policies.');
     },
 
+    /**
+     * Toggle dot-ball scoring on/off for a tournament (migration_v30).
+     * OFF hides the dot_ball rule from both rules UIs AND forces it to 0 at
+     * actual scoring time server-side — see migration_v30_dot_ball_toggle.sql.
+     */
+    async updateTournamentDotBall(id, enabled) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('tournaments')
+        .update({ dot_ball_enabled: !!enabled })
+        .eq('id', id)
+        .select('id');
+      if (error) throw error;
+      if (!data || data.length === 0) throw new Error('No rows updated — check RLS policies.');
+    },
+
     // ── Scraper unmatched player reconciliation ──────────────────────────────
 
     /**

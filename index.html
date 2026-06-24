@@ -2013,6 +2013,21 @@ p31,Sample Player,MI,bat,9.0,false
       b.noBalls=noBalls*(r.no_ball||0); b.wides=wides*(r.wide||0);
       return { points:Object.values(b).reduce((a,c)=>a+c,0), breakdown:b };
     }
+    /**
+     * Force dot_ball to 0 in the in-memory SCORING_RULES for every format,
+     * unless the given tournament has explicitly turned dot-ball scoring ON
+     * (tournaments.dot_ball_enabled, migration_v30). Call this right after
+     * SCORING_RULES gets reloaded from a tournament's saved DB overrides —
+     * otherwise a value saved before this toggle existed (the editor used to
+     * hide the field but still persisted it) could silently feed into local
+     * calc/sim even while the toggle reads OFF.
+     */
+    function applyDotBallGate(tournamentId) {
+      const t = (state.tournaments || []).find(x => x.id === tournamentId);
+      if (!t?.dot_ball_enabled) {
+        Object.keys(SCORING_RULES).forEach(fmt => { if (SCORING_RULES[fmt]) SCORING_RULES[fmt].dot_ball = 0; });
+      }
+    }
     function calcFielding(f,fmt='T20',rulesOverride){
       const r=rulesOverride||SCORING_RULES[fmt]; const {catches=0,stumpings=0,runOutDirect=0,runOutIndirect=0}=f||{};
       const b={ catches:catches*r.catch, stumpings:stumpings*r.stumping, runOutDirect:runOutDirect*r.run_out_direct, runOutIndirect:runOutIndirect*r.run_out_indirect };
@@ -3460,6 +3475,7 @@ p31,Sample Player,MI,bat,9.0,false
           Object.entries(overrides || {}).forEach(([fmt, rules]) => {
             if (SCORING_RULES[fmt]) SCORING_RULES[fmt] = { ...DEFAULT_SCORING_RULES[fmt], ...rules };
           });
+          applyDotBallGate(state.activeTournamentId);
         } catch (e) { console.warn('Could not load scoring rules from DB', e); }
         renderPool(); renderSavedTeams(); renderHistory(); renderRulesEditor(); render();
         refreshRecentForm(); // fire-and-forget: populates form strips once loaded, then re-renders pool
@@ -3729,6 +3745,19 @@ p31,Sample Player,MI,bat,9.0,false
                 </span>
               </label>
             </div>
+            <!-- Dot ball scoring toggle row -->
+            <div style="display:flex; align-items:center; gap:8px; margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
+              <span style="font-size:11px; color:var(--muted); white-space:nowrap;">🎯 Dot ball scoring</span>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;">
+                <input type="checkbox" class="dotball-toggle" data-tid="${t.id}"
+                       ${t.dot_ball_enabled ? 'checked' : ''}
+                       style="width:16px; height:16px; cursor:pointer;" />
+                <span class="dotball-toggle-label" data-tid="${t.id}"
+                      style="font-size:11px; font-weight:600; color:${t.dot_ball_enabled ? 'var(--accent)' : 'var(--muted)'};">
+                  ${t.dot_ball_enabled ? 'ON — visible in rules, scored at configured weight' : 'OFF — hidden from rules, never scores'}
+                </span>
+              </label>
+            </div>
             <!-- Series ID row -->
             <div style="display:flex; align-items:center; gap:6px; margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
               <span style="font-size:11px; color:var(--muted); white-space:nowrap;">CricAPI Series ID</span>
@@ -3909,6 +3938,36 @@ p31,Sample Player,MI,bat,9.0,false
               label.style.color = enabled ? 'var(--accent)' : 'var(--muted)';
             }
             toast(enabled ? '🕷 Scraper enabled for this tournament.' : 'Scraper disabled — CricAPI only.');
+          } catch (err) {
+            toast('Failed: ' + err.message);
+            e.target.checked = !enabled; // revert
+          }
+        });
+      });
+      // Wire dot-ball scoring toggles
+      list.querySelectorAll('.dotball-toggle').forEach(cb => {
+        cb.addEventListener('change', async e => {
+          const tid     = e.target.dataset.tid;
+          const enabled = e.target.checked;
+          const label   = list.querySelector(`.dotball-toggle-label[data-tid="${tid}"]`);
+          try {
+            await state.db.updateTournamentDotBall(tid, enabled);
+            const t = state.tournaments.find(x => x.id === tid);
+            if (t) t.dot_ball_enabled = enabled;
+            if (label) {
+              label.textContent = enabled
+                ? 'ON — visible in rules, scored at configured weight'
+                : 'OFF — hidden from rules, never scores';
+              label.style.color = enabled ? 'var(--accent)' : 'var(--muted)';
+            }
+            // Re-render the rules editor/grid if this is the active tournament —
+            // dot_ball's visibility there depends directly on this flag.
+            if (tid === state.activeTournamentId) {
+              applyDotBallGate(tid);
+              renderTournamentScoringRules();
+              renderRulesEditor();
+            }
+            toast(enabled ? '🎯 Dot ball scoring enabled for this tournament.' : 'Dot ball scoring disabled.');
           } catch (err) {
             toast('Failed: ' + err.message);
             e.target.checked = !enabled; // revert
@@ -4593,6 +4652,7 @@ p31,Sample Player,MI,bat,9.0,false
         Object.entries(overrides || {}).forEach(([fmt, rules]) => {
           if (SCORING_RULES[fmt]) SCORING_RULES[fmt] = { ...DEFAULT_SCORING_RULES[fmt], ...rules };
         });
+        applyDotBallGate(id);
       } catch (e) { console.warn('Could not reload scoring rules on tournament switch', e); }
       await loadPlayersForActiveTournament();
       // Reload contests for the new tournament and sync mode tabs
@@ -11146,11 +11206,17 @@ p31,Sample Player,MI,bat,9.0,false
       }
 
       // Resolve effective scoring rules for a contest (contest → tournament → defaults)
+      const matchTournament = (state.tournaments || []).find(t => t.id === match?.tournament_id);
       async function rulesForContest(contest) {
         if (contest?.scoring_rules?.[fmt]) {
-          return { ...DEFAULT_SCORING_RULES[fmt], ...contest.scoring_rules[fmt] };
+          const merged = { ...DEFAULT_SCORING_RULES[fmt], ...contest.scoring_rules[fmt] };
+          // Same dot_ball_enabled gate as everywhere else — a contest's own
+          // custom rules can't bypass the tournament's toggle.
+          if (!matchTournament?.dot_ball_enabled) merged.dot_ball = 0;
+          return merged;
         }
-        // Tournament-level rules (already loaded into SCORING_RULES at boot)
+        // Tournament-level rules (already loaded into SCORING_RULES at boot,
+        // and already gated by applyDotBallGate()).
         return SCORING_RULES[fmt];
       }
 
@@ -12279,11 +12345,16 @@ p31,Sample Player,MI,bat,9.0,false
       const cur = SCORING_RULES[fmt];
       const def = DEFAULT_SCORING_RULES[fmt];
       if (!cur) return '';
+      const activeTournament = (state.tournaments || []).find(t => t.id === state.activeTournamentId);
+      const dotBallEnabled   = !!activeTournament?.dot_ball_enabled;
       const grouped = {};
       Object.keys(cur).forEach(key => {
-        // dot_ball is excluded from the editor — CricAPI never returns a
-        // per-bowler dot-ball count, so this weight can never affect a score.
-        if (key === 'dot_ball') return;
+        // dot_ball is only shown in the editor once the tournament's
+        // "Dot ball scoring" toggle is turned ON (migration_v30) — most feeds
+        // don't reliably report a per-bowler dot-ball count, so this weight
+        // is hidden by default rather than silently controlling a score the
+        // admin can't see or edit.
+        if (key === 'dot_ball' && !dotBallEnabled) return;
         const meta = RULE_META[key];
         if (!meta) return;
         (grouped[meta.group] ||= []).push(key);
@@ -12459,8 +12530,9 @@ p31,Sample Player,MI,bat,9.0,false
       { label:'4-wicket haul',      key:'four_wicket_haul', unit:'bonus' },
       { label:'5-wicket haul',      key:'five_wicket_haul', unit:'bonus' },
       { label:'Maiden over',        key:'maiden_over',      unit:'bonus' },
-      // Dot ball intentionally omitted — CricAPI doesn't populate a per-bowler
-      // dot-ball count, so this rule can never actually score anything.
+      // Dot ball — only shown when the tournament's dot_ball_enabled flag is
+      // on (migration_v30); ruleTableHtml() filters it out below otherwise.
+      { label:'Dot ball',           key:'dot_ball',         unit:'per dot' },
       { label:'Economy < 5',        key:'economy_below_5',  unit:'bonus' },
       { label:'Economy 5–6',        key:'economy_5_to_6',   unit:'bonus' },
       { label:'Economy 10–11',      key:'economy_10_to_11', unit:'pts' },
@@ -12508,12 +12580,14 @@ p31,Sample Player,MI,bat,9.0,false
 
     async function loadRulesData() {
       if (rulesData) return rulesData;
-      const result = { rules: null, boosters: [], fmt: 'T20', isDefault: true };
+      const result = { rules: null, boosters: [], fmt: 'T20', isDefault: true, dotBallEnabled: false };
 
       try {
         const tid = state.activeTournamentId;
-        const fmt = (state.tournaments?.find(t=>t.id===tid)?.format ?? 'T20').toUpperCase();
+        const tournament = state.tournaments?.find(t=>t.id===tid);
+        const fmt = (tournament?.format ?? 'T20').toUpperCase();
         result.fmt = fmt === 'ODI' ? 'ODI' : 'T20';
+        result.dotBallEnabled = !!tournament?.dot_ball_enabled;
 
         if (tid && state.db) {
           // Scoring rules — getScoringRules returns the full scoring_rules JSONB object
@@ -12552,6 +12626,10 @@ p31,Sample Player,MI,bat,9.0,false
       });
 
       const displayRules = data.rules ?? DEFAULT_T20_RULES_WEB;
+      // dot_ball only shown once the tournament's dot_ball_enabled toggle is
+      // on (migration_v30) — independent of whatever value happens to be
+      // stored, so a pre-toggle saved weight can't leak into this view.
+      const bowlingRows  = data.dotBallEnabled ? RULES_BOWLING : RULES_BOWLING.filter(r => r.key !== 'dot_ball');
 
       if (tab === 'scoring') {
         el.innerHTML = `
@@ -12568,7 +12646,7 @@ p31,Sample Player,MI,bat,9.0,false
             <strong style="color:var(--accent)">Vice-Captain 1.5×</strong> their base points.
           </div>
           ${ruleTableHtml('Batting', RULES_BATTING, displayRules)}
-          ${ruleTableHtml('Bowling', RULES_BOWLING, displayRules)}
+          ${ruleTableHtml('Bowling', bowlingRows, displayRules)}
           ${ruleTableHtml('Fielding', RULES_FIELDING, displayRules)}
         `;
 
