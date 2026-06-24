@@ -5161,13 +5161,17 @@ p31,Sample Player,MI,bat,9.0,false
       // ── Budget & overseas stats ────────────────────────────────────────────
       const used = xiPlayers.reduce((a, p) => a + p.credits, 0);
       const budgetLeft = RULES.budget - used;
+      // Free Hit suspends the credit cap for this one match — the over-budget
+      // pick never carries forward (lock-matches snapshots/restores the draft).
+      const budgetCapOff = slBudgetCapSuspended();
       const osCount = xiPlayers.filter(p => p.overseas).length;
       const osCap   = getOverseasCap();
 
       $('#slXiStatPlayers .value').textContent = xi.length + ' / 11';
       $('#slXiStatPlayers').className = 'stat ' + (xi.length === 11 ? 'ok' : xi.length > 11 ? 'bad' : '');
-      $('#slXiStatBudget .value').textContent = budgetLeft.toFixed(1);
-      $('#slXiStatBudget').className = 'stat ' + (budgetLeft < 0 ? 'bad' : xi.length === 11 ? 'ok' : '');
+      $('#slXiStatBudget .label').textContent = budgetCapOff ? 'Budget (Free Hit)' : 'Budget left';
+      $('#slXiStatBudget .value').textContent = budgetCapOff ? budgetLeft.toFixed(1) + ' ⚡' : budgetLeft.toFixed(1);
+      $('#slXiStatBudget').className = 'stat ' + (budgetCapOff ? '' : (budgetLeft < 0 ? 'bad' : xi.length === 11 ? 'ok' : ''));
       $('#slXiStatCap .value').innerHTML = `${escapeHtml(capName)} <i class="cap-vc-chev">▾</i>`;
       $('#slXiStatVc .value').innerHTML  = `${escapeHtml(vcName)} <i class="cap-vc-chev">▾</i>`;
       renderSlCapVcPicker();
@@ -5272,7 +5276,7 @@ p31,Sample Player,MI,bat,9.0,false
 
       // ── Save button ───────────────────────────────────────────────────────
       const ready = xi.length === 11 && cap && vc && cap !== vc &&
-                    !!state.activeMatchId && !wouldExceedCap && budgetLeft >= 0;
+                    !!state.activeMatchId && !wouldExceedCap && (budgetCapOff || budgetLeft >= 0);
       const saveBtn = $('#slSaveXiBtn');
 
       // Gate Save XI the same way as Daily Pick XI: only arm it when the
@@ -5304,7 +5308,7 @@ p31,Sample Player,MI,bat,9.0,false
       } else {
         $('#slXiSaveLabel').textContent = wouldExceedCap
             ? 'Cap reached: only ' + seasonRemaining + ' transfer' + (seasonRemaining !== 1 ? 's' : '') + ' remaining.'
-            : budgetLeft < 0
+            : (!budgetCapOff && budgetLeft < 0)
               ? 'Over budget by ' + Math.abs(budgetLeft).toFixed(1) + ' cr.'
               : saveEnabled
                 ? 'XI ready — ' + capName + ' (C), ' + vcName + ' (VC)'
@@ -5387,6 +5391,20 @@ p31,Sample Player,MI,bat,9.0,false
     function getCachedBoosterForMatch(matchId) {
       if (!matchId || !Array.isArray(state.sl.boosterActivations)) return null;
       return state.sl.boosterActivations.find(a => a.match_id === matchId)?.booster ?? null;
+    }
+
+    /**
+     * True when Free Hit is the active booster for the match currently being
+     * drafted (state.activeMatchId) in the SL XI picker. While true, the
+     * RULES.budget (credit) cap is suspended — the user can pick a swap that
+     * costs more than 100cr for this one match only. This mirrors what
+     * Free Hit already does for the transfer-count cap server-side: the swap
+     * is a one-match exception, and lock-matches snapshots the pre-lock draft
+     * and restores it after the match, so an over-budget pick here never
+     * carries forward as the squad's permanent baseline.
+     */
+    function slBudgetCapSuspended() {
+      return getCachedBoosterForMatch(state.activeMatchId) === 'free_hit';
     }
 
     // ─── BOOSTER TRIGGER + POPUP ────────────────────────────────────────────
@@ -6654,10 +6672,10 @@ p31,Sample Player,MI,bat,9.0,false
       const xi = state.sl.xiPlayers;
       if (xi.length >= 11) return false;
       const xiPlayers = xi.map(id => PLAYERS.find(x => x.id === id)).filter(Boolean);
-      // Budget
+      // Budget — suspended for this match while Free Hit is active (see slBudgetCapSuspended)
       const pCredits = Number(p.credits) || 0;
       const used = xiPlayers.reduce((a, x) => a + (Number(x.credits) || 0), 0);
-      if (pCredits > 0 && used + pCredits > RULES.budget) return false;
+      if (!slBudgetCapSuspended() && pCredits > 0 && used + pCredits > RULES.budget) return false;
       // Role cap — skip if role is unrecognised
       const roleLimits = RULES.role[p.role];
       if (roleLimits) {
@@ -6695,7 +6713,7 @@ p31,Sample Player,MI,bat,9.0,false
         const xiPlayers = xi.map(pid => PLAYERS.find(x => x.id === pid)).filter(Boolean);
         const pCredits = Number(p.credits) || 0;
         const used = xiPlayers.reduce((a, x) => a + (Number(x.credits) || 0), 0);
-        if (pCredits > 0 && used + pCredits > RULES.budget) {
+        if (!slBudgetCapSuspended() && pCredits > 0 && used + pCredits > RULES.budget) {
           toast(`Over budget — ${p.name} costs ${pCredits.toFixed(1)} cr, only ${(RULES.budget - used).toFixed(1)} left.`); return;
         }
         const roleLimits = RULES.role[p.role];
