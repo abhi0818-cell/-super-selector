@@ -186,6 +186,11 @@ export default function RulesScreen() {
   const [boosters, setBoosters]       = useState<string[]>([]);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState<string | null>(null);
+  // dot_ball_enabled (migration_v30) — hide the Dot ball row below unless
+  // this tournament has explicitly turned it on, regardless of whatever
+  // numeric weight happens to be saved in scoring_rules. Mirrors the web's
+  // Rules modal gate.
+  const [dotBallEnabled, setDotBallEnabled] = useState(false);
 
   const fmt = (tournament?.format ?? 'T20').toUpperCase() === 'ODI' ? 'ODI' : 'T20';
 
@@ -201,13 +206,14 @@ export default function RulesScreen() {
       // 1. Scoring rules from tournament
       const { data: tData, error: tErr } = await supabase
         .from('tournaments')
-        .select('scoring_rules')
+        .select('scoring_rules, dot_ball_enabled')
         .eq('id', selectedTournamentId!)
         .single();
       if (tErr) throw tErr;
 
       const fmtRules = tData?.scoring_rules?.[fmt] ?? null;
       setRules(fmtRules);
+      setDotBallEnabled(!!tData?.dot_ball_enabled);
 
       // 2. Boosters from the first active public contest (SL / daily)
       // Use already-loaded contests from store if available, else query
@@ -305,7 +311,11 @@ export default function RulesScreen() {
             </InfoCard>
 
             <RuleTable title="Batting"  rows={BATTING_ROWS}  rules={displayRules} />
-            <RuleTable title="Bowling"  rows={BOWLING_ROWS}  rules={displayRules} />
+            <RuleTable
+              title="Bowling"
+              rows={dotBallEnabled ? BOWLING_ROWS : BOWLING_ROWS.filter(r => r.key !== 'dot_ball')}
+              rules={displayRules}
+            />
             <RuleTable title="Fielding" rows={FIELDING_ROWS} rules={displayRules} />
 
             {/* ── 2. Boosters ─────────────────────────────────────────────── */}

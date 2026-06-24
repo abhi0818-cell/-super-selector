@@ -21,6 +21,7 @@ import {
   calcBattingPoints,
   calcBowlingPoints,
   calcFieldingPoints,
+  SCORING_RULES,
 } from '../engine/cricketScoringEngine';
 import { MatchFormat, PlayerRole, CaptaincyRole } from '../types';
 import { isMatchPlayed } from './matchLock';
@@ -153,6 +154,13 @@ export async function getDailyUserHistory(contestId: string, userId: string): Pr
   const tournamentId = contestRow?.tournament_id;
   if (!tournamentId) return { matchWeeks: [], history: [] };
 
+  // dot_ball_enabled (migration_v30) — whole contest is scoped to one
+  // tournament here, so a single lookup gates every matchweek below.
+  // Default false (hidden) if it can't be resolved, matching the server.
+  const { data: tRow } = await supabase
+    .from('tournaments').select('dot_ball_enabled').eq('id', tournamentId).maybeSingle();
+  const dotBallOn = !!tRow?.dot_ball_enabled;
+
   const { data: tMatches, error: e1 } = await supabase
     .from('matches')
     .select('id, match_number, played_on, home_team_id, away_team_id, format, status')
@@ -238,7 +246,8 @@ export async function getDailyUserHistory(contestId: string, userId: string): Pr
                + (breakdown.duck ?? 0) + (breakdown.strikeRateBonus ?? 0);
       }
       if (st?.bowling) {
-        const { breakdown } = calcBowlingPoints(st.bowling, fmt);
+        const bowlingRules = dotBallOn ? undefined : { ...SCORING_RULES[fmt], dot_ball: 0 };
+        const { breakdown } = calcBowlingPoints(st.bowling, fmt, bowlingRules);
         bowl  += (breakdown.wickets ?? 0) + (breakdown.maidens ?? 0) + (breakdown.dotBalls ?? 0);
         bonus += (breakdown.lbwBowledBonus ?? 0) + (breakdown.fiveWicket ?? 0) + (breakdown.fourWicket ?? 0)
                + (breakdown.economyBonus ?? 0) + (breakdown.noBalls ?? 0) + (breakdown.wides ?? 0);

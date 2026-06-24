@@ -136,8 +136,9 @@ export function calcBattingPoints(
 export function calcBowlingPoints(
   spell: BowlingSpell,
   format: MatchFormat = 'T20',
+  rulesOverride?: ScoringRuleSet,
 ): { points: number; breakdown: Record<string, number> } {
-  const rules = SCORING_RULES[format];
+  const rules = rulesOverride ?? SCORING_RULES[format];
   const { wickets, wicketTypes = [], maidens, runsConceded, ballsBowled, dotBalls, noBalls, wides } = spell;
   const breakdown: Record<string, number> = {};
 
