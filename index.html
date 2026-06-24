@@ -3651,12 +3651,16 @@ p31,Sample Player,MI,bat,9.0,false
       sel.innerHTML = opts;
 
       // ── Header tournament switcher ──────────────────────────────────────────
+      // Hidden for now — trying Home-tile-only navigation. Flip this back to
+      // true to restore the header dropdown as a tournament-switch shortcut.
+      const SHOW_HEADER_TOURNAMENT_PICKER = false;
       const headerWrap   = $('#headerTournamentWrap');
       const headerPicker = $('#headerTournamentPicker');
       if (headerPicker) {
         // Only show when there's more than one tournament (no point showing for a single one)
         const activeTournaments = state.tournaments.filter(t => t.is_active);
-        const showSwitcher = state.tournaments.length > 1 || activeTournaments.length >= 1;
+        const showSwitcher = SHOW_HEADER_TOURNAMENT_PICKER &&
+          (state.tournaments.length > 1 || activeTournaments.length >= 1);
         if (headerWrap) headerWrap.style.display = showSwitcher ? 'flex' : 'none';
 
         // Populate with active tournaments first, then inactive
