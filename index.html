@@ -12931,7 +12931,8 @@ p31,Sample Player,MI,bat,9.0,false
           const label = next.home_team_id && next.away_team_id
             ? `${next.home_team_id} vs ${next.away_team_id}` : `Match ${next.match_number ?? ''}`;
           const dateStr = d.toLocaleDateString('en-GB', { day:'numeric', month:'short' });
-          nextMatchMap[state.activeTournamentId] = `${label} · ${dateStr}`;
+          const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          nextMatchMap[state.activeTournamentId] = `${label} · ${dateStr}, ${timeStr}`;
         }
       }
 
@@ -12969,38 +12970,45 @@ p31,Sample Player,MI,bat,9.0,false
           <div class="t-card-footer">
             <span class="t-card-rank">${isActive ? '<strong>Currently selected</strong>' : ''}</span>
             <button class="ctrl-btn t-card-btn primary" data-tid="${t.id}">
-              ${isActive ? 'View Contest →' : 'Select'}
+              ${isActive ? 'View Leaderboard →' : 'Select'}
             </button>
           </div>
         </div>`;
       }).join('');
+
+      // Selecting a tournament (card or "Select" button) just marks it
+      // active and re-renders this same Home tab — it does NOT navigate
+      // away. Navigating to the leaderboard/contest is a separate, explicit
+      // choice: only clicking "View Leaderboard →" on an already-active
+      // card does that.
+      async function selectTournamentStayHome(tid) {
+        if (tid !== state.activeTournamentId) {
+          await switchTournament(tid);
+          const picker = $('#headerTournamentPicker');
+          if (picker) picker.value = tid;
+          renderPageHomeTab(); // re-render in place so the card now shows "Currently selected"
+        }
+      }
 
       // Wire card + button clicks
       grid.querySelectorAll('.t-card-btn').forEach(btn => {
         btn.addEventListener('click', async e => {
           e.stopPropagation();
           const tid = btn.dataset.tid;
-          if (tid !== state.activeTournamentId) {
-            await switchTournament(tid);
-            // Update the picker to match
-            const picker = $('#headerTournamentPicker');
-            if (picker) picker.value = tid;
+          if (tid === state.activeTournamentId) {
+            // Already selected — "View Leaderboard →" is the explicit navigate action
+            switchPageTab('contest');
+          } else {
+            await selectTournamentStayHome(tid);
           }
-          switchPageTab('contest');
         });
       });
 
-      // Clicking anywhere on the card also works
+      // Clicking anywhere on the card selects it too, but never auto-navigates.
       grid.querySelectorAll('.t-card').forEach(card => {
         card.addEventListener('click', async e => {
-          if (e.target.classList.contains('t-card-btn')) return; // already handled
-          const tid = card.dataset.tid;
-          if (tid !== state.activeTournamentId) {
-            await switchTournament(tid);
-            const picker = $('#headerTournamentPicker');
-            if (picker) picker.value = tid;
-          }
-          switchPageTab('contest');
+          if (e.target.classList.contains('t-card-btn')) return; // already handled above
+          await selectTournamentStayHome(card.dataset.tid);
         });
       });
     }
