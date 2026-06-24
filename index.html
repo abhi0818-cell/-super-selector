@@ -13720,16 +13720,47 @@ p31,Sample Player,MI,bat,9.0,false
       const lastLocked = state.sl.lastLockedXI;
       if (!lastLocked?.playerIds?.length) return;
       const matchNum = lastLocked.matchNumber ?? '?';
-      if (!confirm(`Revert to your last saved XI (M${matchNum})?\n\nThis will discard any pending changes for the next match.`)) return;
+
+      // A booster activated for the upcoming match is a "pending change for
+      // the next match" exactly like the transfers being reverted below —
+      // it's always written straight to user_booster_activations against
+      // nextMatch.id the moment the user taps it in the booster modal, with
+      // no draft-style staging, so there's no notion of a booster that was
+      // already part of "last saved" for a match that hasn't locked yet.
+      // Without this, reverting the XI left a now-orphaned booster active
+      // for the next match (wasting a use / leaving bypassTransfers wrongly
+      // true at lock time) even though the confirm dialog below already
+      // promises to discard pending changes for that match.
+      let boosterCtx = null;
+      try { boosterCtx = await getSlBoosterContext(); } catch (_) {}
+      const activeBoosterLabel = boosterCtx?.activeForNext
+        ? (BOOSTER_META[boosterCtx.activeForNext]?.label ?? boosterCtx.activeForNext)
+        : null;
+
+      const boosterNote = activeBoosterLabel
+        ? `\n\n${activeBoosterLabel} is currently active for the next match and will also be removed.`
+        : '';
+      if (!confirm(`Revert to your last saved XI (M${matchNum})?\n\nThis will discard any pending changes for the next match.${boosterNote}`)) return;
       try {
         const draft = { playerIds: lastLocked.playerIds, captainId: lastLocked.captainId, vcId: lastLocked.vcId };
         if (state.sl.squad) await state.db.saveDraft(state.sl.squad.id, draft);
+
+        if (boosterCtx?.activeForNext && boosterCtx.nextMatch && state.sl.squad) {
+          try {
+            await state.db.deactivateBooster(state.sl.squad.id, boosterCtx.nextMatch.id, boosterCtx.activeForNext);
+            state.sl.boosterActivations = null; // invalidate cache
+          } catch (e) {
+            console.warn('[revert] booster deactivate failed:', e.message);
+          }
+        }
+
         state.sl.draft     = draft;
         state.sl.xiPlayers = [...draft.playerIds];
         state.sl.xiCaptain = draft.captainId ?? null;
         state.sl.xiVc      = draft.vcId      ?? null;
         renderSlActiveScreen(); renderPool();
-        toast('Reverted to last saved XI.');
+        await renderSlBoosterBar();
+        toast(activeBoosterLabel ? `Reverted to last saved XI · ${activeBoosterLabel} removed.` : 'Reverted to last saved XI.');
       } catch (e) {
         toast('Revert failed: ' + e.message, 4000);
       }
