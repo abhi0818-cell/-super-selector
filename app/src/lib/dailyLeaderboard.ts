@@ -106,10 +106,10 @@ export async function loadDailyLeaderboard(matchId: string, currentUserId: strin
   const userIds = [...new Set(data.map((t: any) => t.user_id))];
   const { data: profiles } = await supabase
     .from('profiles')
-    .select('id, display_name')
+    .select('id, display_name, team_name')
     .in('id', userIds);
   const nameById: Record<string, string> = {};
-  (profiles || []).forEach((p: any) => { nameById[p.id] = p.display_name ?? 'Player'; });
+  (profiles || []).forEach((p: any) => { nameById[p.id] = p.team_name ?? p.display_name ?? 'Player'; });
 
   const unsorted = data.map((t: any) => ({
     userId:        t.user_id,

@@ -2059,37 +2059,59 @@ export function createDb(cfg = {}) {
     // ─── Profiles ─────────────────────────────────────────────────────────
 
     /**
-     * Upsert the signed-in user's display name + email into profiles.
-     * Preserves any existing custom display_name already stored — this is
-     * called on every login/DB reconnect with a metadata-derived fallback
-     * name (usually the email), so we must not let that clobber a name the
-     * user set manually.
+     * Upsert the signed-in user's profile fields. Two different "don't
+     * clobber" rules apply here:
+     *  - display_name / team_name are "first write wins" — once set they're
+     *    never overwritten by a later call, even if a new value is passed.
+     *    This is called on every login/DB reconnect with a metadata-derived
+     *    fallback name (usually the email), so routine logins must not
+     *    stomp a name the user set manually. team_name specifically is a
+     *    one-time setup field (set at signup, shown read-only afterwards),
+     *    so locking it here is what actually enforces that.
+     *  - first_name / last_name are overwritten whenever explicitly passed
+     *    (e.g. from the profile-edit screen) — pass `undefined` to leave
+     *    them untouched instead of clearing them.
      */
-    async upsertProfile({ userId, displayName, email }) {
+    async upsertProfile({ userId, displayName, email, firstName, lastName, teamName }) {
       const sb = await getClient();
-      const { data: existing } = await sb.from('profiles').select('display_name').eq('id', userId).maybeSingle();
-      const finalDisplayName = existing?.display_name || displayName;
+      const { data: existing } = await sb.from('profiles')
+        .select('display_name, team_name, first_name, last_name').eq('id', userId).maybeSingle();
+      const finalDisplayName = existing?.display_name || displayName || null;
+      const finalTeamName    = existing?.team_name || teamName || null;
+      const finalFirstName   = firstName !== undefined ? firstName : (existing?.first_name ?? null);
+      const finalLastName    = lastName  !== undefined ? lastName  : (existing?.last_name ?? null);
       const { error } = await sb.from('profiles').upsert({
-        id: userId, display_name: finalDisplayName, email, updated_at: new Date().toISOString(),
+        id: userId,
+        display_name: finalDisplayName,
+        email,
+        team_name: finalTeamName,
+        first_name: finalFirstName,
+        last_name: finalLastName,
+        updated_at: new Date().toISOString(),
       }, { onConflict: 'id' });
       if (error) throw error;
     },
 
-    /** Fetch the signed-in user's profile row. Returns { display_name, email } or null. */
+    /** Fetch the signed-in user's profile row, including the structured
+     *  first/last/team name fields added in migration_v33. */
     async getMyProfile(userId) {
       const sb = await getClient();
-      const { data, error } = await sb.from('profiles').select('display_name, email').eq('id', userId).single();
+      const { data, error } = await sb.from('profiles')
+        .select('display_name, email, first_name, last_name, team_name').eq('id', userId).single();
       if (error) return null;
       return data;
     },
 
-    /** Returns a map of userId → display_name (falls back to email). */
+    /** Returns a map of userId → leaderboard name. Prefers team_name (the
+     *  user's persistent leaderboard identity) and falls back to
+     *  display_name, then email, then a truncated id for legacy rows that
+     *  predate migration_v33. */
     async getProfiles() {
       const sb = await getClient();
-      const { data, error } = await sb.from('profiles').select('id, display_name, email');
+      const { data, error } = await sb.from('profiles').select('id, display_name, email, team_name');
       if (error) throw error;
       const map = {};
-      (data || []).forEach(p => { map[p.id] = p.display_name || p.email || p.id.slice(0, 8); });
+      (data || []).forEach(p => { map[p.id] = p.team_name || p.display_name || p.email || p.id.slice(0, 8); });
       return map;
     },
 
@@ -2240,10 +2262,10 @@ export function createDb(cfg = {}) {
       if (userIds.length) {
         const { data: profiles } = await sb
           .from('profiles')
-          .select('id, display_name, email')
+          .select('id, display_name, email, team_name')
           .in('id', userIds);
         (profiles || []).forEach(p => {
-          profileMap[p.id] = p.display_name || p.email || p.id.slice(0, 8);
+          profileMap[p.id] = p.team_name || p.display_name || p.email || p.id.slice(0, 8);
         });
       }
 

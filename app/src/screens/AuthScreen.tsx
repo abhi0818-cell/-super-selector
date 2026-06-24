@@ -45,11 +45,14 @@ const C = {
 export default function AuthScreen() {
   const { signIn, signUp, loading } = useAuthStore();
 
-  const [mode, setMode]       = useState<Mode>('login');
-  const [email, setEmail]     = useState('');
-  const [password, setPass]   = useState('');
-  const [error, setError]     = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
+  const [mode, setMode]         = useState<Mode>('login');
+  const [email, setEmail]       = useState('');
+  const [password, setPass]     = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName]   = useState('');
+  const [teamName, setTeamName]   = useState('');
+  const [error, setError]       = useState<string | null>(null);
+  const [success, setSuccess]   = useState<string | null>(null);
 
   const handleSubmit = async () => {
     setError(null);
@@ -68,7 +71,17 @@ export default function AuthScreen() {
       const err = await signIn(email.trim(), password);
       if (err) setError(err);
     } else {
-      const err = await signUp(email.trim(), password);
+      if (!firstName.trim() || !lastName.trim()) {
+        setError('Please enter your first and last name.');
+        return;
+      }
+      if (!teamName.trim()) {
+        setError("Please enter a team name — this can't be changed later.");
+        return;
+      }
+      const err = await signUp(email.trim(), password, {
+        firstName: firstName.trim(), lastName: lastName.trim(), teamName: teamName.trim(),
+      });
       if (err) {
         setError(err);
       } else {
@@ -140,6 +153,47 @@ export default function AuthScreen() {
 
               {/* Fields */}
               <View style={styles.fields}>
+                {mode === 'register' && (
+                  <>
+                    <View style={styles.nameRow}>
+                      <View style={[styles.field, styles.nameField]}>
+                        <Text style={styles.label}>First name</Text>
+                        <TextInput
+                          style={styles.input}
+                          placeholder="Abhinav"
+                          placeholderTextColor={C.muted}
+                          value={firstName}
+                          onChangeText={setFirstName}
+                          autoComplete="given-name"
+                        />
+                      </View>
+                      <View style={[styles.field, styles.nameField]}>
+                        <Text style={styles.label}>Last name</Text>
+                        <TextInput
+                          style={styles.input}
+                          placeholder="Gupta"
+                          placeholderTextColor={C.muted}
+                          value={lastName}
+                          onChangeText={setLastName}
+                          autoComplete="family-name"
+                        />
+                      </View>
+                    </View>
+                    <View style={styles.field}>
+                      <Text style={styles.label}>Team name</Text>
+                      <TextInput
+                        style={styles.input}
+                        placeholder="Royal Smashers"
+                        placeholderTextColor={C.muted}
+                        value={teamName}
+                        onChangeText={setTeamName}
+                        autoComplete="off"
+                      />
+                      <Text style={styles.hint}>Shown on leaderboards — can&apos;t be changed later</Text>
+                    </View>
+                  </>
+                )}
+
                 <View style={styles.field}>
                   <Text style={styles.label}>Email</Text>
                   <TextInput
@@ -342,6 +396,17 @@ const styles = StyleSheet.create({
   },
   field: {
     gap: spacing.xs,
+  },
+  nameRow: {
+    flexDirection: 'row',
+    gap:           spacing.sm,
+  },
+  nameField: {
+    flex: 1,
+  },
+  hint: {
+    color:    C.muted,
+    fontSize: fontSize.xs,
   },
   label: {
     color:         C.muted,

@@ -60,6 +60,14 @@ const C = {
 
 export default function MyXIScreen({ route }: Props) {
   const { signOut, user }               = useAuthStore();
+  const [teamName, setTeamName] = useState<string | null>(
+    (user?.user_metadata as any)?.team_name ?? null
+  );
+  useEffect(() => {
+    if (!user || teamName) return;
+    supabase.from('profiles').select('team_name').eq('id', user.id).maybeSingle()
+      .then(({ data }) => { if (data?.team_name) setTeamName(data.team_name); });
+  }, [user?.id]);
   const { activeContext, setContext }   = useContestStore();
   const { loadBoosters }                = useBoosterStore();
   const {
@@ -345,7 +353,7 @@ export default function MyXIScreen({ route }: Props) {
           <View style={styles.topBarRight}>
             {user && (
               <Text style={styles.userEmail} numberOfLines={1}>
-                {user.email}
+                {teamName || user.email}
               </Text>
             )}
             <Pressable style={styles.signOutBtn} onPress={handleSignOut}>

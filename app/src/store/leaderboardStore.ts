@@ -122,15 +122,17 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
         boosterCountBySquad[b.squad_id] = (boosterCountBySquad[b.squad_id] ?? 0) + 1;
       });
 
-      // Step 3: fetch display names from profiles
+      // Step 3: fetch leaderboard names from profiles (team_name preferred,
+      // same convention as the web client — falls back to display_name for
+      // pre-migration_v33 rows that haven't backfilled yet)
       const userIds = [...new Set(squads.map((s: any) => s.user_id))];
       const { data: profiles } = await supabase
         .from('profiles')
-        .select('id, display_name')
+        .select('id, display_name, team_name')
         .in('id', userIds);
 
       const nameById: Record<string, string> = {};
-      (profiles ?? []).forEach((p: any) => { nameById[p.id] = p.display_name ?? 'Player'; });
+      (profiles ?? []).forEach((p: any) => { nameById[p.id] = p.team_name ?? p.display_name ?? 'Player'; });
 
       // Step 4: build ranked entries
       const uid = get().currentUserId;

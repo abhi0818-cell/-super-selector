@@ -1173,7 +1173,17 @@
 
       <!-- Create account form -->
       <div id="loginFormSignUp" style="display:none">
-        <input id="signupNameInput" type="text" placeholder="Preferred name (shown on leaderboards)" autocomplete="name"
+        <div style="display:flex; gap:10px;">
+          <input id="signupFirstNameInput" type="text" placeholder="First name" autocomplete="given-name"
+                 style="flex:1;padding:11px 14px;border-radius:8px;font-size:15px;
+                        background:var(--panel-2);color:var(--text);border:1px solid var(--border);
+                        margin-bottom:10px;outline:none;" />
+          <input id="signupLastNameInput" type="text" placeholder="Last name" autocomplete="family-name"
+                 style="flex:1;padding:11px 14px;border-radius:8px;font-size:15px;
+                        background:var(--panel-2);color:var(--text);border:1px solid var(--border);
+                        margin-bottom:10px;outline:none;" />
+        </div>
+        <input id="signupTeamNameInput" type="text" placeholder="Team name (shown on leaderboards — can't be changed later)" autocomplete="off"
                style="width:100%;padding:11px 14px;border-radius:8px;font-size:15px;
                       background:var(--panel-2);color:var(--text);border:1px solid var(--border);
                       margin-bottom:10px;outline:none;" />
@@ -1215,10 +1225,52 @@
       <button id="simBtn" class="primary" style="display:none;">Start mock match</button>
       <button id="adminBtn" class="ctrl-btn ctrl-btn-admin" title="Tournament setup, players, schedule" style="display:none;">⚙️ Admin</button>
       <span class="hdr-divider"></span>
-      <span id="userPill" class="user-pill" style="display:none">
-        <span id="userAvatar" class="avatar">?</span>
-        <span id="userName">…</span>
-      </span>
+      <div id="userPillWrap" style="display:none; position:relative;">
+        <span id="userPill" class="user-pill" style="cursor:pointer;" title="View profile">
+          <span id="userAvatar" class="avatar">?</span>
+          <span id="userName">…</span>
+          <span style="font-size:9px; color:var(--muted);">▾</span>
+        </span>
+        <div id="profileCard" style="display:none; position:absolute; top:calc(100% + 8px); right:0;
+             width:260px; background:var(--panel); border:1px solid var(--border); border-radius:12px;
+             box-shadow:0 8px 24px rgba(0,0,0,0.22); padding:14px; z-index:90;">
+          <div id="profileCardView">
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+              <span id="profileCardAvatar" class="avatar" style="width:36px;height:36px;font-size:13px;flex-shrink:0;">?</span>
+              <div style="overflow:hidden;">
+                <div id="profileCardName" style="font-weight:700; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">…</div>
+                <span id="profileCardTeamPill" style="display:inline-block; margin-top:3px; font-size:11px;
+                      padding:2px 8px; border-radius:10px; background:var(--panel-2); color:var(--muted);
+                      max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">…</span>
+              </div>
+            </div>
+            <div style="border-top:1px solid var(--border); padding-top:10px; margin-bottom:12px;
+                 font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px;
+                 overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+              <span>✉️</span><span id="profileCardEmail">…</span>
+            </div>
+            <button id="profileEditBtn" class="ctrl-btn" style="width:100%; font-size:12px;">✎ Edit name</button>
+          </div>
+          <div id="profileCardEdit" style="display:none;">
+            <div style="font-size:13px; font-weight:700; margin-bottom:10px;">Edit name</div>
+            <input id="profileEditFirstInput" type="text" placeholder="First name"
+                   style="width:100%;padding:8px 10px;border-radius:6px;font-size:13px;
+                          background:var(--panel-2);color:var(--text);border:1px solid var(--border);
+                          margin-bottom:8px;outline:none;box-sizing:border-box;" />
+            <input id="profileEditLastInput" type="text" placeholder="Last name"
+                   style="width:100%;padding:8px 10px;border-radius:6px;font-size:13px;
+                          background:var(--panel-2);color:var(--text);border:1px solid var(--border);
+                          margin-bottom:10px;outline:none;box-sizing:border-box;" />
+            <div style="font-size:11px; color:var(--muted); margin-bottom:10px;">
+              Team name was set at signup and can't be changed here.
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button id="profileEditCancelBtn" class="ctrl-btn" style="flex:1;font-size:12px;">Cancel</button>
+              <button id="profileEditSaveBtn" class="primary" style="flex:1;font-size:12px;padding:8px;">Save</button>
+            </div>
+          </div>
+        </div>
+      </div>
       <button id="signOutBtn" class="ctrl-btn ctrl-btn-ghost" style="display:none;">Sign out</button>
     </div>
   </header>
@@ -3266,20 +3318,31 @@ p31,Sample Player,MI,bat,9.0,false
     function showApp(user) {
       $('#loginScreen').classList.remove('visible');
       updateHeaderUser(user);
-      // Persist + fetch display name (non-blocking)
+      // Persist + fetch profile fields (non-blocking)
       if (user && state.db) {
-        const metaName = user.user_metadata?.full_name || '';
+        const meta = user.user_metadata || {};
+        const metaName = meta.full_name || '';
         const fallback = user.email || '';
         const displayName = metaName || fallback;
-        state.db.upsertProfile({ userId: user.id, displayName, email: user.email || '' })
-          .catch(e => console.warn('profile upsert failed', e));
-        // Fetch the stored display_name (may differ from metadata for pre-existing users)
+        // first_name/last_name/team_name only come from metadata right after
+        // signup — pass them through so upsertProfile can set them on the
+        // brand-new row. On every later login they're undefined, so
+        // upsertProfile's "first write wins" guard leaves the stored values
+        // (especially team_name, which is one-time) untouched.
+        state.db.upsertProfile({
+          userId: user.id, displayName, email: user.email || '',
+          firstName: meta.first_name, lastName: meta.last_name, teamName: meta.team_name,
+        }).catch(e => console.warn('profile upsert failed', e));
+        // Fetch the stored profile (may differ from metadata for pre-existing users)
         state.db.getMyProfile(user.id).then(profile => {
           if (profile?.display_name && profile.display_name !== user.email) {
             state.myDisplayName = profile.display_name;
           } else {
             state.myDisplayName = metaName || user.email?.split('@')[0] || '';
           }
+          state.myFirstName = profile?.first_name || '';
+          state.myLastName  = profile?.last_name  || '';
+          state.myTeamName  = profile?.team_name  || '';
           updateHeaderUser(user); // re-render header with correct name
           // Also refresh greeting if home tab is visible
           const homeGreeting = $('#homeGreeting');
@@ -3293,30 +3356,95 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     function updateHeaderUser(user) {
-      const pill    = $('#userPill');
-      const avatar  = $('#userAvatar');
-      const name    = $('#userName');
+      const pillWrap = $('#userPillWrap');
+      const avatar    = $('#userAvatar');
+      const name      = $('#userName');
       const signOut  = $('#signOutBtn');
       const adminBtn = $('#adminBtn');
       const pageTabs = $('#pageTabs');
 
       const isAdmin = user?.email === ADMIN_EMAIL;
       if (user) {
-        const displayName   = state.myDisplayName || user.user_metadata?.full_name || user.email || 'User';
-        const initials      = displayName.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('');
+        // First/last name (structured, editable) wins over the legacy
+        // free-text display_name, which itself wins over OAuth metadata/email.
+        const fullName    = [state.myFirstName, state.myLastName].filter(Boolean).join(' ').trim();
+        const displayName = fullName || state.myDisplayName || user.user_metadata?.full_name || user.email || 'User';
+        const initials    = displayName.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('');
         avatar.textContent  = initials || '?';
         name.textContent    = displayName;
-        pill.style.display    = '';
-        signOut.style.display = '';
+        pillWrap.style.display = '';
+        signOut.style.display  = '';
         adminBtn.style.display = isAdmin ? '' : 'none';
         pageTabs.style.display = 'flex';
+        renderProfileCard(user);
       } else {
-        pill.style.display     = 'none';
-        signOut.style.display  = 'none';
-        adminBtn.style.display = !REQUIRE_AUTH ? '' : 'none';
-        pageTabs.style.display = !REQUIRE_AUTH ? 'flex' : 'none';
+        pillWrap.style.display  = 'none';
+        signOut.style.display   = 'none';
+        adminBtn.style.display  = !REQUIRE_AUTH ? '' : 'none';
+        pageTabs.style.display  = !REQUIRE_AUTH ? 'flex' : 'none';
+        closeProfileCard();
       }
     }
+
+    // ─── Profile card (header dropdown) ────────────────────────────────────
+    function renderProfileCard(user) {
+      const fullName = [state.myFirstName, state.myLastName].filter(Boolean).join(' ').trim()
+                        || state.myDisplayName || user.email || 'User';
+      const initials = fullName.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map(w => w[0].toUpperCase()).join('');
+      $('#profileCardAvatar').textContent = initials || '?';
+      $('#profileCardName').textContent   = fullName;
+      $('#profileCardTeamPill').textContent = state.myTeamName || '—';
+      $('#profileCardEmail').textContent  = user.email || '';
+    }
+
+    function openProfileCard() {
+      $('#profileCardEdit').style.display = 'none';
+      $('#profileCardView').style.display = '';
+      $('#profileCard').style.display = '';
+    }
+    function closeProfileCard() {
+      $('#profileCard').style.display = 'none';
+    }
+    function toggleProfileCard() {
+      const card = $('#profileCard');
+      if (card.style.display === 'none' || !card.style.display) openProfileCard();
+      else closeProfileCard();
+    }
+    $('#userPill').addEventListener('click', e => { e.stopPropagation(); toggleProfileCard(); });
+    document.addEventListener('click', e => {
+      const wrap = $('#userPillWrap');
+      if (wrap && !wrap.contains(e.target)) closeProfileCard();
+    });
+    $('#profileEditBtn').addEventListener('click', () => {
+      $('#profileEditFirstInput').value = state.myFirstName || '';
+      $('#profileEditLastInput').value  = state.myLastName  || '';
+      $('#profileCardView').style.display = 'none';
+      $('#profileCardEdit').style.display = '';
+    });
+    $('#profileEditCancelBtn').addEventListener('click', () => {
+      $('#profileCardEdit').style.display = 'none';
+      $('#profileCardView').style.display = '';
+    });
+    $('#profileEditSaveBtn').addEventListener('click', async () => {
+      const firstName = $('#profileEditFirstInput').value.trim();
+      const lastName  = $('#profileEditLastInput').value.trim();
+      if (!firstName) { $('#profileEditFirstInput').focus(); return; }
+      const u = state.currentUser;
+      if (!u || !state.db) return;
+      const btn = $('#profileEditSaveBtn');
+      btn.disabled = true; btn.textContent = 'Saving…';
+      try {
+        await state.db.upsertProfile({ userId: u.id, email: u.email || '', firstName, lastName });
+        state.myFirstName = firstName;
+        state.myLastName  = lastName;
+        updateHeaderUser(u);
+        openProfileCard();
+      } catch (e) {
+        console.warn('profile edit failed', e);
+      } finally {
+        btn.disabled = false; btn.textContent = 'Save';
+      }
+    });
 
     // ─── DB SETUP ────────────────────────────────────────────────────────────
     const SB_LS_URL = 'ss_supabase_url';
@@ -3349,8 +3477,11 @@ p31,Sample Player,MI,bat,9.0,false
         // Upsert profile now that db is ready
         if (state.currentUser) {
           const u = state.currentUser;
-          db.upsertProfile({ userId: u.id, displayName: u.user_metadata?.full_name || u.email || '', email: u.email || '' })
-            .catch(e => console.warn('profile upsert failed', e));
+          const um = u.user_metadata || {};
+          db.upsertProfile({
+            userId: u.id, displayName: um.full_name || u.email || '', email: u.email || '',
+            firstName: um.first_name, lastName: um.last_name, teamName: um.team_name,
+          }).catch(e => console.warn('profile upsert failed', e));
         }
         // Load teams + players + saved teams from DB
         try {
@@ -13059,7 +13190,7 @@ p31,Sample Player,MI,bat,9.0,false
       // Update greeting with user's preferred name
       const user = state.currentUser;
       if (user) {
-        const name = state.myDisplayName || user.user_metadata?.full_name || user.email?.split('@')[0] || '';
+        const name = state.myFirstName || state.myDisplayName || user.user_metadata?.full_name || user.email?.split('@')[0] || '';
         $('#homeGreeting').textContent = name ? `Welcome back, ${name}` : 'Welcome back';
       }
 
@@ -13670,22 +13801,30 @@ p31,Sample Player,MI,bat,9.0,false
 
     // ── Create account ────────────────────────────────────────────────────
     $('#signUpBtn').addEventListener('click', async () => {
-      const url      = SB_URL  || localStorage.getItem(SB_LS_URL) || '';
-      const key      = SB_ANON || localStorage.getItem(SB_LS_KEY) || '';
-      const name     = $('#signupNameInput').value.trim();
-      const email    = $('#signupEmailInput').value.trim();
-      const password = $('#signupPasswordInput').value;
-      const confirm  = $('#signupConfirmInput').value;
-      if (!name)                { $('#loginError').textContent = 'Enter your preferred name.'; $('#signupNameInput').focus(); return; }
-      if (!email)               { $('#loginError').textContent = 'Enter your email.'; return; }
-      if (password.length < 6)  { $('#loginError').textContent = 'Password must be at least 6 characters.'; return; }
+      const url       = SB_URL  || localStorage.getItem(SB_LS_URL) || '';
+      const key       = SB_ANON || localStorage.getItem(SB_LS_KEY) || '';
+      const firstName = $('#signupFirstNameInput').value.trim();
+      const lastName  = $('#signupLastNameInput').value.trim();
+      const teamName  = $('#signupTeamNameInput').value.trim();
+      const email     = $('#signupEmailInput').value.trim();
+      const password  = $('#signupPasswordInput').value;
+      const confirm   = $('#signupConfirmInput').value;
+      if (!firstName)            { $('#loginError').textContent = 'Enter your first name.'; $('#signupFirstNameInput').focus(); return; }
+      if (!lastName)             { $('#loginError').textContent = 'Enter your last name.'; $('#signupLastNameInput').focus(); return; }
+      if (!teamName)             { $('#loginError').textContent = 'Enter a team name — this can\'t be changed later.'; $('#signupTeamNameInput').focus(); return; }
+      if (!email)                { $('#loginError').textContent = 'Enter your email.'; return; }
+      if (password.length < 6)   { $('#loginError').textContent = 'Password must be at least 6 characters.'; return; }
       if (password !== confirm)  { $('#loginError').textContent = 'Passwords don\'t match.'; return; }
       try {
         $('#loginError').textContent = '';
         $('#signUpBtn').disabled = true;
         $('#signUpBtn').textContent = 'Creating…';
-        await getSharedDb(url, key).signUpWithPassword(email, password, { full_name: name });
-        // onAuthStateChange fires → showApp() which calls upsertProfile with full_name
+        const fullName = `${firstName} ${lastName}`.trim();
+        await getSharedDb(url, key).signUpWithPassword(email, password, {
+          full_name: fullName, first_name: firstName, last_name: lastName, team_name: teamName,
+        });
+        // onAuthStateChange fires → showApp() which calls upsertProfile, reading
+        // first_name/last_name/team_name back out of user_metadata below.
       } catch (e) {
         $('#signUpBtn').disabled = false;
         $('#signUpBtn').textContent = 'Create account';
