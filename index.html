@@ -5521,11 +5521,12 @@ p31,Sample Player,MI,bat,9.0,false
         return;
       }
 
-      const activeMeta = ctx.activeForNext ? BOOSTER_META[ctx.activeForNext] : null;
+      const activeMeta   = ctx.activeForNext ? BOOSTER_META[ctx.activeForNext] : null;
+      const boosterTotal = Object.keys(ctx.available).length;
 
       if (tile) {
         tile.style.display = '';
-        tile.querySelector('.value').innerHTML = `${activeMeta ? escapeHtml(activeMeta.icon + ' ' + activeMeta.label) : 'None'} <i class="cap-vc-chev">▾</i>`;
+        tile.querySelector('.value').innerHTML = `${activeMeta ? escapeHtml(activeMeta.icon + ' ' + activeMeta.label) : `0/${boosterTotal}`} <i class="cap-vc-chev">▾</i>`;
         tile.className = 'stat stat-pick' + (activeMeta ? ' ok' : '');
       }
 
