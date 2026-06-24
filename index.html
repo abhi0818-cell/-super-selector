@@ -6391,14 +6391,16 @@ p31,Sample Player,MI,bat,9.0,false
       if (!squad) { bar.style.display = 'none'; return; }
       const squadName   = escapeHtml(squad.name || 'My Squad');
       const contestName = contest ? escapeHtml(contest.name || 'Season Long') : null;
-      // Draft completeness (11/11) and Xfers are dropped from this row —
-      // Save XI already can't be enabled until the draft is 11/11, and
-      // transfers-left is already shown in the Pick XI stat tile below.
+      // Draft completeness (11/11) is dropped from this row — Save XI
+      // already can't be enabled until the draft is 11/11.
+      const xfers       = state.sl.seasonXferCount ?? 0;
       const seasonPts   = state.sl.seasonData?.seasonTotal ?? null;
       bar.style.display = 'flex';
       bar.innerHTML = `
         <span class="sib-squad">${squadName}</span>
         ${contestName ? `<span class="sib-sep">|</span><span class="sib-contest">${contestName}</span>` : ''}
+        <span class="sib-sep">|</span>
+        <span class="sib-label">Xfers:</span><span class="sib-val">${xfers}</span>
         ${seasonPts !== null ? `<span class="sib-sep">|</span><span class="sib-pts">${seasonPts} pts</span>` : ''}
       `;
     }
