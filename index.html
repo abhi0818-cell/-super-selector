@@ -12945,7 +12945,22 @@ p31,Sample Player,MI,bat,9.0,false
       $('#pageTabSeason').style.display  = ptab === 'season'  ? '' : 'none';
       if (ptab === 'home')    renderPageHomeTab();
       if (ptab === 'contest') renderPageContestTab();
-      if (ptab === 'team')  { ensureEditTeamBtnVisible(); requestAnimationFrame(function(){ if(typeof fitPitchRows==='function') fitPitchRows(); }); }
+      if (ptab === 'team')  {
+        ensureEditTeamBtnVisible();
+        requestAnimationFrame(function(){ if(typeof fitPitchRows==='function') fitPitchRows(); });
+        // Refresh saved teams from the DB on every visit to My Team — a save
+        // made elsewhere (e.g. mobile) only lands in user_teams/user_match_xi;
+        // this tab's in-memory state.savedTeams was otherwise only refetched
+        // after THIS client's own save/delete actions, so an already-open web
+        // tab could show stale data for a save made from another device.
+        if (state.db && state.mode === 'daily') {
+          state.db.listUserTeams().then(teams => {
+            state.savedTeams = teams;
+            renderSavedTeams();
+            renderHistory();
+          }).catch(e => console.warn('Saved teams refresh failed.', e));
+        }
+      }
       if (ptab === 'season')  renderPageSeasonTab();
     }
 
