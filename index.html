@@ -1209,10 +1209,10 @@
                  cursor:pointer; max-width:200px; height:28px; box-sizing:border-box;">
         </select>
       </div>
-      <span id="formatPill" class="db-pill" title="Scoring format — set by the active tournament">T20</span>
+      <!-- Hidden — each tournament's format is already shown on its Home tile card. -->
+      <span id="formatPill" class="db-pill" title="Scoring format — set by the active tournament" style="display:none;">T20</span>
       <span class="hdr-divider"></span>
       <button id="simBtn" class="primary" style="display:none;">Start mock match</button>
-      <button id="rulesBtn" class="ctrl-btn" style="display:none;" title="Rules">📖 Rules</button>
       <button id="adminBtn" class="ctrl-btn ctrl-btn-admin" title="Tournament setup, players, schedule" style="display:none;">⚙️ Admin</button>
       <span class="hdr-divider"></span>
       <span id="userPill" class="user-pill" style="display:none">
@@ -1253,8 +1253,9 @@
       </div>
     </div>
     <!-- Leaderboard section (reuses existing lb modal content inline) -->
-    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px;">
       <div style="font-size:13px; font-weight:600; color:var(--text); cursor:pointer;" id="inlineContestName" title="Click for full view">—</div>
+      <button id="contestRulesBtn" class="ctrl-btn" style="display:none; flex-shrink:0;" title="Rules for this contest">📖 Rules</button>
     </div>
     <div id="inlineLbPlaceholder" style="font-size:13px; color:var(--muted); padding:20px 0;">
       Pick a contest above to see its leaderboard.
@@ -3297,7 +3298,6 @@ p31,Sample Player,MI,bat,9.0,false
       const name    = $('#userName');
       const signOut  = $('#signOutBtn');
       const adminBtn = $('#adminBtn');
-      const rulesBtn = $('#rulesBtn');
       const pageTabs = $('#pageTabs');
 
       const isAdmin = user?.email === ADMIN_EMAIL;
@@ -3308,13 +3308,11 @@ p31,Sample Player,MI,bat,9.0,false
         name.textContent    = displayName;
         pill.style.display    = '';
         signOut.style.display = '';
-        rulesBtn.style.display = '';
         adminBtn.style.display = isAdmin ? '' : 'none';
         pageTabs.style.display = 'flex';
       } else {
         pill.style.display     = 'none';
         signOut.style.display  = 'none';
-        rulesBtn.style.display = 'none';
         adminBtn.style.display = !REQUIRE_AUTH ? '' : 'none';
         pageTabs.style.display = !REQUIRE_AUTH ? 'flex' : 'none';
       }
@@ -12765,6 +12763,11 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     let rulesData = null;  // cache per modal open
+    // Rules are now opened from the Contest/Leaderboard tab, scoped to whichever
+    // contest card is currently selected there — so Daily XI shows Daily's
+    // boosters/contest and Season Long shows its own, instead of always
+    // grabbing an arbitrary "first" contest.
+    let activeRulesContest = { id: null, type: null };
 
     async function loadRulesData() {
       if (rulesData) return rulesData;
@@ -12783,11 +12786,14 @@ p31,Sample Player,MI,bat,9.0,false
           const fmtRules = allRules?.[result.fmt] ?? null;
           if (fmtRules) { result.rules = fmtRules; result.isDefault = false; }
 
-          // Boosters from first active contest
+          // Boosters from the specific contest the Rules button was opened
+          // from (falls back to a type match, then the first contest, if the
+          // exact id isn't found — e.g. contest list hasn't loaded yet).
           const contests = await state.db.getContests(tid);
-          const contest = (contests ?? []).find(c =>
-            c.contest_type === 'sl' || c.contest_type === 'season_long' || c.contest_type === 'daily'
-          ) ?? (contests ?? [])[0];
+          const list = contests ?? [];
+          const contest = list.find(c => c.id === activeRulesContest.id)
+            ?? list.find(c => c.contest_type === activeRulesContest.type)
+            ?? list[0];
           if (contest?.available_boosters) {
             result.boosters = Array.isArray(contest.available_boosters)
               ? contest.available_boosters : [];
@@ -12900,7 +12906,10 @@ p31,Sample Player,MI,bat,9.0,false
 
       const sub = $('#rulesModalSub');
       const t = state.tournaments?.find(t => t.id === state.activeTournamentId);
-      if (sub && t) sub.textContent = `${t.name} · ${t.format ?? 'T20'}`;
+      const contestLabel = $('#inlineContestName')?.textContent;
+      if (sub && t) sub.textContent = contestLabel && contestLabel !== '—'
+        ? `${t.name} · ${contestLabel}`
+        : `${t.name} · ${t.format ?? 'T20'}`;
 
       const el = $('#rulesModalContent');
       el.innerHTML = '<div style="color:var(--muted);font-size:13px;text-align:center;padding:40px 0;">Loading…</div>';
@@ -12921,7 +12930,7 @@ p31,Sample Player,MI,bat,9.0,false
       });
     });
 
-    $('#rulesBtn').addEventListener('click', openRules);
+    $('#contestRulesBtn').addEventListener('click', openRules);
     $('#rulesCloseBtn').addEventListener('click', closeRules);
     $('#rulesModal').addEventListener('click', e => { if (e.target.id === 'rulesModal') closeRules(); });
 
@@ -13216,6 +13225,8 @@ p31,Sample Player,MI,bat,9.0,false
           const ctype = card.dataset.contesttype;
           lbState.tab = ctype === 'daily' ? 'daily' : cid;
           $('#inlineContestName').textContent = card.querySelector('.contest-card-name').textContent;
+          activeRulesContest = { id: cid, type: ctype };
+          const rb = $('#contestRulesBtn'); if (rb) rb.style.display = '';
           renderInlineLeaderboard(cid, ctype);
         });
       });
