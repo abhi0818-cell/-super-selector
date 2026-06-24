@@ -1434,8 +1434,10 @@
               <div class="stat" id="slXiStatRoles"><div class="label">WK·BAT·AR·BOWL</div><div class="value">0·0·0·0</div></div>
               <div class="stat" id="slXiStatOS"><div class="label">Overseas</div><div class="value">0/4</div></div>
               <div class="stat" id="slXiStatXfers"><div class="label">Transfers</div><div class="value">—</div></div>
+              <div class="stat stat-pick" id="slXiStatBooster" data-pick="booster"><div class="label">Booster</div><div class="value">— <i class="cap-vc-chev">▾</i></div></div>
             </div>
             <div id="slCapVcPicker" class="cap-vc-picker" style="display:none;"></div>
+            <div id="slBoosterPicker" class="cap-vc-picker" style="display:none;"></div>
             <!-- Shared-league notice (shown when active squad mirrors a primary squad's XI) -->
             <div id="slSharedXiBanner" style="display:none;"></div>
             <div id="slXferInfoBar" style="font-size:12px; padding:4px 0 6px; color:var(--muted);"></div>
@@ -5388,8 +5390,17 @@ p31,Sample Player,MI,bat,9.0,false
       const tile = e.target.closest('.stat-pick');
       if (!tile) return;
       const which = tile.dataset.pick;
+      if (which === 'booster') {
+        state.sl.boosterPickOpen = !state.sl.boosterPickOpen;
+        state.sl.capPick = null; // mutually exclusive with the Captain/Vice-C panel
+        renderSlCapVcPicker();
+        renderSlBoosterPicker();
+        return;
+      }
       state.sl.capPick = state.sl.capPick === which ? null : which;
+      state.sl.boosterPickOpen = false; // mutually exclusive with the Booster panel
       renderSlCapVcPicker();
+      renderSlBoosterPicker();
     });
 
     /**
@@ -5474,24 +5485,37 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     /**
-     * Small pill on the Pick XI tab that opens the booster popup. Also
-     * refreshes the pitch badge so the two always stay in sync.
+     * Drives the "Booster" stat tile (next to Transfers left) on the Pick XI
+     * tab — shows the active booster (if any) for the next match, and keeps
+     * the pitch badge + any open inline booster panel in sync. The tile
+     * itself opens/closes #slBoosterPicker the same way the Captain/Vice-C
+     * tiles open #slCapVcPicker (see the .squad-stats click handler above).
      */
     async function renderSlBoosterBar() {
+      // Boosters now live in the stat tile, not a separate pill row.
       const bar = $('#slBoosterBar');
-      if (!bar) return;
+      if (bar) { bar.style.display = 'none'; bar.innerHTML = ''; }
+
+      const tile = $('#slXiStatBooster');
 
       let ctx;
       try {
         ctx = await getSlBoosterContext();
       } catch (e) {
-        bar.style.display = 'none';
+        if (tile) {
+          tile.style.display = '';
+          tile.querySelector('.value').innerHTML = 'Boosters <i class="cap-vc-chev">▾</i>';
+          tile.className = 'stat stat-pick';
+        }
         renderSlBoosterPitchBadge(null);
         renderSlPitchView();
         return;
       }
       if (!ctx) {
-        bar.style.display = 'none';
+        // No boosters configured for this contest — hide the tile entirely.
+        if (tile) tile.style.display = 'none';
+        state.sl.boosterPickOpen = false;
+        renderSlBoosterPicker();
         renderSlBoosterPitchBadge(null);
         renderSlPitchView();
         return;
@@ -5499,19 +5523,11 @@ p31,Sample Player,MI,bat,9.0,false
 
       const activeMeta = ctx.activeForNext ? BOOSTER_META[ctx.activeForNext] : null;
 
-      bar.style.display = '';
-      bar.innerHTML = `<button id="slBoosterTriggerBtn" type="button" style="
-          display:inline-flex; align-items:center; gap:6px; padding:6px 12px;
-          border-radius:99px; font-size:12px; font-weight:600; cursor:pointer;
-          border:1px solid ${activeMeta ? 'var(--accent)' : 'var(--border)'};
-          background:${activeMeta ? 'rgba(201,168,76,0.18)' : 'var(--panel-2)'};
-          color:${activeMeta ? 'var(--accent)' : 'var(--text)'};
-        ">
-          <span>⚡</span>
-          <span>${activeMeta ? escapeHtml(activeMeta.label) + ' active' : 'Boosters'}</span>
-          <span style="color:var(--muted); font-weight:400;">›</span>
-        </button>`;
-      $('#slBoosterTriggerBtn').addEventListener('click', openSlBoosterModal);
+      if (tile) {
+        tile.style.display = '';
+        tile.querySelector('.value').innerHTML = `${activeMeta ? escapeHtml(activeMeta.icon + ' ' + activeMeta.label) : 'None'} <i class="cap-vc-chev">▾</i>`;
+        tile.className = 'stat stat-pick' + (activeMeta ? ' ok' : '');
+      }
 
       renderSlBoosterPitchBadge(activeMeta);
       // Booster-activations cache (state.sl.boosterActivations) just got
@@ -5519,6 +5535,23 @@ p31,Sample Player,MI,bat,9.0,false
       // pitch tiles so their corner badges/gold outline pick it up. Cheap:
       // renderSlPitchView() is a pure re-render off existing state, no re-fetch.
       renderSlPitchView();
+
+      // Keep an already-open inline panel in sync with the refreshed context.
+      if (state.sl.boosterPickOpen) renderSlBoosterPicker();
+    }
+
+    /**
+     * Click-to-pick Booster panel for the SL Pick XI tab — same pattern as
+     * renderSlCapVcPicker(): the "Booster" stat tile toggles
+     * state.sl.boosterPickOpen, and this renders the grid into #slBoosterPicker
+     * right below the stats row (instead of the old #slBoosterModal popup).
+     */
+    async function renderSlBoosterPicker() {
+      const box = $('#slBoosterPicker');
+      if (!box) return;
+      if (!state.sl.boosterPickOpen) { box.style.display = 'none'; box.innerHTML = ''; return; }
+      box.style.display = '';
+      await renderSlBoosterGrid(box);
     }
 
     /** Small icon badge floated at the top of the SL pitch — mirrors whatever's active. */
@@ -5548,11 +5581,13 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     /**
-     * The full icon-tile grid (same content/behaviour as the old inline bar),
-     * now rendered inside the popup body.
+     * The full icon-tile grid — shared renderer. Used both by the legacy
+     * #slBoosterModal popup (renderSlBoosterModalGrid, kept for now) and by
+     * the inline #slBoosterPicker panel that now opens from the Booster stat
+     * tile (renderSlBoosterPicker), the same way the Captain/Vice-C tiles
+     * open their own inline panel.
      */
-    async function renderSlBoosterModalGrid() {
-      const body = $('#slBoosterModalBody');
+    async function renderSlBoosterGrid(body) {
       if (!body) return;
       body.innerHTML = '<div class="sc-empty">Loading…</div>';
 
@@ -5671,7 +5706,7 @@ p31,Sample Player,MI,bat,9.0,false
               await state.db.deactivateBooster(state.sl.squad.id, nextMatch.id, booster);
               state.sl.boosterActivations = null; // invalidate cache
               toast(`${BOOSTER_META[booster].label} deactivated.`, 2500);
-              await renderSlBoosterModalGrid();
+              await renderSlBoosterGrid(body);
               renderSlBoosterBar();
             } catch (e) { toast('Deactivate failed: ' + e.message, 4000); }
           } else {
@@ -5682,12 +5717,17 @@ p31,Sample Player,MI,bat,9.0,false
               );
               state.sl.boosterActivations = null;
               toast(`${BOOSTER_META[booster].label} activated for M${nextMatch.match_number ?? '?'}!`, 3000);
-              await renderSlBoosterModalGrid();
+              await renderSlBoosterGrid(body);
               renderSlBoosterBar();
             } catch (e) { toast(e.message, 4000); }
           }
         });
       });
+    }
+
+    /** Legacy entry point — renders the shared grid into the #slBoosterModal popup body. */
+    async function renderSlBoosterModalGrid() {
+      return renderSlBoosterGrid($('#slBoosterModalBody'));
     }
 
     async function saveSlXiHandler() {
