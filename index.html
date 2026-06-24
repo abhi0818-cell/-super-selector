@@ -1281,6 +1281,7 @@
     <span class="p-tab" data-ptab="team">My Team</span>
     <span class="p-tab" data-ptab="season">Season</span>
     <span class="p-tab" data-ptab="contest">🏆 Leaderboard</span>
+    <span class="p-tab" data-ptab="rules">📖 Rules</span>
   </nav>
 
   <!-- ══ Home tab panel ══ -->
@@ -1307,7 +1308,6 @@
     <!-- Leaderboard section (reuses existing lb modal content inline) -->
     <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px;">
       <div style="font-size:13px; font-weight:600; color:var(--text); cursor:pointer;" id="inlineContestName" title="Click for full view">—</div>
-      <button id="contestRulesBtn" class="ctrl-btn" style="display:none; flex-shrink:0;" title="Rules for this contest">📖 Rules</button>
     </div>
     <div id="inlineLbPlaceholder" style="font-size:13px; color:var(--muted); padding:20px 0;">
       Pick a contest above to see its leaderboard.
@@ -12894,10 +12894,11 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     let rulesData = null;  // cache per modal open
-    // Rules are now opened from the Contest/Leaderboard tab, scoped to whichever
-    // contest card is currently selected there — so Daily XI shows Daily's
-    // boosters/contest and Season Long shows its own, instead of always
-    // grabbing an arbitrary "first" contest.
+    // Rules opens from its own page-tab (next to Leaderboard), scoped to the
+    // current mode (Daily vs Season Long) by default — or to whichever
+    // specific contest card the user last selected in the Leaderboard tab
+    // (e.g. a private league), so Daily XI shows Daily's boosters/contest
+    // and Season Long shows its own instead of an arbitrary "first" contest.
     let activeRulesContest = { id: null, type: null };
 
     async function loadRulesData() {
@@ -13037,7 +13038,12 @@ p31,Sample Player,MI,bat,9.0,false
 
       const sub = $('#rulesModalSub');
       const t = state.tournaments?.find(t => t.id === state.activeTournamentId);
-      const contestLabel = $('#inlineContestName')?.textContent;
+      // Prefer the specific contest card the user selected in the Leaderboard
+      // tab (e.g. a private league); otherwise fall back to a plain label
+      // for whichever mode (Daily/Season Long) the Rules tab was opened in.
+      const contestLabel = activeRulesContest.id
+        ? $('#inlineContestName')?.textContent
+        : (state.mode === 'season_long' ? 'Season Long' : 'Daily XI');
       if (sub && t) sub.textContent = contestLabel && contestLabel !== '—'
         ? `${t.name} · ${contestLabel}`
         : `${t.name} · ${t.format ?? 'T20'}`;
@@ -13061,7 +13067,6 @@ p31,Sample Player,MI,bat,9.0,false
       });
     });
 
-    $('#contestRulesBtn').addEventListener('click', openRules);
     $('#rulesCloseBtn').addEventListener('click', closeRules);
     $('#rulesModal').addEventListener('click', e => { if (e.target.id === 'rulesModal') closeRules(); });
 
@@ -13109,7 +13114,18 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     document.querySelectorAll('.p-tab').forEach(t => {
-      t.addEventListener('click', () => switchPageTab(t.dataset.ptab));
+      t.addEventListener('click', () => {
+        // Rules is a modal, not a page panel — open it over whichever tab is
+        // currently active rather than switching tabs. Scope it to the
+        // current mode (Daily vs Season Long) so it shows the right rules
+        // even if the Leaderboard tab was never opened this session.
+        if (t.dataset.ptab === 'rules') {
+          activeRulesContest = { id: null, type: state.mode };
+          openRules();
+          return;
+        }
+        switchPageTab(t.dataset.ptab);
+      });
     });
 
     // ─── Pool toggle (Edit team button) ──────────────────────────────────────
@@ -13356,8 +13372,9 @@ p31,Sample Player,MI,bat,9.0,false
           const ctype = card.dataset.contesttype;
           lbState.tab = ctype === 'daily' ? 'daily' : cid;
           $('#inlineContestName').textContent = card.querySelector('.contest-card-name').textContent;
+          // Remember the selected card (private leagues included) so the
+          // Rules tab opens scoped to it if clicked next.
           activeRulesContest = { id: cid, type: ctype };
-          const rb = $('#contestRulesBtn'); if (rb) rb.style.display = '';
           renderInlineLeaderboard(cid, ctype);
         });
       });
