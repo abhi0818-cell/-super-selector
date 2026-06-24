@@ -2493,6 +2493,15 @@ p31,Sample Player,MI,bat,9.0,false
         lastLockedXI   : null,  // {playerIds, captainId, vcId, matchNumber, matchId} — most recently locked XI
         seasonData        : null,  // last getSquadSeason() result
         boosterActivations: null,  // cached array from db.getBoosterActivations — null = not loaded
+        // Staged (not-yet-saved) booster choice for the match currently being
+        // drafted. pendingBoosterMatchId tracks which match pendingBooster
+        // applies to — when it doesn't match the active match, the pending
+        // value is stale and gets resynced from the DB-committed activation.
+        // The booster only actually gets written to user_booster_activations
+        // when Save XI commits it (see saveSlXiHandler) — picking a pill no
+        // longer activates/deactivates immediately.
+        pendingBooster       : null,
+        pendingBoosterMatchId: null,
         seasonXferCount: 0,     // transfers used in the active phase window
         seasonXferCap  : null, // active phase cap (null = unlimited)
         seasonPhase    : 'regular', // 'pre_season' | 'regular' | 'playoff'
@@ -5217,6 +5226,16 @@ p31,Sample Player,MI,bat,9.0,false
       }
       $('#slXiStatRoles .value').textContent = roles.wk + '.' + roles.bat + '.' + roles.ar + '.' + roles.bowl;
 
+      // A staged booster pick (not yet written to user_booster_activations —
+      // see saveSlXiHandler) is itself a save-worthy change, same as a C/VC
+      // tweak: it must arm Save XI on its own, and Save XI is what actually
+      // commits it. Only counts once getSlBoosterContext has synced the
+      // pending slot to the match currently being drafted. Used below by
+      // both the transfer info bar and the Save button gating.
+      const boosterChanged = !!state.activeMatchId &&
+        state.sl.pendingBoosterMatchId === state.activeMatchId &&
+        state.sl.pendingBooster !== getCachedBoosterForMatch(state.activeMatchId);
+
       // ── Transfer info bar ─────────────────────────────────────────────────
       const infoBar = $('#slXferInfoBar');
       infoBar.style.cssText = 'font-size:12px; padding:4px 0 6px; color:var(--muted);';
@@ -5236,7 +5255,13 @@ p31,Sample Player,MI,bat,9.0,false
       } else if (transferCapSuspended && pendingChanges > 0) {
         const boosterLabel = freeHitActive ? 'Free Hit' : 'Wildcard';
         const revertNote   = freeHitActive ? ' Reverts after the match.' : '';
-        infoBar.innerHTML = `<span style="color:var(--accent);">⚡ ${boosterLabel} active — ${pendingChanges} change${pendingChanges !== 1 ? 's' : ''} this match free of cost and uncapped.${revertNote}</span>`;
+        const unsavedNote  = boosterChanged ? ' Save XI to confirm the booster.' : '';
+        infoBar.innerHTML = `<span style="color:var(--accent);">⚡ ${boosterLabel} ${boosterChanged ? 'selected' : 'active'} — ${pendingChanges} change${pendingChanges !== 1 ? 's' : ''} this match free of cost and uncapped.${revertNote}${unsavedNote}</span>`;
+      } else if (pendingChanges === 0 && boosterChanged) {
+        const pendingMeta = state.sl.pendingBooster ? BOOSTER_META[state.sl.pendingBooster] : null;
+        infoBar.innerHTML = pendingMeta
+          ? `<span style="color:var(--accent);">${pendingMeta.icon} ${escapeHtml(pendingMeta.label)} selected — Save XI to confirm.</span>`
+          : `<span style="color:var(--accent);">Booster removed — Save XI to confirm.</span>`;
       } else if (pendingChanges === 0) {
         const lockNote = nextLock
           ? ` Locks at M${nextLock.match_number ?? '?'} start.` : '';
@@ -5312,8 +5337,8 @@ p31,Sample Player,MI,bat,9.0,false
         const baseSet = new Set(draftBaseline.playerIds);
         const sameComposition = xi.length === 11 && baseSet.size === 11 && xi.every(id => baseSet.has(id));
         const capVcChanged = cap !== draftBaseline.captainId || vc !== draftBaseline.vcId;
-        saveEnabled = ready && sameComposition && capVcChanged;
-        noSlChangesYet = ready && sameComposition && !capVcChanged;
+        saveEnabled = ready && sameComposition && (capVcChanged || boosterChanged);
+        noSlChangesYet = ready && sameComposition && !capVcChanged && !boosterChanged;
       }
       saveBtn.disabled = !saveEnabled;
       if (savingForNext && saveEnabled) {
@@ -5419,26 +5444,42 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     /**
-     * True when Free Hit is the active booster for the match currently being
-     * drafted (state.activeMatchId) in the SL XI picker. While true, the
-     * RULES.budget (credit) cap is suspended — the user can pick a swap that
-     * costs more than 100cr for this one match only. This mirrors what
-     * Free Hit already does for the transfer-count cap server-side: the swap
-     * is a one-match exception, and lock-matches snapshots the pre-lock draft
-     * and restores it after the match, so an over-budget pick here never
-     * carries forward as the squad's permanent baseline.
+     * Booster that WOULD be active for matchId once the current draft is
+     * saved — i.e. the staged pending choice if one is in flight for this
+     * match, else whatever's already committed in the DB. Everything that
+     * needs to react to "the booster the user picked" (cap suspension, Save
+     * XI gating, the info bar) should read through this, not
+     * getCachedBoosterForMatch directly, since the pill click no longer
+     * writes to the DB right away — see state.sl.pendingBooster.
      */
-    function slBudgetCapSuspended() {
-      return getCachedBoosterForMatch(state.activeMatchId) === 'free_hit';
+    function getEffectiveBoosterForMatch(matchId) {
+      if (matchId && state.sl.pendingBoosterMatchId === matchId) return state.sl.pendingBooster;
+      return getCachedBoosterForMatch(matchId);
     }
 
     /**
-     * True when Wildcard OR Free Hit is active for the match being drafted —
-     * mirrors lock-matches' bypassTransfers (activeBooster === 'wildcard' ||
-     * activeBooster === 'free_hit'), which skips transfer-count logging and
-     * the per-transfer point deduction for either booster at lock time. The
-     * client-side season transfer-count cap must not block a save that the
-     * server is never going to charge against that cap.
+     * True when Free Hit is the (pending-or-committed) booster for the match
+     * currently being drafted (state.activeMatchId) in the SL XI picker.
+     * While true, the RULES.budget (credit) cap is suspended — the user can
+     * pick a swap that costs more than 100cr for this one match only. This
+     * mirrors what Free Hit already does for the transfer-count cap
+     * server-side: the swap is a one-match exception, and lock-matches
+     * snapshots the pre-lock draft and restores it after the match, so an
+     * over-budget pick here never carries forward as the squad's permanent
+     * baseline.
+     */
+    function slBudgetCapSuspended() {
+      return getEffectiveBoosterForMatch(state.activeMatchId) === 'free_hit';
+    }
+
+    /**
+     * True when Wildcard OR Free Hit is the pending-or-committed booster for
+     * the match being drafted — mirrors lock-matches' bypassTransfers
+     * (activeBooster === 'wildcard' || activeBooster === 'free_hit'), which
+     * skips transfer-count logging and the per-transfer point deduction at
+     * lock time for either booster. The client-side season transfer-count
+     * cap must not block a save that the server is never going to charge
+     * against that cap.
      *
      * NOT used for the credit budget cap — that's free_hit-only
      * (slBudgetCapSuspended). Wildcard's pick is permanent (no snapshot /
@@ -5446,7 +5487,7 @@ p31,Sample Player,MI,bat,9.0,false
      * over budget forever, unlike Free Hit's one-match exception.
      */
     function slTransferCapSuspended() {
-      const b = getCachedBoosterForMatch(state.activeMatchId);
+      const b = getEffectiveBoosterForMatch(state.activeMatchId);
       return b === 'wildcard' || b === 'free_hit';
     }
 
@@ -5481,7 +5522,20 @@ p31,Sample Player,MI,bat,9.0,false
         ? (activations.find(a => a.match_id === nextMatch.id)?.booster ?? null)
         : null;
 
-      return { contest, available, nextMatch, activations, activeForNext };
+      // Sync the staged pending choice to this match. Only resets when the
+      // pending choice belongs to a different match (or hasn't been
+      // initialized yet) — an in-flight, not-yet-saved choice for THIS match
+      // must survive across re-renders, which is the entire point of staging.
+      if (!nextMatch) {
+        state.sl.pendingBoosterMatchId = null;
+        state.sl.pendingBooster = null;
+      } else if (state.sl.pendingBoosterMatchId !== nextMatch.id) {
+        state.sl.pendingBoosterMatchId = nextMatch.id;
+        state.sl.pendingBooster = activeForNext;
+      }
+      const pendingForNext = state.sl.pendingBooster;
+
+      return { contest, available, nextMatch, activations, activeForNext, pendingForNext };
     }
 
     /**
@@ -5521,16 +5575,26 @@ p31,Sample Player,MI,bat,9.0,false
         return;
       }
 
-      const activeMeta   = ctx.activeForNext ? BOOSTER_META[ctx.activeForNext] : null;
-      const boosterTotal = Object.keys(ctx.available).length;
+      // The tile previews the staged pending choice (what will become active
+      // once Save XI is pressed); the pitch badge shows the actual
+      // DB-committed booster (what's really active right now, regardless of
+      // any unsaved selection in the panel).
+      const committedMeta = ctx.activeForNext  ? BOOSTER_META[ctx.activeForNext]  : null;
+      const pendingMeta    = ctx.pendingForNext ? BOOSTER_META[ctx.pendingForNext] : null;
+      const isUnsaved      = ctx.pendingForNext !== ctx.activeForNext;
+      const boosterTotal   = Object.keys(ctx.available).length;
 
       if (tile) {
         tile.style.display = '';
-        tile.querySelector('.value').innerHTML = `${activeMeta ? escapeHtml(activeMeta.icon + ' ' + activeMeta.label) : `0/${boosterTotal}`} <i class="cap-vc-chev">▾</i>`;
-        tile.className = 'stat stat-pick' + (activeMeta ? ' ok' : '');
+        const valueLabel = pendingMeta
+          ? escapeHtml(pendingMeta.icon + ' ' + pendingMeta.label) + (isUnsaved ? ' <span style="color:var(--accent);font-weight:700;">*</span>' : '')
+          : `0/${boosterTotal}`;
+        tile.querySelector('.value').innerHTML = `${valueLabel} <i class="cap-vc-chev">▾</i>`;
+        tile.className = 'stat stat-pick' + (pendingMeta ? ' ok' : '');
+        tile.title = isUnsaved ? 'Booster selection not saved yet — press Save XI to confirm.' : '';
       }
 
-      renderSlBoosterPitchBadge(activeMeta);
+      renderSlBoosterPitchBadge(committedMeta);
       // Booster-activations cache (state.sl.boosterActivations) just got
       // populated/refreshed by getSlBoosterContext() above — re-render the
       // pitch tiles so their corner badges/gold outline pick it up. Cheap:
@@ -5604,7 +5668,7 @@ p31,Sample Player,MI,bat,9.0,false
         return;
       }
 
-      const { contest, available, nextMatch, activations, activeForNext } = ctx;
+      const { contest, available, nextMatch, activations, activeForNext, pendingForNext } = ctx;
 
       // Is the next match the first of the season or the first of playoffs?
       // On those matches transfers are already unlimited, so wildcard/free_hit are pointless.
@@ -5623,25 +5687,28 @@ p31,Sample Player,MI,bat,9.0,false
       // tooltip and to the one shared caption line under the header.
       const pills = Object.entries(available).map(([key, totalUses]) => {
         const meta       = BOOSTER_META[key]; if (!meta) return '';
-        const isActive   = activeForNext === key;
+        // "Active" here means staged/pending-selected, not necessarily
+        // committed to the DB yet — that only happens on Save XI.
+        const isActive   = pendingForNext === key;
+        const isUnsaved  = isActive && pendingForNext !== activeForNext;
         // Exclude the current match's activation from "spent" count —
         // an active booster is always deactivatable before the match starts.
         const usedInOther = activations.filter(a => a.booster === key && a.match_id !== nextMatch?.id).length;
         const remaining   = totalUses - usedInOther;
         const isSpent     = remaining <= 0;  // all uses consumed in OTHER matches
 
-        // Block this card if another booster is already active for this match
-        const anotherActive = !!activeForNext && !isActive;
+        // Block this card if another booster is already selected for this match
+        const anotherActive = !!pendingForNext && !isActive;
         // Block transfer boosters on the first match of season / playoffs
         const isBlocked = anotherActive || (TRANSFER_BOOSTERS.has(key) && transfersUnlimited);
 
         const blockedReason = anotherActive
-          ? `${BOOSTER_META[activeForNext]?.label ?? 'A booster'} is already active for this match`
+          ? `${BOOSTER_META[pendingForNext]?.label ?? 'A booster'} is already selected for this match`
           : (TRANSFER_BOOSTERS.has(key) && transfersUnlimited)
             ? 'Transfers are already unlimited on the first match — this booster has no effect'
             : null;
 
-        // An active booster is never disabled — it must remain clickable to deactivate
+        // An active booster is never disabled — it must remain clickable to deselect
         const isDisabled = isActive ? false : (isSpent || isBlocked);
 
         let pillStyle = `position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:8px 2px;border-radius:8px;font-weight:600;text-align:center;cursor:${isDisabled ? 'default' : 'pointer'};border:1px solid;transition:all .15s;`;
@@ -5651,14 +5718,14 @@ p31,Sample Player,MI,bat,9.0,false
         else                 pillStyle += 'background:var(--panel-2);border-color:var(--border);color:var(--text);';
 
         const titleText = isActive
-          ? `${escapeHtml(meta.desc)} · Active for this match — click to deactivate`
+          ? `${escapeHtml(meta.desc)} · Selected for this match${isUnsaved ? ' — press Save XI to confirm' : ''} — click to deselect`
           : blockedReason
             ? escapeHtml(blockedReason)
             : `${escapeHtml(meta.desc)} · ${remaining}/${totalUses} uses remaining`;
 
         const badgeStyle = 'position:absolute;top:-5px;right:-5px;width:13px;height:13px;border-radius:50%;font-size:8px;font-weight:800;display:flex;align-items:center;justify-content:center;box-shadow:0 1px 3px rgba(0,0,0,.3);';
         const badge = isActive
-          ? `<span style="${badgeStyle}background:var(--accent);color:#1C1F26;">✓</span>`
+          ? `<span style="${badgeStyle}background:var(--accent);color:#1C1F26;">${isUnsaved ? '*' : '✓'}</span>`
           : (isSpent || isBlocked)
             ? `<span style="${badgeStyle}background:var(--panel-2);color:var(--muted);border:1px solid var(--border);">✗</span>`
             : (totalUses > 1 ? `<span style="${badgeStyle}background:var(--panel-2);color:var(--text);border:1px solid var(--border);">${remaining}</span>` : '');
@@ -5681,47 +5748,41 @@ p31,Sample Player,MI,bat,9.0,false
         ? `M${nextMatch.match_number ?? '?'} · ${nextMatch.home_team_id ?? '?'} vs ${nextMatch.away_team_id ?? '?'}`
         : 'No upcoming match to activate for';
 
-      const activeMeta = activeForNext ? BOOSTER_META[activeForNext] : null;
-      const caption = activeMeta
-        ? `${activeMeta.label} active — tap it to remove.`
-        : 'Tap a booster to activate for this match.';
+      const pendingMeta = pendingForNext ? BOOSTER_META[pendingForNext] : null;
+      const isUnsaved   = pendingForNext !== activeForNext;
+      const caption = pendingMeta
+        ? (isUnsaved
+            ? `${pendingMeta.label} selected — press Save XI to confirm.`
+            : `${pendingMeta.label} active — tap it to remove.`)
+        : 'Tap a booster to select for this match.';
 
       body.innerHTML = `<div style="margin-bottom:8px; font-size:11px; color:var(--muted);">${escapeHtml(matchLabel)}</div>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">${pills}</div>
         <div style="font-size:10px;color:var(--muted);margin-top:8px;text-align:center;">${escapeHtml(caption)}</div>`;
 
-      // Wire pill clicks — re-render the grid in place, then refresh the
-      // Pick XI trigger pill + pitch badge so all three stay consistent.
+      // Wire pill clicks — staging only. Picking a booster here just sets
+      // state.sl.pendingBooster locally; nothing is written to
+      // user_booster_activations until Save XI commits it (see
+      // saveSlXiHandler). Re-render the grid + trigger tile + pitch badge,
+      // then refresh the Pick XI screen so Save XI's enabled state picks up
+      // the change immediately.
       body.querySelectorAll('.sl-booster-pill').forEach(pill => {
         if (pill.dataset.spent === 'true') return;
-        pill.addEventListener('click', async () => {
+        pill.addEventListener('click', () => {
           const booster  = pill.dataset.booster;
           const isActive = pill.dataset.active === 'true';
 
-          if (!nextMatch) { toast('No upcoming match to activate a booster for.', 3000); return; }
-          if (!state.db)  { toast('Not connected.', 3000); return; }
+          if (!nextMatch) { toast('No upcoming match to select a booster for.', 3000); return; }
 
-          if (isActive) {
-            // Deactivate
-            try {
-              await state.db.deactivateBooster(state.sl.squad.id, nextMatch.id, booster);
-              state.sl.boosterActivations = null; // invalidate cache
-              toast(`${BOOSTER_META[booster].label} deactivated.`, 2500);
-              await renderSlBoosterGrid(body);
-              renderSlBoosterBar();
-            } catch (e) { toast('Deactivate failed: ' + e.message, 4000); }
-          } else {
-            // Activate — for free_hit, snapshot is taken at lock time; pass null here
-            try {
-              await state.db.activateBooster(
-                state.sl.squad.id, nextMatch.id, booster, contest, null
-              );
-              state.sl.boosterActivations = null;
-              toast(`${BOOSTER_META[booster].label} activated for M${nextMatch.match_number ?? '?'}!`, 3000);
-              await renderSlBoosterGrid(body);
-              renderSlBoosterBar();
-            } catch (e) { toast(e.message, 4000); }
-          }
+          state.sl.pendingBoosterMatchId = nextMatch.id;
+          state.sl.pendingBooster = isActive ? null : booster;
+          toast(isActive
+            ? `${BOOSTER_META[booster].label} deselected — Save XI to confirm.`
+            : `${BOOSTER_META[booster].label} selected for M${nextMatch.match_number ?? '?'} — Save XI to confirm.`, 3000);
+
+          renderSlBoosterGrid(body);
+          renderSlBoosterBar();
+          renderSlXiTab();
         });
       });
     }
@@ -5776,6 +5837,38 @@ p31,Sample Player,MI,bat,9.0,false
         state.sl.draft = { playerIds: [...xi], captainId: cap, vcId: vc };
         state.sl.lastSavedXI = { playerIds: [...xi], captainId: cap, vcId: vc };
 
+        // 2b. Commit the staged booster choice (if any) for the match this
+        // draft applies to. Picking a booster pill never wrote to
+        // user_booster_activations directly — see renderSlBoosterGrid's
+        // click handler — so this is the one place that turns a pending
+        // pick into a real activation/deactivation. Only acts when the
+        // pending slot actually targets this draft's match and differs from
+        // what's already committed; otherwise there's nothing to do.
+        const boosterMatchId = state.activeMatchId;
+        let boosterNote = '';
+        if (boosterMatchId && state.sl.pendingBoosterMatchId === boosterMatchId) {
+          const committed = getCachedBoosterForMatch(boosterMatchId);
+          const pending    = state.sl.pendingBooster;
+          if (pending !== committed) {
+            try {
+              if (committed) {
+                await state.db.deactivateBooster(state.sl.squad.id, boosterMatchId, committed);
+              }
+              if (pending) {
+                await state.db.activateBooster(
+                  state.sl.squad.id, boosterMatchId, pending, state.sl.seasonContest, null
+                );
+              }
+              state.sl.boosterActivations = null; // invalidate cache — resynced on next getSlBoosterContext()
+              boosterNote = pending
+                ? ` ${BOOSTER_META[pending]?.label ?? pending} activated.`
+                : ` ${BOOSTER_META[committed]?.label ?? committed} removed.`;
+            } catch (e) {
+              toast('Booster save failed: ' + e.message, 4500);
+            }
+          }
+        }
+
         // How many changes from the last locked XI (preview only — not counted yet).
         // Only an empty baseline (no prior locked XI at all) means 0 transfers —
         // see the matching comment in renderSlXiTab for why "previous match
@@ -5787,9 +5880,9 @@ p31,Sample Player,MI,bat,9.0,false
         const lockNote = nextLock
           ? ` Locks at M${nextLock.match_number ?? '?'} start.`
           : '';
-        toast(changes === 0
+        toast((changes === 0
           ? `Draft saved — no changes from last locked XI.${lockNote}`
-          : `Draft saved — ${changes} pending transfer${changes !== 1 ? 's' : ''}.${lockNote}`,
+          : `Draft saved — ${changes} pending transfer${changes !== 1 ? 's' : ''}.${lockNote}`) + boosterNote,
           3500);
         // Jump to the Contest tab instead of leaving the user on the picker.
         switchPageTab('contest');
@@ -13816,16 +13909,17 @@ p31,Sample Player,MI,bat,9.0,false
       if (!lastLocked?.playerIds?.length) return;
       const matchNum = lastLocked.matchNumber ?? '?';
 
-      // A booster activated for the upcoming match is a "pending change for
-      // the next match" exactly like the transfers being reverted below —
-      // it's always written straight to user_booster_activations against
-      // nextMatch.id the moment the user taps it in the booster modal, with
-      // no draft-style staging, so there's no notion of a booster that was
-      // already part of "last saved" for a match that hasn't locked yet.
-      // Without this, reverting the XI left a now-orphaned booster active
-      // for the next match (wasting a use / leaving bypassTransfers wrongly
-      // true at lock time) even though the confirm dialog below already
-      // promises to discard pending changes for that match.
+      // "Revert to Saved" rolls everything for the next match back to the
+      // state as of the last lock — XI draft AND booster alike. A booster
+      // for the next match is a change made since that lock whether it's
+      // already committed (via a prior Save XI) or just staged-but-unsaved
+      // in this session (see state.sl.pendingBooster), so both go away on
+      // revert. Discarding the in-memory pending pick never needs a DB
+      // call; an already-committed activation does. Without the DB call,
+      // reverting the XI would leave a now-orphaned booster active for the
+      // next match (wasting a use / leaving bypassTransfers wrongly true at
+      // lock time) even though the confirm dialog below already promises to
+      // discard pending changes for that match.
       let boosterCtx = null;
       try { boosterCtx = await getSlBoosterContext(); } catch (_) {}
       const activeBoosterLabel = boosterCtx?.activeForNext
@@ -13848,6 +13942,13 @@ p31,Sample Player,MI,bat,9.0,false
             console.warn('[revert] booster deactivate failed:', e.message);
           }
         }
+        // Drop any staged-but-unsaved booster pick too — it was never
+        // written to the DB, so there's nothing to undo there, just clear
+        // it from memory so the tile/panel stop showing it. getSlBoosterContext
+        // will resync pendingBooster from the DB-committed value (now none,
+        // or whatever activeForNext was above) next time it's called.
+        state.sl.pendingBooster        = null;
+        state.sl.pendingBoosterMatchId = null;
 
         state.sl.draft     = draft;
         state.sl.xiPlayers = [...draft.playerIds];
