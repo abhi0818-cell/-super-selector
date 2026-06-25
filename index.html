@@ -13219,19 +13219,34 @@ p31,Sample Player,MI,bat,9.0,false
         return 0;
       });
 
-      // Build next-match info for the currently active tournament
+      // Build live + next-match info for the currently active tournament.
+      // "Next" must skip a match that's already live (findNextScheduledMatch
+      // excludes anything past its lock gate, not just 'completed') — otherwise
+      // this card keeps naming the live match as "Next" instead of advancing.
+      // The live match (if any) gets its own line instead of being dropped.
       const nextMatchMap = {};
+      const liveMatchMap = {};
       if (state.activeTournamentId && state.matches?.length) {
-        const next = state.matches
-          .filter(m => m.status !== 'completed' && effectiveLockTime(m))
-          .sort((a, b) => new Date(effectiveLockTime(a)) - new Date(effectiveLockTime(b)))[0];
+        const live = state.matches.find(m => m.status === 'live' || m.status === 'in_progress');
+        if (live) {
+          const label = live.home_team_id && live.away_team_id
+            ? `${live.home_team_id} vs ${live.away_team_id}` : `Match ${live.match_number ?? ''}`;
+          liveMatchMap[state.activeTournamentId] = `${label} (M${live.match_number ?? '?'})`;
+        }
+
+        const next = findNextScheduledMatch();
         if (next) {
-          const d = new Date(effectiveLockTime(next));
           const label = next.home_team_id && next.away_team_id
             ? `${next.home_team_id} vs ${next.away_team_id}` : `Match ${next.match_number ?? ''}`;
-          const dateStr = d.toLocaleDateString('en-GB', { day:'numeric', month:'short' });
-          const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          nextMatchMap[state.activeTournamentId] = `${label} · ${dateStr}, ${timeStr}`;
+          const lockAt = effectiveLockTime(next);
+          let when = '';
+          if (lockAt) {
+            const d = new Date(lockAt);
+            const dateStr = d.toLocaleDateString('en-GB', { day:'numeric', month:'short' });
+            const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            when = ` · ${dateStr}, ${timeStr}`;
+          }
+          nextMatchMap[state.activeTournamentId] = `${label} (M${next.match_number ?? '?'})${when}`;
         }
       }
 
@@ -13247,6 +13262,7 @@ p31,Sample Player,MI,bat,9.0,false
       grid.innerHTML = sorted.map(t => {
         const isActive = t.id === state.activeTournamentId;
         const fmt = (t.format || 'T20').toUpperCase();
+        const liveMatch = liveMatchMap[t.id];
         const nextMatch = nextMatchMap[t.id];
         const contestInfo = contestInfoMap[t.id];
         const statusBadge = t.is_active
@@ -13262,9 +13278,10 @@ p31,Sample Player,MI,bat,9.0,false
             </div>
           </div>
           <div class="t-card-meta">
+            ${liveMatch ? `<div class="t-card-meta-row" style="color:#C0392B;">🔴 Live: ${escapeHtml(liveMatch)}</div>` : ''}
             ${nextMatch ? `<div class="t-card-meta-row">🗓 Next: ${escapeHtml(nextMatch)}</div>` : ''}
             ${contestInfo ? `<div class="t-card-meta-row">🏆 ${escapeHtml(contestInfo)}</div>` : ''}
-            ${!nextMatch && !contestInfo ? `<div class="t-card-meta-row" style="color:var(--muted);">No upcoming matches</div>` : ''}
+            ${!liveMatch && !nextMatch && !contestInfo ? `<div class="t-card-meta-row" style="color:var(--muted);">No upcoming matches</div>` : ''}
           </div>
           <div class="t-card-footer">
             <span class="t-card-rank">${isActive ? '<strong>Currently selected</strong>' : ''}</span>
