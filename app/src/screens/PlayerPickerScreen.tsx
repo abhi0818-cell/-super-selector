@@ -102,6 +102,7 @@ export default function PlayerPickerScreen() {
           .from('matches')
           .select('id, match_number, home_team_id, away_team_id, status, start_time')
           .eq('tournament_id', tournamentId)
+          .neq('status', 'completed')
           .order('match_number', { ascending: true });
 
         if (error) throw error;
@@ -273,63 +274,7 @@ export default function PlayerPickerScreen() {
 
         <RoleStats roleCounts={roleCounts} />
 
-        {/* ── Match selector (multi-select) ──────────────────────────────── */}
-        <View style={styles.matchSelectorSection}>
-          <View style={styles.matchSelectorHeader}>
-            <Text style={styles.matchSelectorLabel}>Filter by match</Text>
-            {selectedMatchIds.size > 0 && (
-              <Pressable onPress={clearMatchFilter} style={styles.clearBtn}>
-                <Text style={styles.clearBtnText}>Clear</Text>
-              </Pressable>
-            )}
-            {matchesLoading && (
-              <ActivityIndicator size="small" color={C.accent} style={{ marginLeft: 4 }} />
-            )}
-          </View>
-
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.matchChips}
-          >
-            {matches.map(m => {
-              const active    = selectedMatchIds.has(m.id);
-              const isCurrent = m.id === currentMatchId;
-              const isLive    = m.status === 'live' || m.status === 'in_progress';
-              const label     = m.matchNumber != null ? `M${m.matchNumber}` : m.id.slice(0, 4);
-              return (
-                <Pressable
-                  key={m.id}
-                  style={[
-                    styles.matchChip,
-                    active && styles.matchChipActive,
-                    !active && isCurrent && styles.matchChipCurrent,
-                  ]}
-                  onPress={() => toggleMatch(m.id)}
-                >
-                  {/* Gold dot for current (upcoming) match */}
-                  {isCurrent && !active && <View style={styles.matchChipDot} />}
-                  <Text style={[
-                    styles.matchChipText,
-                    active && styles.matchChipTextActive,
-                    !active && isCurrent && styles.matchChipTextCurrent,
-                  ]}>
-                    {label}
-                  </Text>
-                  {/* Red dot for live matches */}
-                  {isLive && <View style={styles.liveDot} />}
-                </Pressable>
-              );
-            })}
-          </ScrollView>
-        </View>
-
-        {/* Filter summary hint */}
-        {matchFilterLabel && (
-          <View style={styles.matchHint}>
-            <Text style={styles.matchHintText}>{matchFilterLabel}</Text>
-          </View>
-        )}
+        {/* Filter sequence below mirrors web: Search → Role (+OS) → Match */}
 
         {/* Search */}
         <View style={styles.searchRow}>
@@ -386,6 +331,66 @@ export default function PlayerPickerScreen() {
             </Pressable>
           )}
         </ScrollView>
+
+        {/* ── Match selector (multi-select) ──────────────────────────────── */}
+        {/* Only non-completed matches are fetched, so this list naturally
+            starts at the live match (if any) or the next upcoming one. */}
+        <View style={styles.matchSelectorSection}>
+          <View style={styles.matchSelectorHeader}>
+            <Text style={styles.matchSelectorLabel}>Filter by match</Text>
+            {selectedMatchIds.size > 0 && (
+              <Pressable onPress={clearMatchFilter} style={styles.clearBtn}>
+                <Text style={styles.clearBtnText}>Clear</Text>
+              </Pressable>
+            )}
+            {matchesLoading && (
+              <ActivityIndicator size="small" color={C.accent} style={{ marginLeft: 4 }} />
+            )}
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.matchChips}
+          >
+            {matches.map(m => {
+              const active    = selectedMatchIds.has(m.id);
+              const isCurrent = m.id === currentMatchId;
+              const isLive    = m.status === 'live' || m.status === 'in_progress';
+              const label     = m.matchNumber != null ? `M${m.matchNumber}` : m.id.slice(0, 4);
+              return (
+                <Pressable
+                  key={m.id}
+                  style={[
+                    styles.matchChip,
+                    active && styles.matchChipActive,
+                    !active && isCurrent && styles.matchChipCurrent,
+                  ]}
+                  onPress={() => toggleMatch(m.id)}
+                >
+                  {/* Gold dot for current (live or next) match */}
+                  {isCurrent && !active && <View style={styles.matchChipDot} />}
+                  <Text style={[
+                    styles.matchChipText,
+                    active && styles.matchChipTextActive,
+                    !active && isCurrent && styles.matchChipTextCurrent,
+                  ]}>
+                    {label}
+                  </Text>
+                  {/* Red dot for live matches */}
+                  {isLive && <View style={styles.liveDot} />}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+
+        {/* Filter summary hint */}
+        {matchFilterLabel && (
+          <View style={styles.matchHint}>
+            <Text style={styles.matchHintText}>{matchFilterLabel}</Text>
+          </View>
+        )}
       </View>
 
       {/* Player list */}
