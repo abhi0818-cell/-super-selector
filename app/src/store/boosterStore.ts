@@ -2,24 +2,48 @@
  * Booster Store
  * Season Long / private leagues only.
  *
- * Booster definitions live in contests.available_boosters (string[] in DB).
+ * Booster definitions live in contests.available_boosters ({boosterId: uses} object).
  * Which ones have been used is tracked in user_booster_activations.
+ *
+ * STAGED-THEN-COMMIT MODEL (mirrors index.html's getSlBoosterContext /
+ * renderSlBoosterGrid / saveSlXiHandler):
+ * Tapping a booster (selectBooster) only updates LOCAL state — nothing is
+ * written to user_booster_activations until commitPending() is called.
+ * MyXIScreen calls commitPending() from the same handler that saves the XI,
+ * so the booster choice and the XI save commit together, exactly like web's
+ * "pick stages instantly, Save XI is the only thing that persists it" flow.
+ * Previously this store wrote to Supabase the instant a pill was tapped
+ * (via Alert.alert's "Activate"/"Remove" confirm) — that's what made mobile
+ * diverge from web and is the gap this rewrite closes.
  *
  * Scope controls which player tiles show the booster icon when active:
  *   'captain'       → only the Captain tile
  *   'vice_captain'  → only the Vice-Captain tile
  *   'all'           → every tile in the XI (e.g. "Team Double")
  *
- * Slot controls conflict: two boosters in the same slot cannot both be active.
+ * Slot controls conflict: two boosters in the same slot cannot both be active
+ * (in practice only one booster total can be active per match — see
+ * selectBooster — but slot is kept for the tile-boost helper below).
  */
 
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { CaptaincyRole } from '../types';
+import {
+  fetchContestTransferConfig,
+  fetchTournamentMatches,
+  getPreviousMatchXI,
+} from '../lib/transferCap';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type BoosterStatus = 'available' | 'active' | 'used';
+// 'active'  = effective for this match AND already committed to the DB
+// 'pending' = effective for this match but only staged — Save XI hasn't
+//             committed it yet (mirrors web's "isUnsaved" / asterisk state)
+// 'used'    = exhausted, blocked by another active pick, or pointless on this
+//             match (transfer boosters on a transfers-unlimited match)
+// 'available' = selectable, nothing chosen
+export type BoosterStatus = 'available' | 'pending' | 'active' | 'used';
 export type BoosterScope  = 'captain' | 'vice_captain' | 'all';
 export type BoosterSlot   = 'captain' | 'vice_captain' | 'squad' | 'transfers';
 
@@ -31,6 +55,9 @@ export interface Booster {
   scope:  BoosterScope;
   slot:   BoosterSlot;
   status: BoosterStatus;
+  /** Uses already spent in OTHER matches (current match's own pick excluded). */
+  usedInOther: number;
+  totalUses:   number;
 }
 
 // ─── Static metadata (mirrors BOOSTER_META in index.html) ────────────────────
@@ -68,14 +95,14 @@ export const BOOSTER_META: Record<string, BoosterMeta> = {
   free_hit: {
     icon:  '🔄',
     name:  'Free Hit',
-    desc:  "One extra free transfer this matchweek at no points cost. Use once per season.",
+    desc:  "Unlimited transfers this matchweek with no budget-cap limit; your squad reverts after the match. Use once per season.",
     scope: 'all',
     slot:  'transfers',
   },
   wildcard: {
     icon:  '♾️',
     name:  'Wildcard',
-    desc:  "Unlimited transfers this matchweek, no points deduction. Use once per season.",
+    desc:  "Unlimited transfers this matchweek, no points deduction — picks are permanent. Use once per season.",
     scope: 'all',
     slot:  'transfers',
   },
@@ -110,79 +137,178 @@ export const BOOSTER_META: Record<string, BoosterMeta> = {
   },
 };
 
-// ─── Tile-boost helper ────────────────────────────────────────────────────────
+const TRANSFER_BOOSTERS = new Set(['wildcard', 'free_hit']);
 
-const TRANSFER_IDS = new Set(['free_hit', 'wildcard']);
+// ─── Tile-boost helper ────────────────────────────────────────────────────────
 
 export function getActiveTileBoosts(
   captaincy: CaptaincyRole,
   activeBoosters: Booster[],
 ): Booster[] {
   return activeBoosters.filter(b => {
-    if (TRANSFER_IDS.has(b.id)) return false;
-    if (b.scope === 'all')                                         return true;
-    if (b.scope === 'captain'      && captaincy === 'captain')     return true;
+    if (TRANSFER_BOOSTERS.has(b.id)) return false;
+    if (b.scope === 'all')                                          return true;
+    if (b.scope === 'captain'      && captaincy === 'captain')      return true;
     if (b.scope === 'vice_captain' && captaincy === 'vice_captain') return true;
     return false;
   });
 }
 
+// ─── Low-level DB ops (mirror db.js's activateBooster / deactivateBooster) ────
+
+async function dbActivate(
+  squadId: string,
+  matchId: string,
+  booster: string,
+  snapshot?: { playerIds: string[]; captainId: string | null; vcId: string | null } | null,
+): Promise<void> {
+  // Plain insert, NOT upsert — the table's unique constraint is the 3-column
+  // (squad_id, match_id, booster), not (squad_id, match_id) — see db.js.
+  const { error } = await supabase
+    .from('user_booster_activations')
+    .insert({ squad_id: squadId, match_id: matchId, booster, snapshot: snapshot ?? null });
+  if (error) {
+    if ((error as any).code === '23505') {
+      throw new Error(`${booster.replace(/_/g, ' ')} is already active for this match.`);
+    }
+    throw error;
+  }
+}
+
+async function dbDeactivate(squadId: string, matchId: string, booster: string): Promise<void> {
+  const { error } = await supabase
+    .from('user_booster_activations')
+    .delete()
+    .eq('squad_id', squadId)
+    .eq('match_id', matchId)
+    .eq('booster', booster);
+  if (error) throw error;
+}
+
 // ─── Store ────────────────────────────────────────────────────────────────────
 
 interface BoosterState {
-  boosters:        Booster[];
-  loading:         boolean;
+  boosters: Booster[];
+  loading:  boolean;
+  /** True when the staged pick differs from what's committed in the DB. */
+  isUnsaved: boolean;
+
+  // Context retained from the last loadBoosters() call so commitPending()
+  // doesn't need every caller to re-pass squadId/matchId.
+  _contestId:   string | null;
+  _squadId:     string | null;
+  _matchId:     string | null;
+  _committedId: string | null;
+  _pendingId:   string | null;
+  _transfersUnlimited: boolean;
 
   /**
    * Load boosters for a squad + match.
-   * - Fetches available_boosters from the contest
-   * - Marks used ones from user_booster_activations
-   * - Marks wildcard/free_hit as 'used' (unavailable) when isFirstMatch is true
-   *   (first match of the season or first match of playoffs — transfers already unlimited)
-   * - Marks all non-active boosters as 'used' when another is already active for this match
-   *   (only one booster can be active at a time)
+   * - Fetches available_boosters (+ start_match_number / playoff_start_match_number)
+   *   from the contest
+   * - Fetches this squad's activations to compute uses-remaining and the
+   *   committed pick for this match
+   * - Resets the staged pick to the committed one whenever the match being
+   *   viewed changes (an in-flight pick for a DIFFERENT match must not leak
+   *   into the newly-viewed match) — mirrors getSlBoosterContext's
+   *   pendingBoosterMatchId reset.
+   * - isFirstMatchFallback: tournament-wide "no match has locked yet" signal
+   *   from teamStore, used only if the contest row has no
+   *   start_match_number configured (defensive fallback).
    */
-  loadBoosters:   (contestId: string, squadId: string | null, matchId: string, isFirstMatch?: boolean) => Promise<void>;
+  loadBoosters: (
+    contestId: string,
+    squadId: string | null,
+    matchId: string,
+    isFirstMatchFallback?: boolean,
+  ) => Promise<void>;
 
   /**
-   * Activate a booster in Supabase and update local state.
-   * Same-slot rule enforced locally; call lockBooster to persist.
+   * Stage (or un-stage) a booster for the currently loaded match — LOCAL
+   * ONLY, nothing is written to Supabase. Selecting a different booster than
+   * the one currently staged swaps the staged pick (only one booster can be
+   * effective per match). Tapping the currently-effective booster clears it.
+   * No-op for boosters whose status is 'used'.
    */
-  activateBooster: (squadId: string, matchId: string, boosterId: string) => Promise<void>;
+  selectBooster: (id: string) => void;
+
+  /** Discard the staged pick, reverting to whatever's committed in the DB. */
+  discardPending: () => void;
 
   /**
-   * Deactivate the active booster for this match — deletes the DB row and
-   * resets local state. Safe to call before match lock.
+   * Commit the staged pick to user_booster_activations. Call this from the
+   * same action that saves the XI (mirrors saveSlXiHandler's step 2b) — NOT
+   * from the booster pill tap. No-op (returns null) if nothing changed.
    */
-  deactivateBooster: (squadId: string, matchId: string) => Promise<void>;
+  commitPending: () => Promise<{ changed: boolean; message: string } | null>;
 
-  /**
-   * Toggle a booster on/off (local state only — call activateBooster to persist).
-   */
-  toggleBooster:   (id: string) => void;
+  /** Boosters currently effective (committed-and-saved) for this match. */
+  activeBoosters: () => Booster[];
+}
 
-  /** All currently active boosters */
-  activeBoosters:  () => Booster[];
+function buildBoosterList(
+  availableMap:   Record<string, number>,
+  usedCounts:     Record<string, number>,
+  committedId:    string | null,
+  pendingId:      string | null,
+  transfersUnlimited: boolean,
+): Booster[] {
+  return Object.keys(availableMap).map(id => {
+    const meta = BOOSTER_META[id] ?? {
+      icon: '🎯', name: id, desc: '', scope: 'all' as BoosterScope, slot: 'squad' as BoosterSlot,
+    };
+
+    const totalUses   = availableMap[id] ?? 1;
+    const usedInOther = usedCounts[id]   ?? 0; // current match's own pick already excluded by caller
+    const isEffective = pendingId === id;       // the pick that WOULD apply if saved now
+    const isUnsavedPick = isEffective && pendingId !== committedId;
+
+    const remaining = totalUses - usedInOther;
+    const isSpent    = remaining <= 0;
+    // Another booster is already staged for this match — only one allowed.
+    const anotherActive = !!pendingId && !isEffective;
+    const isBlockedByTransfersUnlimited = TRANSFER_BOOSTERS.has(id) && transfersUnlimited;
+
+    let status: BoosterStatus;
+    if (isEffective) {
+      // An effective pick is always selectable (to deselect), regardless of
+      // spent/blocked status — mirrors web's "isDisabled = isActive ? false : ..."
+      status = isUnsavedPick ? 'pending' : 'active';
+    } else if (isSpent || anotherActive || isBlockedByTransfersUnlimited) {
+      status = 'used';
+    } else {
+      status = 'available';
+    }
+
+    return { id, ...meta, status, usedInOther, totalUses };
+  });
 }
 
 export const useBoosterStore = create<BoosterState>((set, get) => ({
-  boosters: [],
-  loading:  false,
+  boosters:  [],
+  loading:   false,
+  isUnsaved: false,
 
-  loadBoosters: async (contestId, squadId, matchId, isFirstMatch = false) => {
+  _contestId:   null,
+  _squadId:     null,
+  _matchId:     null,
+  _committedId: null,
+  _pendingId:   null,
+  _transfersUnlimited: false,
+
+  loadBoosters: async (contestId, squadId, matchId, isFirstMatchFallback = false) => {
     set({ loading: true });
     try {
-      // 1. Fetch which boosters this contest offers
+      // 1. Contest config — available boosters + season/playoff start matches
       const { data: contestRow, error: contestErr } = await supabase
         .from('contests')
-        .select('available_boosters')
+        .select('available_boosters, start_match_number, playoff_start_match_number')
         .eq('id', contestId)
         .single();
-
       if (contestErr) throw contestErr;
 
-      // available_boosters is stored as {boosterId: numberOfUses} object in DB.
-      // Also handle legacy string[] format just in case.
+      // available_boosters is stored as {boosterId: numberOfUses}; also
+      // accept legacy string[] format.
       const rawBoosters = contestRow?.available_boosters;
       const availableMap: Record<string, number> = {};
       if (rawBoosters) {
@@ -194,12 +320,26 @@ export const useBoosterStore = create<BoosterState>((set, get) => ({
           });
         }
       }
-      const available = Object.keys(availableMap);
 
-      // 2. Fetch activations for this squad (all matches) — only if a squad exists
-      let   activeId   = '';            // booster active for THIS specific match
-      const usedCounts: Record<string, number> = {};  // uses consumed in OTHER matches
+      // 2. This match's match_number, to compare against the contest's
+      // start_match_number / playoff_start_match_number — mirrors web's
+      // `mn === contest.start_match_number || mn === contest.playoff_start_match_number`.
+      const { data: matchRow } = await supabase
+        .from('matches')
+        .select('match_number')
+        .eq('id', matchId)
+        .maybeSingle();
+      const mn = matchRow?.match_number ?? null;
+      const startMN   = contestRow?.start_match_number         ?? null;
+      const playoffMN = contestRow?.playoff_start_match_number ?? null;
+      const transfersUnlimited =
+        (mn !== null && (mn === startMN || mn === playoffMN)) ||
+        // Defensive fallback for contests with no start_match_number configured.
+        (startMN === null && playoffMN === null && isFirstMatchFallback);
 
+      // 3. Activations for this squad (all matches)
+      let committedId = null as string | null;
+      const usedCounts: Record<string, number> = {};
       if (squadId) {
         const { data: activations } = await supabase
           .from('user_booster_activations')
@@ -208,48 +348,31 @@ export const useBoosterStore = create<BoosterState>((set, get) => ({
 
         (activations ?? []).forEach((row: any) => {
           if (row.match_id === matchId) {
-            activeId = row.booster;
+            committedId = row.booster;
           } else {
-            // Count uses across other matches (to check if all uses are exhausted)
             usedCounts[row.booster] = (usedCounts[row.booster] ?? 0) + 1;
           }
         });
       }
-      // If no squad yet, all boosters show as 'available' (no activations possible)
 
-      // Transfer boosters are pointless on the first match of a season or playoffs
-      // (transfers are already unlimited on those matches)
-      const TRANSFER_BOOSTERS = new Set(['wildcard', 'free_hit']);
+      // Reset the staged pick to whatever's committed whenever we (re)load
+      // for a match — if the previously-loaded match differs, any in-flight
+      // pick for THAT match must not leak into this one.
+      const prevMatchId = get()._matchId;
+      const pendingId = prevMatchId === matchId ? get()._pendingId : committedId;
 
-      // 3. Build Booster objects
-      const boosters: Booster[] = available.map(id => {
-        const meta = BOOSTER_META[id] ?? {
-          icon: '🎯', name: id, desc: '', scope: 'all' as BoosterScope, slot: 'squad' as BoosterSlot,
-        };
+      const boosters = buildBoosterList(availableMap, usedCounts, committedId, pendingId, transfersUnlimited);
 
-        let status: BoosterStatus = 'available';
-
-        const totalUses   = availableMap[id] ?? 1;
-        const usedInOther = usedCounts[id]   ?? 0;
-        const exhausted   = usedInOther >= totalUses;  // all uses spent in OTHER matches
-
-        if (id === activeId) {
-          // Active for this match — always deactivatable regardless of remaining uses
-          status = 'active';
-        } else if (exhausted) {
-          status = 'used';
-        } else if (isFirstMatch && TRANSFER_BOOSTERS.has(id)) {
-          // Wildcard / Free Hit unavailable on first match of season or playoffs
-          status = 'used';
-        } else if (activeId) {
-          // Another booster is already active for this match — only one allowed at a time
-          status = 'used';
-        }
-
-        return { id, ...meta, status };
+      set({
+        boosters,
+        isUnsaved:    pendingId !== committedId,
+        _contestId:   contestId,
+        _squadId:     squadId,
+        _matchId:     matchId,
+        _committedId: committedId,
+        _pendingId:   pendingId,
+        _transfersUnlimited: transfersUnlimited,
       });
-
-      set({ boosters });
     } catch (err) {
       console.warn('[boosterStore] loadBoosters failed:', err);
     } finally {
@@ -257,80 +380,92 @@ export const useBoosterStore = create<BoosterState>((set, get) => ({
     }
   },
 
-  activateBooster: async (squadId, matchId, boosterId) => {
-    // Optimistic local update first
-    get().toggleBooster(boosterId);
+  selectBooster: (id) => {
+    const state = get();
+    const target = state.boosters.find(b => b.id === id);
+    if (!target || target.status === 'used') return;
 
-    try {
-      // Plain insert, NOT upsert — the table's real unique constraint is on
-      // (squad_id, match_id, booster), a 3-column key (migration_v12_boosters.sql).
-      // upsert(..., { onConflict: 'squad_id,match_id' }) doesn't match any
-      // actual constraint on this table, so PostgREST rejected every call with
-      // "no unique or exclusion constraint matching the ON CONFLICT
-      // specification" — booster activation failed 100% of the time from
-      // mobile. Mirrors db.js's web-side activateBooster, which already used
-      // a plain insert + 23505 (unique violation) catch for this exact reason.
-      const { error } = await supabase
-        .from('user_booster_activations')
-        .insert({ squad_id: squadId, match_id: matchId, booster: boosterId });
-      if (error) {
-        // Roll back local toggle on failure
-        get().toggleBooster(boosterId);
-        if ((error as any).code === '23505') {
-          throw new Error(`${boosterId.replace(/_/g, ' ')} is already active for this match.`);
-        }
-        throw error;
-      }
-    } catch (err) {
-      console.warn('[boosterStore] activateBooster failed:', err);
-      throw err;
-    }
-  },
+    const newPendingId = target.status === 'active' || target.status === 'pending' ? null : id;
 
-  deactivateBooster: async (squadId, matchId) => {
-    // Optimistic local update: reset the active booster to 'available' immediately
-    set(state => ({
-      boosters: state.boosters.map(b =>
-        b.status === 'active' ? { ...b, status: 'available' } : b,
+    set(s => ({
+      _pendingId: newPendingId,
+      isUnsaved:  newPendingId !== s._committedId,
+      boosters:   buildBoosterList(
+        Object.fromEntries(s.boosters.map(b => [b.id, b.totalUses])),
+        Object.fromEntries(s.boosters.map(b => [b.id, b.usedInOther])),
+        s._committedId,
+        newPendingId,
+        s._transfersUnlimited,
       ),
     }));
-
-    try {
-      const { error } = await supabase
-        .from('user_booster_activations')
-        .delete()
-        .eq('squad_id', squadId)
-        .eq('match_id', matchId);
-      if (error) {
-        // Roll back on failure — reload from DB to get accurate state
-        console.warn('[boosterStore] deactivateBooster failed:', error);
-        throw error;
-      }
-    } catch (err) {
-      console.warn('[boosterStore] deactivateBooster failed:', err);
-      throw err;
-    }
   },
 
-  toggleBooster: (id) => {
-    set(state => {
-      const target = state.boosters.find(b => b.id === id);
-      if (!target || target.status === 'used') return state;
+  discardPending: () => {
+    set(s => ({
+      _pendingId: s._committedId,
+      isUnsaved:  false,
+      boosters: s.boosters.map(b => ({
+        ...b,
+        status: (b.id === s._committedId
+          ? 'active'
+          : b.status === 'pending' || b.status === 'active'
+            ? 'available'
+            : b.status) as BoosterStatus,
+      })),
+    }));
+  },
 
-      const becomingActive = target.status !== 'active';
-      return {
-        boosters: state.boosters.map(b => {
-          if (b.id === id) {
-            return { ...b, status: becomingActive ? 'active' : 'available' };
+  commitPending: async () => {
+    const s = get();
+    const { _squadId: squadId, _matchId: matchId, _committedId: committed, _pendingId: pending, _contestId: contestId } = s;
+    if (!squadId || !matchId) return null;
+    if (pending === committed) return null; // nothing staged — nothing to commit
+
+    try {
+      if (committed) await dbDeactivate(squadId, matchId, committed);
+
+      // Free Hit: capture the squad's pre-free-hit baseline (the team they'd
+      // otherwise carry into this match) onto the activation row, so it can
+      // be restored as "previous XI" for whatever match comes after this one
+      // — mirrors web's intent (free_hit reverts after the match) but
+      // snapshots the BASELINE, not the free-hit team itself, since that's
+      // what actually needs to be restored. Best-effort: a failed snapshot
+      // lookup must not block activating the booster.
+      let snapshot: { playerIds: string[]; captainId: string | null; vcId: string | null } | null = null;
+      if (pending === 'free_hit' && contestId) {
+        try {
+          const { config, tournamentId } = await fetchContestTransferConfig(contestId);
+          if (tournamentId) {
+            const allMatches = await fetchTournamentMatches(tournamentId);
+            const prev = await getPreviousMatchXI(squadId, matchId, allMatches, config.start_match_number);
+            if (prev.playerIds.length === 11) {
+              snapshot = { playerIds: prev.playerIds, captainId: prev.captainId, vcId: prev.vcId };
+            }
           }
-          // Only one booster can be active at a time — deactivate any other active booster
-          if (becomingActive && b.status === 'active') {
-            return { ...b, status: 'available' };
-          }
-          return b;
-        }),
-      };
-    });
+        } catch (snapErr) {
+          console.warn('[boosterStore] free_hit snapshot capture failed (non-fatal):', snapErr);
+        }
+      }
+
+      if (pending) await dbActivate(squadId, matchId, pending, snapshot);
+
+      set({ _committedId: pending, isUnsaved: false });
+      // Refresh statuses against the new committed baseline.
+      set(state => ({
+        boosters: state.boosters.map(b => ({
+          ...b,
+          status: (b.id === pending ? 'active' : (b.status === 'pending' ? 'available' : b.status)) as BoosterStatus,
+        })),
+      }));
+
+      const message = pending
+        ? `${BOOSTER_META[pending]?.name ?? pending} activated.`
+        : `${BOOSTER_META[committed!]?.name ?? committed} removed.`;
+      return { changed: true, message };
+    } catch (err: any) {
+      console.warn('[boosterStore] commitPending failed:', err);
+      throw err;
+    }
   },
 
   activeBoosters: () => get().boosters.filter(b => b.status === 'active'),

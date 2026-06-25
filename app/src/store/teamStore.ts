@@ -22,6 +22,14 @@ import { MOCK_PLAYERS } from '../data/mockPlayers';
 import { supabase } from '../lib/supabase';
 import { isMatchLocked, findNextUnlockedMatch } from '../lib/matchLock';
 import { getRecentFormForPlayers } from '../lib/playerHistory';
+import {
+  fetchContestTransferConfig,
+  fetchTournamentMatches,
+  getPreviousMatchXI,
+  computeIsFirstActiveLock,
+  checkAndLogTransfers,
+} from '../lib/transferCap';
+import { useBoosterStore } from './boosterStore';
 
 // ─── Rules (defaults; maxOverseas overridden per-tournament from DB) ──────────
 
@@ -35,7 +43,12 @@ const RULES: SelectionRules = {
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
-function validate(selected: SelectedPlayer[], format: MatchFormat): ValidationResult {
+// budgetCapSuspended: true while Free Hit is the effective booster for the
+// match being drafted — mirrors web's slBudgetCapSuspended(). Free Hit's
+// squad reverts after the match, so a one-match over-budget pick never
+// carries forward as the squad's permanent baseline. Wildcard does NOT
+// suspend this (its pick is permanent), only Free Hit does.
+function validate(selected: SelectedPlayer[], format: MatchFormat, budgetCapSuspended = false): ValidationResult {
   const errors: string[]   = [];
   const warnings: string[] = [];
 
@@ -43,7 +56,7 @@ function validate(selected: SelectedPlayer[], format: MatchFormat): ValidationRe
     errors.push(`Max ${RULES.total} players allowed`);
 
   const spent = selected.reduce((s, p) => s + p.credits, 0);
-  if (spent > RULES.budget)
+  if (!budgetCapSuspended && spent > RULES.budget)
     errors.push(`Over budget by ${(spent - RULES.budget).toFixed(1)} credits`);
 
   for (const role of Object.keys(RULES.role) as PlayerRole[]) {
@@ -78,7 +91,7 @@ function validate(selected: SelectedPlayer[], format: MatchFormat): ValidationRe
 
 // ─── Derived stats ────────────────────────────────────────────────────────────
 
-function deriveStats(selected: SelectedPlayer[], format: MatchFormat) {
+function deriveStats(selected: SelectedPlayer[], format: MatchFormat, budgetCapSuspended = false) {
   const creditsSpent = selected.reduce((s, p) => s + p.credits, 0);
   const roleCounts   = { wk: 0, bat: 0, ar: 0, bowl: 0 } as Record<PlayerRole, number>;
   const teamCounts: Record<string, number> = {};
@@ -93,7 +106,7 @@ function deriveStats(selected: SelectedPlayer[], format: MatchFormat) {
     creditsLeft: RULES.budget - creditsSpent,
     roleCounts,
     teamCounts,
-    validation: validate(selected, format),
+    validation: validate(selected, format, budgetCapSuspended),
   };
 }
 
@@ -116,6 +129,13 @@ interface TeamState {
   currentMatchId:  string | null;
   nextMatchTime:   string | null;   // ISO start_time of next match (for countdown)
   isFirstMatch:    boolean;         // true until the first match of the season locks
+
+  // True while Free Hit is the effective (staged-or-committed) booster for
+  // the match being drafted — suspends the 100cr budget cap. Set by
+  // MyXIScreen from boosterStore's effective pick (mirrors web's
+  // slBudgetCapSuspended). Daily contests never set this.
+  budgetCapSuspended: boolean;
+  setBudgetCapSuspended: (suspended: boolean) => void;
 
   // Derived
   creditsSpent: number;
@@ -240,6 +260,12 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   currentMatchId: null,
   nextMatchTime:  null,
   isFirstMatch:   true,
+  budgetCapSuspended: false,
+  setBudgetCapSuspended: (suspended: boolean) => {
+    if (get().budgetCapSuspended === suspended) return;
+    const { selected, format } = get();
+    set({ budgetCapSuspended: suspended, ...deriveStats(selected, format, suspended) });
+  },
   creditsSpent:   0,
   creditsLeft:    RULES.budget,
   roleCounts:     { wk: 0, bat: 0, ar: 0, bowl: 0 },
@@ -404,52 +430,52 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   setPlayers: (players) => set({ players }),
 
   setFormat: (format) => {
-    const { selected } = get();
-    set({ format, ...deriveStats(selected, format) });
+    const { selected, budgetCapSuspended } = get();
+    set({ format, ...deriveStats(selected, format, budgetCapSuspended) });
   },
 
   togglePlayer: (player) => {
-    const { selected, format } = get();
+    const { selected, format, budgetCapSuspended } = get();
     const alreadyIn = selected.some(p => p.id === player.id);
 
     if (alreadyIn) {
       const next = selected.filter(p => p.id !== player.id);
-      set({ selected: next, ...deriveStats(next, format) });
+      set({ selected: next, ...deriveStats(next, format, budgetCapSuspended) });
       return;
     }
 
     if (selected.length >= RULES.total) return;
 
     const next: SelectedPlayer[] = [...selected, { ...player, captaincy: 'normal' }];
-    set({ selected: next, ...deriveStats(next, format) });
+    set({ selected: next, ...deriveStats(next, format, budgetCapSuspended) });
   },
 
   setCaptaincy: (playerId, role) => {
-    const { selected, format } = get();
+    const { selected, format, budgetCapSuspended } = get();
     const next = selected.map(p => {
       if (p.captaincy === role && p.id !== playerId) return { ...p, captaincy: 'normal' as CaptaincyRole };
       if (p.id === playerId) return { ...p, captaincy: p.captaincy === role ? 'normal' as CaptaincyRole : role };
       return p;
     });
-    set({ selected: next, ...deriveStats(next, format) });
+    set({ selected: next, ...deriveStats(next, format, budgetCapSuspended) });
   },
 
   removePlayer: (playerId) => {
-    const { selected, format } = get();
+    const { selected, format, budgetCapSuspended } = get();
     const next = selected.filter(p => p.id !== playerId);
-    set({ selected: next, ...deriveStats(next, format) });
+    set({ selected: next, ...deriveStats(next, format, budgetCapSuspended) });
   },
 
   resetXI: () => {
-    const { format } = get();
-    set({ selected: [], ...deriveStats([], format) });
+    const { format, budgetCapSuspended } = get();
+    set({ selected: [], ...deriveStats([], format, budgetCapSuspended) });
   },
 
   // ── 3. Load last saved XI (user_match_xi primary, user_teams fallback) ────────
   //  user_match_xi  = mobile saves + web-mirrored saves (v116+)
   //  user_teams     = web daily saves made before the mirror was added
   loadSavedXI: async (matchId, contestId, contestType) => {
-    const { players, format } = get();
+    const { players, format, budgetCapSuspended } = get();
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return 'Not signed in';
@@ -484,7 +510,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
             .filter(Boolean) as SelectedPlayer[];
 
           if (restored.length > 0) {
-            set({ selected: restored, ...deriveStats(restored, format) });
+            set({ selected: restored, ...deriveStats(restored, format, budgetCapSuspended) });
             console.log(`[teamStore] loadSavedXI: restored ${restored.length} players from user_match_xi`);
             return null; // success
           }
@@ -531,7 +557,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
               .filter(Boolean) as SelectedPlayer[];
 
             if (restored.length > 0) {
-              set({ selected: restored, ...deriveStats(restored, format) });
+              set({ selected: restored, ...deriveStats(restored, format, budgetCapSuspended) });
               console.log(`[teamStore] loadSavedXI: carried forward ${restored.length} players from squad's most recently saved match`);
               return null; // success
             }
@@ -567,7 +593,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
           .filter(Boolean) as SelectedPlayer[];
 
         if (restored.length > 0) {
-          set({ selected: restored, ...deriveStats(restored, format) });
+          set({ selected: restored, ...deriveStats(restored, format, budgetCapSuspended) });
           console.log(`[teamStore] loadSavedXI: restored ${restored.length} players from user_teams (web fallback)`);
           return null; // success
         }
@@ -652,6 +678,44 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       }
 
       if (!squadId) return 'Could not create squad';
+
+      // 3a-bis. Season transfer-cap check (sl/private only). Mobile has no
+      // separate draft/lock step — this save IS the lock — so the cap must be
+      // checked here, before any row is written, rather than at a later
+      // "lock time" the way web's lockMatchXI does (it's only ever called
+      // from web's unattended auto-lock cron, which swallows the throw after
+      // user_match_xi has already been written — fine there, wrong order to
+      // copy for a path the user's Save button calls directly).
+      if (contestType !== 'daily') {
+        try {
+          const { config, tournamentId } = await fetchContestTransferConfig(contestId);
+          const allMatches = tournamentId ? await fetchTournamentMatches(tournamentId) : [];
+          const prev = await getPreviousMatchXI(squadId, matchId, allMatches, config.start_match_number);
+          const isFirstActiveLock = await computeIsFirstActiveLock(squadId, prev, allMatches);
+          const baselinePlayerIds = isFirstActiveLock ? [] : prev.playerIds;
+
+          // Wildcard or Free Hit staged/active for this match bypasses the
+          // cap entirely (mirrors web's bypassTransfers) — read whichever is
+          // currently effective (staged-or-committed) for this exact match.
+          const bs = useBoosterStore.getState();
+          const effectiveBooster = bs._matchId === matchId ? bs._pendingId : null;
+          const bypassTransfers = effectiveBooster === 'wildcard' || effectiveBooster === 'free_hit';
+
+          await checkAndLogTransfers({
+            squadId,
+            matchId,
+            playerIds: selected.map(p => p.id),
+            previousPlayerIds: baselinePlayerIds,
+            config,
+            allMatches,
+            bypassTransfers,
+          });
+        } catch (capErr: any) {
+          const msg = capErr?.message ?? 'Transfer limit check failed';
+          set({ saveError: msg });
+          return msg;
+        }
+      }
 
       // 3b. Delete this match's existing XI rows then re-insert
       const { error: delErr } = await supabase

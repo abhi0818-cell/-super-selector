@@ -69,7 +69,7 @@ export default function MyXIScreen({ route }: Props) {
       .then(({ data }) => { if (data?.team_name) setTeamName(data.team_name); });
   }, [user?.id]);
   const { activeContext, setContext }   = useContestStore();
-  const { loadBoosters }                = useBoosterStore();
+  const { loadBoosters, commitPending, discardPending } = useBoosterStore();
   const {
     players,
     selected,
@@ -124,6 +124,17 @@ export default function MyXIScreen({ route }: Props) {
   const currentMatchId = useTeamStore(s => s.currentMatchId);
   const nextMatchTime  = useTeamStore(s => s.nextMatchTime);
   const isFirstMatch   = useTeamStore(s => s.isFirstMatch);
+  const setBudgetCapSuspended = useTeamStore(s => s.setBudgetCapSuspended);
+
+  // Suspend the 100cr budget cap while Free Hit is the effective (staged-or-
+  // committed) booster for this match — mirrors web's slBudgetCapSuspended().
+  // Wildcard does NOT suspend this (its pick is permanent).
+  const boosters = useBoosterStore(s => s.boosters);
+  useEffect(() => {
+    const freeHit = boosters.find(b => b.id === 'free_hit');
+    const suspended = !!freeHit && (freeHit.status === 'active' || freeHit.status === 'pending');
+    setBudgetCapSuspended(suspended);
+  }, [boosters, setBudgetCapSuspended]);
 
   // ── Countdown ──────────────────────────────────────────────────────────────
   const [countdown, setCountdown] = useState('');
@@ -254,12 +265,26 @@ export default function MyXIScreen({ route }: Props) {
 
     if (err) {
       Alert.alert('Save Failed', err);
-    } else {
-      showToast(`✓  XI saved for ${activeContext.leagueName}`);
-      // Re-load transfers + boosters — first save creates the squad, so
-      // squadId wasn't set yet; this picks it up and refreshes booster state.
-      loadTransfers();
+      return;
     }
+
+    // Commit any staged booster pick now that the XI save succeeded — this
+    // is the one place a booster choice actually gets written to
+    // user_booster_activations (mirrors web's saveSlXiHandler step 2b).
+    // Picking a booster pill never wrote to the DB directly; see
+    // boosterStore.selectBooster.
+    let boosterNote = '';
+    try {
+      const result = await commitPending();
+      if (result?.changed) boosterNote = ` ${result.message}`;
+    } catch (e: any) {
+      Alert.alert('Booster save failed', e?.message ?? 'Please try again.');
+    }
+
+    showToast(`✓  XI saved for ${activeContext.leagueName}${boosterNote}`);
+    // Re-load transfers + boosters — first save creates the squad, so
+    // squadId wasn't set yet; this picks it up and refreshes booster state.
+    loadTransfers();
   };
 
   const isDaily  = activeContext?.contestType === 'daily';
@@ -313,6 +338,7 @@ export default function MyXIScreen({ route }: Props) {
           onPress: async () => {
             const err = await loadSavedXI(currentMatchId, activeContext.contestId, activeContext.contestType);
             if (err) Alert.alert('Could not revert', err);
+            else discardPending(); // also drop any staged-not-saved booster pick
           },
         },
       ]);
@@ -421,6 +447,7 @@ export default function MyXIScreen({ route }: Props) {
             contestType={activeContext?.contestType}
             squadId={squadId}
             matchId={currentMatchId}
+            onStaged={showToast}
           />
 
           {/* Role stats */}

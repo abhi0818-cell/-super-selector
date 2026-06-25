@@ -59,9 +59,13 @@ function PlayerTile({ player, onSetCaptaincy, onRemove, readOnly }: TileProps) {
   // Directly select the boosters array — Zustand tracks this reference properly.
   // activeBoosters() is a derived method and can miss reactivity in some builds.
   const boosters   = useBoosterStore(s => s.boosters);
+  // Include 'pending' (staged-not-yet-saved) alongside 'active' so the pitch
+  // preview reflects whichever booster is currently effective — mirrors
+  // web's getEffectiveBoosterForMatch (pending-or-committed), used for the
+  // same "preview the multiplier before you save" purpose.
   const tileBoosts = getActiveTileBoosts(
     player.captaincy,
-    boosters.filter(b => b.status === 'active'),
+    boosters.filter(b => b.status === 'active' || b.status === 'pending'),
   );
 
   // "Virat Kohli" → "V. Kohli"
