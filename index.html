@@ -3537,12 +3537,11 @@ p31,Sample Player,MI,bat,9.0,false
         const activeTournamentMatchIds = new Set(state.matches.map(m => m.id));
         const dailyTeamsForBoot = state.savedTeams
           .filter(t => !t.squadId && activeTournamentMatchIds.has(t.matchId));
-        const nextMatch = state.matches
-          .filter(m => m.status !== 'completed' && effectiveLockTime(m))
-          .sort((a, b) => new Date(effectiveLockTime(a)) - new Date(effectiveLockTime(b)))[0]
-          || state.matches
-              .filter(m => m.status !== 'completed')
-              .sort((a, b) => (a.match_number || 0) - (b.match_number || 0))[0];
+        // Use findNextScheduledMatch() (not a plain "status !== completed" filter) so a
+        // match that has already gone live/started doesn't keep being treated as "next" —
+        // otherwise boot keeps re-loading the live match's (locked, stale) XI instead of
+        // advancing to the match the user actually just saved a fresh team for (e.g. via mobile).
+        const nextMatch = findNextScheduledMatch();
         let bootTeam =
           (nextMatch && dailyTeamsForBoot.find(t => t.matchId === nextMatch.id && t.playerIds?.length === 11))
           || dailyTeamsForBoot[0]
@@ -4820,14 +4819,9 @@ p31,Sample Player,MI,bat,9.0,false
       state.viceCaptain = null;
       state.activeSavedTeamId = null;
 
-      // Find next upcoming match for this tournament
-      const nextMatch = state.matches
-        .filter(m => m.status !== 'completed' && effectiveLockTime(m))
-        .sort((a, b) => new Date(effectiveLockTime(a)) - new Date(effectiveLockTime(b)))[0]
-        || state.matches
-            .filter(m => m.status !== 'completed')
-            .sort((a, b) => (a.match_number || 0) - (b.match_number || 0))[0]
-        || null;
+      // Find next upcoming match for this tournament. Uses findNextScheduledMatch()
+      // so an already-live/started match isn't mistaken for "next" (same fix as boot).
+      const nextMatch = findNextScheduledMatch();
       if (nextMatch) state.activeMatchId = nextMatch.id;
 
       // Try to restore saved XI: web daily team first, then tournament-wide search
