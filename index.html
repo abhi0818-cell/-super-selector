@@ -124,10 +124,16 @@
 
     /* ── Pool filter bar ── */
     .pool-filters { display: flex; flex-direction: column; gap: 7px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel-2); }
-    .pf-search-wrap { position: relative; }
+    .pf-search-wrap { position: relative; flex: 1; min-width: 140px; }
     .pf-search-wrap input { width: 100%; padding: 6px 10px 6px 28px; border: 1px solid var(--border); border-radius: 20px; background: var(--bg); font-size: 12px; color: var(--text); }
     .pf-search-icon { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); font-size: 12px; color: var(--muted); pointer-events: none; line-height: 1; }
     .pf-row { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
+    /* Disclosure pills (Type / Teams / Matches) — sit next to search; each toggles its own .pf-panel below */
+    .pf-pill { padding: 5px 10px; border-radius: 99px; font-size: 11px; cursor: pointer; user-select: none; background: var(--panel); border: 1px solid var(--border); color: var(--muted); white-space: nowrap; flex-shrink: 0; transition: background .12s, color .12s, border-color .12s; }
+    .pf-pill:hover { border-color: var(--accent); color: var(--text); }
+    .pf-pill.active { background: var(--accent); color: #1C1F26; border-color: var(--accent); font-weight: 600; }
+    .pf-pill-chev { font-size: 9px; margin-left: 1px; }
+    .pf-panel { padding-top: 1px; }
     .pf-label { font-size: 10px; color: var(--muted); white-space: nowrap; letter-spacing: .04em; flex-shrink: 0; min-width: 32px; display: inline-block; }
     .pf-sep { width: 1px; height: 14px; background: var(--border); flex-shrink: 0; align-self: center; margin: 0 2px; }
     /* Match chip row — paginated, no scroll */
@@ -1320,29 +1326,40 @@
     <section class="panel" id="poolPanel" style="display:none;">
       <h2>Player Pool</h2>
       <div class="pool-filters">
-        <!-- Row 1: Search -->
-        <div class="pf-search-wrap">
-          <span class="pf-search-icon">⌕</span>
-          <input id="search" type="text" placeholder="Search players or teams…" />
+        <!-- Row 1: Search + disclosure pills (Type / Teams / Matches) -->
+        <div class="pf-row" id="pfSearchPillsRow">
+          <div class="pf-search-wrap">
+            <span class="pf-search-icon">⌕</span>
+            <input id="search" type="text" placeholder="Search players or teams…" />
+          </div>
+          <span class="pf-pill" data-panel="pfPanelType">Type <i class="pf-pill-chev">▾</i></span>
+          <span class="pf-pill" data-panel="pfPanelTeam">Teams <i class="pf-pill-chev">▾</i></span>
+          <span class="pf-pill" data-panel="pfPanelMatch">Matches <i class="pf-pill-chev">▾</i></span>
         </div>
-        <!-- Row 2: Role chips + OS -->
-        <div class="pf-row" id="pfRoleTeamRow">
-          <span class="pf-label">Role</span>
-          <span class="pf-chip active" data-role="ALL">All</span>
-          <span class="pf-chip" data-role="wk">WK</span>
-          <span class="pf-chip" data-role="bat">BAT</span>
-          <span class="pf-chip" data-role="ar">AR</span>
-          <span class="pf-chip" data-role="bowl">BOWL</span>
-          <span class="pf-chip" id="osFilterChip" style="display:none;" title="Show overseas only">✈ OS</span>
+        <!-- Type panel: Role chips + OS — hidden until its pill is toggled on -->
+        <div class="pf-panel" id="pfPanelType" style="display:none;">
+          <div class="pf-row" id="pfRoleTeamRow">
+            <span class="pf-label">Role</span>
+            <span class="pf-chip active" data-role="ALL">All</span>
+            <span class="pf-chip" data-role="wk">WK</span>
+            <span class="pf-chip" data-role="bat">BAT</span>
+            <span class="pf-chip" data-role="ar">AR</span>
+            <span class="pf-chip" data-role="bowl">BOWL</span>
+            <span class="pf-chip" id="osFilterChip" style="display:none;" title="Show overseas only">✈ OS</span>
+          </div>
         </div>
-        <!-- Row 2b: Team chips -->
-        <div class="pf-row" id="pfTeamRow">
-          <span class="pf-label">Team</span>
-          <span id="teamFilterChips" style="display:contents;"></span>
+        <!-- Teams panel — hidden until its pill is toggled on -->
+        <div class="pf-panel" id="pfPanelTeam" style="display:none;">
+          <div class="pf-row" id="pfTeamRow">
+            <span class="pf-label">Team</span>
+            <span id="teamFilterChips" style="display:contents;"></span>
+          </div>
         </div>
-        <!-- Row 3: Match chips (scrollable, upcoming only) -->
-        <div class="pf-match-row-wrap">
-          <div class="pf-match-row" id="matchFilterChips"></div>
+        <!-- Matches panel — hidden until its pill is toggled on -->
+        <div class="pf-panel" id="pfPanelMatch" style="display:none;">
+          <div class="pf-match-row-wrap">
+            <div class="pf-match-row" id="matchFilterChips"></div>
+          </div>
         </div>
       </div>
       <div id="playerGrid" class="player-grid"></div>
@@ -12816,6 +12833,22 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     // ─── EVENT WIRING ────────────────────────────────────────────────────────
+    // Filter disclosure pills (Type / Teams / Matches) — each independently shows/hides
+    // its own panel below. Multiple can be open at once; with all three open the bar
+    // looks exactly like the old always-expanded layout. Pure visibility toggle — the
+    // panels' own content/rendering (renderTeamFilter, renderMatchSelector, role chips)
+    // is untouched, so no other filtering logic needs to change.
+    document.querySelectorAll('.pf-pill[data-panel]').forEach(pill => {
+      pill.addEventListener('click', () => {
+        const panel = document.getElementById(pill.dataset.panel);
+        if (!panel) return;
+        const opening = panel.style.display === 'none';
+        panel.style.display = opening ? '' : 'none';
+        pill.classList.toggle('active', opening);
+        const chev = pill.querySelector('.pf-pill-chev');
+        if (chev) chev.textContent = opening ? '▴' : '▾';
+      });
+    });
     // Role filter chips (All / WK / BAT / AR / BOWL) — now use .pf-chip[data-role]
     document.querySelectorAll('.pf-chip[data-role]').forEach(c => c.addEventListener('click', () => {
       document.querySelectorAll('.pf-chip[data-role]').forEach(x => x.classList.remove('active'));

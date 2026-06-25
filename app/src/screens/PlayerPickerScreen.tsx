@@ -83,6 +83,18 @@ export default function PlayerPickerScreen() {
   const [overseasOnly, setOverseasOnly] = useState(false);
   const [statsPlayer, setStatsPlayer]   = useState<Player | null>(null);
 
+  // Single-select team filter (independent of the match-derived team filter below).
+  const [teamFilter, setTeamFilter] = useState<string>('ALL');
+
+  // ── Filter disclosure pills (Type / Teams / Matches) ──────────────────────
+  // Each panel toggles independently; multiple can be open at once. Mirrors the
+  // web player pool: default closed for a compact bar, all-open reproduces the
+  // old always-expanded layout.
+  const [panelOpen, setPanelOpen] = useState({ type: false, teams: false, matches: false });
+  const togglePanel = useCallback((key: 'type' | 'teams' | 'matches') => {
+    setPanelOpen(prev => ({ ...prev, [key]: !prev[key] }));
+  }, []);
+
   // ── Match selector state ──────────────────────────────────────────────────
   const [matches, setMatches]           = useState<MatchOption[]>([]);
   const [matchesLoading, setMatchesLoading] = useState(false);
@@ -164,6 +176,13 @@ export default function PlayerPickerScreen() {
   // ── Derived player filter ─────────────────────────────────────────────────
   const selectedIds = useMemo(() => new Set(selected.map(p => p.id)), [selected]);
 
+  // Team list for the standalone Teams filter chips — derived from the current
+  // tournament's player pool, mirroring web's renderTeamFilter().
+  const teamList = useMemo(
+    () => [...new Set(players.map(p => p.team))].sort(),
+    [players]
+  );
+
   // Build union of teams from all selected matches
   const matchTeams = useMemo((): Set<string> | null => {
     if (selectedMatchIds.size === 0) return null; // no filter
@@ -181,12 +200,13 @@ export default function PlayerPickerScreen() {
     const q = search.toLowerCase().trim();
     return players.filter(p => {
       if (matchTeams && !matchTeams.has(p.team)) return false;
+      if (teamFilter !== 'ALL' && p.team !== teamFilter) return false;
       if (roleFilter !== 'ALL' && p.role !== roleFilter) return false;
       if (overseasOnly && !p.overseas) return false;
       if (q && !p.name.toLowerCase().includes(q) && !p.team.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [players, matchTeams, roleFilter, overseasOnly, search]);
+  }, [players, matchTeams, teamFilter, roleFilter, overseasOnly, search]);
 
   const isDisabled = useCallback((player: Player): boolean => {
     if (selectedIds.has(player.id)) return false;
@@ -274,67 +294,126 @@ export default function PlayerPickerScreen() {
 
         <RoleStats roleCounts={roleCounts} />
 
-        {/* Filter sequence below mirrors web: Search → Role (+OS) → Match */}
-
-        {/* Search */}
-        <View style={styles.searchRow}>
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search player or team…"
-            placeholderTextColor={C.muted}
-            value={search}
-            onChangeText={setSearch}
-            clearButtonMode="while-editing"
-            autoCorrect={false}
-            autoCapitalize="none"
-          />
+        {/* Search + disclosure pills (Type / Teams / Matches) — mirrors web.
+            Each pill independently shows/hides its panel below; with all three
+            open the bar looks exactly like the old always-expanded layout. */}
+        <View style={styles.searchPillsRow}>
+          <View style={styles.searchWrap}>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search player or team…"
+              placeholderTextColor={C.muted}
+              value={search}
+              onChangeText={setSearch}
+              clearButtonMode="while-editing"
+              autoCorrect={false}
+              autoCapitalize="none"
+            />
+          </View>
+          <Pressable
+            style={[styles.pill, panelOpen.type && styles.pillActive]}
+            onPress={() => togglePanel('type')}
+          >
+            <Text style={[styles.pillText, panelOpen.type && styles.pillTextActive]}>
+              Type {panelOpen.type ? '▴' : '▾'}
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.pill, panelOpen.teams && styles.pillActive]}
+            onPress={() => togglePanel('teams')}
+          >
+            <Text style={[styles.pillText, panelOpen.teams && styles.pillTextActive]}>
+              Teams {panelOpen.teams ? '▴' : '▾'}
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.pill, panelOpen.matches && styles.pillActive]}
+            onPress={() => togglePanel('matches')}
+          >
+            <Text style={[styles.pillText, panelOpen.matches && styles.pillTextActive]}>
+              Matches {panelOpen.matches ? '▴' : '▾'}
+            </Text>
+          </Pressable>
         </View>
 
-        {/* Role filter chips */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.chips}
-        >
-          {ROLE_FILTERS.map(r => {
-            const active = roleFilter === r;
-            return (
+        {/* Type panel: Role filter chips + OS — hidden until its pill is open */}
+        {panelOpen.type && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chips}
+          >
+            {ROLE_FILTERS.map(r => {
+              const active = roleFilter === r;
+              return (
+                <Pressable
+                  key={r}
+                  style={[styles.chip, active && styles.chipActive]}
+                  onPress={() => setRoleFilter(r)}
+                >
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                    {ROLE_LABELS[r]}
+                    {r !== 'ALL' && roleCounts[r as PlayerRole] > 0 && (
+                      <Text style={[styles.chipCount, active && styles.chipCountActive]}>
+                        {' '}{roleCounts[r as PlayerRole]}
+                      </Text>
+                    )}
+                  </Text>
+                </Pressable>
+              );
+            })}
+
+            {/* Overseas-only filter chip — only when tournament has an overseas slot */}
+            {osCap > 0 && (
               <Pressable
-                key={r}
-                style={[styles.chip, active && styles.chipActive]}
-                onPress={() => setRoleFilter(r)}
+                style={[styles.chip, styles.osChip, overseasOnly && styles.osChipActive]}
+                onPress={() => setOverseasOnly(v => !v)}
               >
-                <Text style={[styles.chipText, active && styles.chipTextActive]}>
-                  {ROLE_LABELS[r]}
-                  {r !== 'ALL' && roleCounts[r as PlayerRole] > 0 && (
-                    <Text style={[styles.chipCount, active && styles.chipCountActive]}>
-                      {' '}{roleCounts[r as PlayerRole]}
-                    </Text>
-                  )}
+                <Text style={[styles.chipText, overseasOnly && styles.chipTextActive]}>
+                  ✈️{' '}
+                  <Text style={[styles.chipCount, overseasOnly && styles.chipCountActive]}>
+                    OS
+                  </Text>
                 </Text>
               </Pressable>
-            );
-          })}
+            )}
+          </ScrollView>
+        )}
 
-          {/* Overseas-only filter chip — only when tournament has an overseas slot */}
-          {osCap > 0 && (
+        {/* Teams panel: single-select team filter — hidden until its pill is open */}
+        {panelOpen.teams && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chips}
+          >
             <Pressable
-              style={[styles.chip, styles.osChip, overseasOnly && styles.osChipActive]}
-              onPress={() => setOverseasOnly(v => !v)}
+              style={[styles.chip, teamFilter === 'ALL' && styles.chipActive]}
+              onPress={() => setTeamFilter('ALL')}
             >
-              <Text style={[styles.chipText, overseasOnly && styles.chipTextActive]}>
-                ✈️{' '}
-                <Text style={[styles.chipCount, overseasOnly && styles.chipCountActive]}>
-                  OS
-                </Text>
+              <Text style={[styles.chipText, teamFilter === 'ALL' && styles.chipTextActive]}>
+                All
               </Text>
             </Pressable>
-          )}
-        </ScrollView>
+            {teamList.map(t => {
+              const active = teamFilter === t;
+              return (
+                <Pressable
+                  key={t}
+                  style={[styles.chip, active && styles.chipActive]}
+                  onPress={() => setTeamFilter(t)}
+                >
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>{t}</Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        )}
 
-        {/* ── Match selector (multi-select) ──────────────────────────────── */}
+        {/* ── Match selector (multi-select) — hidden until its pill is open ── */}
         {/* Only non-completed matches are fetched, so this list naturally
             starts at the live match (if any) or the next upcoming one. */}
+        {panelOpen.matches && (
         <View style={styles.matchSelectorSection}>
           <View style={styles.matchSelectorHeader}>
             <Text style={styles.matchSelectorLabel}>Filter by match</Text>
@@ -384,6 +463,7 @@ export default function PlayerPickerScreen() {
             })}
           </ScrollView>
         </View>
+        )}
 
         {/* Filter summary hint */}
         {matchFilterLabel && (
@@ -606,13 +686,21 @@ const styles = StyleSheet.create({
     fontSize: fontSize.xs,
   },
 
-  // Search
-  searchRow: {
+  // Search + disclosure pills row
+  searchPillsRow: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               spacing.sm,
     paddingHorizontal: spacing.lg,
     paddingTop:        spacing.md,
     paddingBottom:     spacing.sm,
   },
+  searchWrap: {
+    flex:     1,
+    minWidth: 90,
+  },
   searchInput: {
+    width:             '100%',
     backgroundColor:   'rgba(0,0,0,0.04)',
     borderWidth:       1,
     borderColor:       C.border,
@@ -621,6 +709,29 @@ const styles = StyleSheet.create({
     paddingVertical:   spacing.sm + 2,
     color:             C.text,
     fontSize:          fontSize.base,
+  },
+
+  // Disclosure pills (Type / Teams / Matches)
+  pill: {
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical:   6,
+    borderRadius:      radius.full,
+    backgroundColor:   'rgba(0,0,0,0.04)',
+    borderWidth:       1,
+    borderColor:       C.border,
+  },
+  pillActive: {
+    backgroundColor: C.accent,
+    borderColor:     C.accent,
+  },
+  pillText: {
+    color:      C.muted,
+    fontSize:   fontSize.xs,
+    fontWeight: '600',
+  },
+  pillTextActive: {
+    color:      C.active,
+    fontWeight: '800',
   },
 
   // Role chips
