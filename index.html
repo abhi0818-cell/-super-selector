@@ -2455,6 +2455,19 @@ p31,Sample Player,MI,bat,9.0,false
       { id:'p30', name:'Arshdeep Singh',   team:'SRH', role:'bowl', credits: 8.5, overseas:false },
     ];
     let PLAYERS = [...MOCK_PLAYERS];
+    // Global set of every player id currently in the players table (NOT scoped
+    // to the active tournament). PLAYERS itself is often a tournament-scoped
+    // subset (see loadPlayersForActiveTournament/getPlayersForTournament), so
+    // nextPlayerId() must check this set too or it can suggest an id that's
+    // already taken by a player belonging to a different tournament.
+    let ALL_PLAYER_IDS = new Set(MOCK_PLAYERS.map(p => p.id));
+    async function refreshAllPlayerIds() {
+      if (!state.db) return;
+      try {
+        ALL_PLAYER_IDS = new Set(await state.db.getAllPlayerIds());
+        renderAdmin(); // re-render so a stale "next id" preview (computed before this fetch resolved) self-corrects
+      } catch (e) { console.warn('refreshAllPlayerIds failed, keeping previous set.', e); }
+    }
 
     // ─── DREAM11 RULES ───────────────────────────────────────────────────────
     const RULES = {
@@ -3743,6 +3756,7 @@ p31,Sample Player,MI,bat,9.0,false
           if (pls.length) PLAYERS = pls;
           playersSource = pls.length ? 'global' : 'none';
         }
+        refreshAllPlayerIds(); // fire-and-forget: keeps nextPlayerId()'s global uniqueness check current
         refreshRecentForm(); // fire-and-forget: re-keys on tournament id, refetches form strips
       } catch (e) { console.warn('Player load failed, keeping current pool.', e); }
     }
@@ -9895,8 +9909,14 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     function nextPlayerId() {
-      // Pick smallest unused pNN.
+      // Pick smallest unused pNN. Must check against BOTH the currently-loaded
+      // PLAYERS (which can be tournament-scoped — see getPlayersForTournament)
+      // AND the global ALL_PLAYER_IDS cache, since players.id is a single global
+      // namespace shared by every tournament. Checking PLAYERS alone can suggest
+      // an id (e.g. 'p01') that's free in this tournament's subset but already
+      // taken globally, which fails the insert (or silently collides).
       const used = new Set(PLAYERS.map(p => p.id));
+      ALL_PLAYER_IDS.forEach(id => used.add(id));
       for (let i = 1; i < 1000; i++) {
         const id = 'p' + String(i).padStart(2, '0');
         if (!used.has(id)) return id;
@@ -10003,6 +10023,7 @@ p31,Sample Player,MI,bat,9.0,false
         } else {
           PLAYERS.push({ id, name, team, role, credits, overseas });
         }
+        ALL_PLAYER_IDS.add(id); // keep the global uniqueness set in sync immediately, no need to wait for a refetch
         toast(`Added ${name}.`);
         renderAdmin(); renderPool(); render();
       } catch (e) { toast('Add failed: ' + e.message, 4000); }
@@ -10038,6 +10059,7 @@ p31,Sample Player,MI,bat,9.0,false
       if (!confirm(`Delete ${p?.name || id}? This cannot be undone.`)) return;
       try {
         if (state.db) await state.db.deletePlayer(id);
+        ALL_PLAYER_IDS.delete(id); // global row is actually gone (deletePlayer throws if still FK-referenced), so the id is free again
         const idx = PLAYERS.findIndex(x => x.id === id);
         if (idx >= 0) PLAYERS.splice(idx, 1);
         // Also drop from current XI if selected
@@ -12641,6 +12663,7 @@ p31,Sample Player,MI,bat,9.0,false
           });
           toast(`Imported ${rows.length} (local mode — not persisted).`);
         }
+        refreshAllPlayerIds(); // CSV import can add new global player ids via bulkUpsertPlayers
         closeCsvView();
         renderAdmin(); renderPool(); render();
       } catch (e) { toast('Import failed: ' + e.message, 5000); }

@@ -197,6 +197,23 @@ export function createDb(cfg = {}) {
     // ─── Players ──────────────────────────────────────────────────────────
 
     /**
+     * Returns every player id in the GLOBAL players table (not scoped to any
+     * tournament). players.id is a global text PK ('p01', 'p02', ...) shared
+     * across all tournaments, so anything that needs to mint a fresh, guaranteed-
+     * unused id (see index.html's nextPlayerId()) must check against this full
+     * set — not just whatever subset happens to be loaded into the admin UI's
+     * PLAYERS array, which is often tournament-scoped via getPlayersForTournament
+     * and can easily omit ids that are still taken globally.
+     * @returns {Promise<string[]>}
+     */
+    async getAllPlayerIds() {
+      const sb = await getClient();
+      const { data, error } = await sb.from('players').select('id');
+      if (error) throw error;
+      return data.map(r => r.id);
+    },
+
+    /**
      * Returns the player pool for a specific tournament, using tournament-specific
      * team assignments and credit values from tournament_players.
      * Falls back to the global players table if tournament_players has no entries yet.
