@@ -6,10 +6,14 @@ import RoleTag from './RoleTag';
 import Jersey from './Jersey';
 
 interface Props {
-  player:   Player;
-  selected: boolean;
-  disabled: boolean;
-  onPress:  () => void;
+  player:       Player;
+  selected:     boolean;
+  disabled:     boolean;
+  onPress:      () => void;
+  // Last-3 raw_points, newest first (undefined = not loaded yet, null entries = no data for that slot).
+  recentForm?:  (number | null)[];
+  // Opens the match-history modal. Omit to hide the stat row entirely.
+  onStatsPress?: () => void;
 }
 
 const C = {
@@ -22,7 +26,16 @@ const C = {
   borderS: 'rgba(201,168,76,0.55)',
 } as const;
 
-export default function PlayerCard({ player, selected, disabled, onPress }: Props) {
+// Same thresholds/colors as web's form-pip classes (f-hi/f-mid/f-lo/f-na in
+// index.html) so the two clients show identical form signals.
+function pipStyle(pts: number | null | undefined): { bg: string; fg: string } {
+  if (pts == null) return { bg: 'rgba(122,112,96,0.25)', fg: C.muted };
+  if (pts >= 50)   return { bg: '#1d8a4a', fg: '#fff' };
+  if (pts >= 25)   return { bg: '#b8860b', fg: '#fff' };
+  return                  { bg: '#b03a3a', fg: '#fff' };
+}
+
+export default function PlayerCard({ player, selected, disabled, onPress, recentForm, onStatsPress }: Props) {
   return (
     <Pressable
       onPress={onPress}
@@ -58,6 +71,27 @@ export default function PlayerCard({ player, selected, disabled, onPress }: Prop
       <View style={styles.right}>
         <Text style={styles.credits}>{player.credits.toFixed(1)}</Text>
         <Text style={styles.creditsLabel}>CR</Text>
+
+        {onStatsPress && (
+          <View style={styles.statRow}>
+            <View style={styles.pips}>
+              {[0, 1, 2].map(i => {
+                const pts = recentForm?.[i] ?? null;
+                const { bg, fg } = pipStyle(pts);
+                return (
+                  <View key={i} style={[styles.pip, { backgroundColor: bg }]}>
+                    <Text style={[styles.pipText, { color: fg }]}>
+                      {pts == null ? '–' : Math.round(pts)}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+            <Pressable onPress={onStatsPress} hitSlop={8} style={styles.statBtn}>
+              <Text style={styles.statBtnText}>📊</Text>
+            </Pressable>
+          </View>
+        )}
       </View>
 
       {selected && (
@@ -137,6 +171,35 @@ const styles = StyleSheet.create({
     color:         C.muted,
     fontSize:      fontSize.xs,
     letterSpacing: 0.5,
+  },
+
+  statRow: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           4,
+    marginTop:     4,
+  },
+  pips: {
+    flexDirection: 'row',
+    gap:           3,
+  },
+  pip: {
+    width:          16,
+    height:         16,
+    borderRadius:   4,
+    alignItems:     'center',
+    justifyContent: 'center',
+  },
+  pipText: {
+    fontSize:   9,
+    fontWeight: '700',
+  },
+  statBtn: {
+    paddingHorizontal: 2,
+    paddingVertical:   1,
+  },
+  statBtnText: {
+    fontSize: 13,
   },
 
   checkBadge: {

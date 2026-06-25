@@ -24,6 +24,7 @@ import { useTeamStore, RULES } from '../store/teamStore';
 import { useContestStore } from '../store/contestStore';
 import { supabase } from '../lib/supabase';
 import PlayerCard from '../components/PlayerCard';
+import PlayerStatsModal from '../components/PlayerStatsModal';
 import BudgetBar from '../components/BudgetBar';
 import RoleStats from '../components/RoleStats';
 import { fontSize, radius, spacing } from '../theme';
@@ -72,6 +73,7 @@ export default function PlayerPickerScreen() {
     tournamentId,
     currentMatchId,
     format,
+    recentForm,
   } = useTeamStore();
 
   const { activeContext } = useContestStore();
@@ -79,6 +81,7 @@ export default function PlayerPickerScreen() {
   const [search, setSearch]         = useState('');
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('ALL');
   const [overseasOnly, setOverseasOnly] = useState(false);
+  const [statsPlayer, setStatsPlayer]   = useState<Player | null>(null);
 
   // ── Match selector state ──────────────────────────────────────────────────
   const [matches, setMatches]           = useState<MatchOption[]>([]);
@@ -195,8 +198,10 @@ export default function PlayerPickerScreen() {
       selected={selectedIds.has(item.id)}
       disabled={isDisabled(item)}
       onPress={() => togglePlayer(item)}
+      recentForm={recentForm[item.id]}
+      onStatsPress={() => setStatsPlayer(item)}
     />
-  ), [selectedIds, isDisabled, togglePlayer]);
+  ), [selectedIds, isDisabled, togglePlayer, recentForm]);
 
   const keyExtractor = useCallback((item: Player) => item.id, []);
 
@@ -402,6 +407,13 @@ export default function PlayerPickerScreen() {
           windowSize={5}
         />
       </View>
+
+      <PlayerStatsModal
+        visible={!!statsPlayer}
+        player={statsPlayer}
+        tournamentId={tournamentId}
+        onClose={() => setStatsPlayer(null)}
+      />
     </View>
   );
 }

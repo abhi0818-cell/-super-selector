@@ -21,6 +21,7 @@ import {
 import { MOCK_PLAYERS } from '../data/mockPlayers';
 import { supabase } from '../lib/supabase';
 import { isMatchLocked } from '../lib/matchLock';
+import { getRecentFormForPlayers } from '../lib/playerHistory';
 
 // ─── Rules (defaults; maxOverseas overridden per-tournament from DB) ──────────
 
@@ -106,6 +107,10 @@ interface TeamState {
   playersLoading: boolean;
   saveError:      string | null;
 
+  // playerId -> last-3 raw_points, newest first (null = no data for that slot).
+  // Populated in one batched query after players load — see loadRecentForm.
+  recentForm:     Record<string, (number | null)[]>;
+
   // Tournament / match context (loaded on sign-in)
   tournamentId:    string | null;
   currentMatchId:  string | null;
@@ -121,7 +126,8 @@ interface TeamState {
 
   // Actions
   loadTournamentContext: () => Promise<void>;
-  loadPlayers:   () => Promise<void>;
+  loadPlayers:    () => Promise<void>;
+  loadRecentForm: () => Promise<void>;
   setPlayers:    (players: Player[]) => void;
   setFormat:     (format: MatchFormat) => void;
   togglePlayer:  (player: Player) => void;
@@ -229,6 +235,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   format:         'T20',
   playersLoading: false,
   saveError:      null,
+  recentForm:     {},
   tournamentId:   null,
   currentMatchId: null,
   nextMatchTime:  null,
@@ -373,6 +380,22 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       console.warn('[teamStore] loadPlayers failed, using mock data:', err);
     } finally {
       set({ playersLoading: false });
+      // Fire-and-forget — form strip fills in once it resolves, doesn't block the pool.
+      get().loadRecentForm().catch(() => {});
+    }
+  },
+
+  // ── Batched "last 3 scores" lookup for every loaded player ────────────────
+  // One round trip for the whole pool (see getRecentFormForPlayers) instead of
+  // a query per card. Re-run whenever the player list or tournament changes.
+  loadRecentForm: async () => {
+    const { players, tournamentId } = get();
+    if (!players.length) return;
+    try {
+      const form = await getRecentFormForPlayers(players.map(p => p.id), 3, tournamentId);
+      set({ recentForm: form });
+    } catch (err) {
+      console.warn('[teamStore] loadRecentForm failed:', err);
     }
   },
 
