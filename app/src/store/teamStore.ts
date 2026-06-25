@@ -20,7 +20,7 @@ import {
 } from '../types';
 import { MOCK_PLAYERS } from '../data/mockPlayers';
 import { supabase } from '../lib/supabase';
-import { isMatchLocked } from '../lib/matchLock';
+import { isMatchLocked, findNextUnlockedMatch } from '../lib/matchLock';
 import { getRecentFormForPlayers } from '../lib/playerHistory';
 
 // ─── Rules (defaults; maxOverseas overridden per-tournament from DB) ──────────
@@ -276,16 +276,18 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         }
       }
 
-      // Next upcoming/live match (not completed)
-      const { data: matches } = await supabase
+      // Next upcoming match — i.e. the next one to actually pick/edit an XI for.
+      // Must exclude matches that have already locked (gone live), not just
+      // 'completed' ones — otherwise this keeps resolving to a live match
+      // whose XI is now read-only, instead of advancing to the next match the
+      // user is meant to be picking (mirrors web's findNextScheduledMatch()).
+      const { data: candidateMatches } = await supabase
         .from('matches')
-        .select('id, start_time, match_number')
+        .select('id, start_time, lock_time, match_number, status')
         .eq('tournament_id', tournamentId)
-        .neq('status', 'completed')
-        .order('match_number', { ascending: true })
-        .limit(1);
+        .neq('status', 'completed');
 
-      const nextMatch = matches?.[0] ?? null;
+      const nextMatch = findNextUnlockedMatch(candidateMatches ?? []);
       const currentMatchId: string | null = nextMatch?.id ?? null;
       const nextMatchTime:  string | null = nextMatch?.start_time ?? null;
 
@@ -611,17 +613,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
             .eq('tournament_id', tournamentId)
             .neq('status', 'completed');
 
-          const notLocked = (candidates ?? []).filter(m => !isMatchLocked(m));
-          const withTime = notLocked
-            .filter(m => m.lock_time || m.start_time)
-            .sort((a, b) =>
-              new Date(a.lock_time ?? a.start_time as string).getTime() -
-              new Date(b.lock_time ?? b.start_time as string).getTime());
-          const withoutTime = notLocked
-            .filter(m => !m.lock_time && !m.start_time)
-            .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0));
-
-          nextMatchId = withTime[0]?.id ?? withoutTime[0]?.id ?? null;
+          nextMatchId = findNextUnlockedMatch(candidates ?? [])?.id ?? null;
         }
 
         if (!nextMatchId) {

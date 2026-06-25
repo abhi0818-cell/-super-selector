@@ -18,6 +18,38 @@ export function isMatchLocked(m: { lock_time?: string | null; start_time?: strin
   return !!lockAt && new Date(lockAt).getTime() <= Date.now();
 }
 
+interface MatchLockCandidate {
+  id:           string;
+  match_number?: number | null;
+  lock_time?:   string | null;
+  start_time?:  string | null;
+  status?:      string | null;
+}
+
+/**
+ * Given a tournament's matches, find the earliest one that hasn't locked yet.
+ * Mirrors web's findNextScheduledMatch() (index.html). Deliberately excludes
+ * not just 'completed' matches but anything past its lock gate — a match that
+ * has gone live (status flips to 'live'/'in_progress', not 'completed') must
+ * stop being treated as "the current match", otherwise the app keeps showing/
+ * editing that match's now-locked XI instead of advancing to the next one the
+ * user actually saved a fresh team for (the bug this was added to fix: saving
+ * from mobile landed correctly in the DB, but currentMatchId still pointed at
+ * the live match, so the screen kept showing its stale locked XI).
+ */
+export function findNextUnlockedMatch<T extends MatchLockCandidate>(matches: T[]): T | null {
+  const candidates = matches.filter(m => m.status !== 'completed' && !isMatchLocked(m));
+  const withTime = candidates
+    .filter(m => m.lock_time || m.start_time)
+    .sort((a, b) =>
+      new Date((a.lock_time ?? a.start_time) as string).getTime() -
+      new Date((b.lock_time ?? b.start_time) as string).getTime());
+  const withoutTime = candidates
+    .filter(m => !m.lock_time && !m.start_time)
+    .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0));
+  return withTime[0] ?? withoutTime[0] ?? null;
+}
+
 /**
  * Has this match actually been played (so it belongs in history/leaderboards)?
  * Mirrors web's own filter for this exact purpose (index.html's `scoredMatches`):
