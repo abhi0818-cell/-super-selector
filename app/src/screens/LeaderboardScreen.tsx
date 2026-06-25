@@ -30,8 +30,7 @@ import {
   getDailyMatchOptions, loadDailyLeaderboard, getDailyUserHistory,
   DailyMatchOption,
 } from '../lib/dailyLeaderboard';
-import { useLiveMatch, useLiveScore, formatLiveScoreLine } from '../lib/liveScore';
-import MyLiveTeamModal from '../components/MyLiveTeamModal';
+import { useLiveMatch } from '../lib/liveScore';
 
 // ─── Domain types ─────────────────────────────────────────────────────────────
 
@@ -467,28 +466,12 @@ export default function LeaderboardScreen() {
           loadLeaderboard, setCurrentUser }              = useLeaderboardStore();
   const { selectedTournamentId }                         = useTournamentStore();
 
-  // Live score — same match_scorecards source as HomeScreen's pill (see
-  // lib/liveScore.ts). Shown as a banner above the Daily match-picker chips,
-  // tap to open the current user's own live team (Daily and/or SL,
-  // whichever applies) for the live match — same as HomeScreen's pill.
-  const liveMatch              = useLiveMatch(selectedTournamentId);
-  const { score: liveScore }   = useLiveScore(liveMatch?.id ?? null);
-  const liveScoreLine          = formatLiveScoreLine(liveScore);
-  const [liveModalVisible, setLiveModalVisible] = useState(false);
-
-  // Resolve the user's own Daily contest id + SL squad id regardless of
-  // which tab is active, so the live-team modal can show "both, whichever
-  // applies" rather than only whatever contest type happens to be selected.
-  const liveDailyContestId = contests.find(c => c.contestType === 'daily' && !c.isPrivate)?.id ?? null;
-  const liveSlContestId    = contests.find(c => c.contestType === 'sl'    && !c.isPrivate)?.id ?? null;
-  const mySlSquadId        = (sbEntries[liveSlContestId ?? ''] ?? []).find(e => e.isCurrentUser)?.squadId ?? null;
-
-  // Preload the SL leaderboard (for mySlSquadId above) even if the user
-  // hasn't visited the SL tab yet — cheap, and keeps the live-team modal
-  // correct regardless of which tab they opened the banner from.
-  useEffect(() => {
-    if (liveSlContestId) loadLeaderboard(liveSlContestId);
-  }, [liveSlContestId]);
+  // Live match flag only — used to mark the live match's chip with 🔴 in the
+  // Daily match-picker below. The live-team-with-points view used to also be
+  // surfaced here via a banner/modal, but that duplicated what tapping any
+  // entry's row already shows (TeamDetailModal now includes the live match
+  // as a tab since isMatchPlayed() covers status 'live') — removed.
+  const liveMatch = useLiveMatch(selectedTournamentId);
 
   // Build tabs from real contests, fall back to hardcoded placeholders
   const tabs: ContestTab[] = useMemo(() => {
@@ -670,17 +653,6 @@ export default function LeaderboardScreen() {
         </ScrollView>
       )}
 
-      {/* ── Live score banner — tap to open the full scorecard ── */}
-      {isDailyTab && liveMatch && liveScoreLine && (
-        <Pressable onPress={() => setLiveModalVisible(true)} style={({ pressed }) => pressed && { opacity: 0.85 }}>
-          <View style={styles.liveBanner}>
-            <View style={styles.liveBannerDot} />
-            <Text style={styles.liveBannerText} numberOfLines={1}>{liveScoreLine}</Text>
-            <Text style={styles.liveBannerArrow}>›</Text>
-          </View>
-        </Pressable>
-      )}
-
       {/* ── User highlight ── */}
       {myEntry && <UserHighlight entry={myEntry} showSlCols={showSlCols} />}
 
@@ -731,15 +703,6 @@ export default function LeaderboardScreen() {
         />
       )}
 
-      <MyLiveTeamModal
-        visible={liveModalVisible}
-        matchId={liveMatch?.id ?? null}
-        title={liveMatch ? `${liveMatch.homeTeamId ?? '?'} vs ${liveMatch.awayTeamId ?? '?'}` : undefined}
-        dailyContestId={liveDailyContestId}
-        squadId={mySlSquadId}
-        userId={user?.id ?? null}
-        onClose={() => setLiveModalVisible(false)}
-      />
     </View>
   );
 }
@@ -918,18 +881,6 @@ const styles = StyleSheet.create({
   rowArrow:      { color: C.muted, fontSize: fontSize.lg, fontWeight: '400', marginLeft: -4 },
 
   empty: { color: C.muted, fontSize: fontSize.base, textAlign: 'center', marginTop: spacing.xxl },
-
-  // Live score banner
-  liveBanner: {
-    flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
-    marginHorizontal: spacing.lg, marginBottom: spacing.xs,
-    paddingHorizontal: spacing.md, paddingVertical: spacing.sm,
-    backgroundColor: 'rgba(192,57,43,0.08)', borderWidth: 1, borderColor: 'rgba(192,57,43,0.3)',
-    borderRadius: radius.lg,
-  },
-  liveBannerDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: C.bad, flexShrink: 0 },
-  liveBannerText: { color: C.text, fontSize: fontSize.sm, fontWeight: '700', flex: 1 },
-  liveBannerArrow: { color: C.muted, fontSize: fontSize.lg, fontWeight: '600' },
 
   // ── Team Detail Modal ─────────────────────────────────────────────────────
 
