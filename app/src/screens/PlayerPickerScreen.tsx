@@ -86,12 +86,22 @@ export default function PlayerPickerScreen() {
   // Single-select team filter (independent of the match-derived team filter below).
   const [teamFilter, setTeamFilter] = useState<string>('ALL');
 
-  // ── Filter disclosure pills (Type / Teams / Matches) ──────────────────────
+  // Single-select credits filter.
+  type CreditsFilter = 'ALL' | 'LT8' | 'MID' | 'GT10';
+  const [creditsFilter, setCreditsFilter] = useState<CreditsFilter>('ALL');
+  const CREDITS_OPTIONS: { key: CreditsFilter; label: string }[] = [
+    { key: 'ALL',  label: 'All' },
+    { key: 'LT8',  label: 'Less than 8' },
+    { key: 'MID',  label: 'Between 8 & 10' },
+    { key: 'GT10', label: 'Greater than 10' },
+  ];
+
+  // ── Filter disclosure pills (Type / Teams / Matches / Credits) ────────────
   // Each panel toggles independently; multiple can be open at once. Mirrors the
   // web player pool: default closed for a compact bar, all-open reproduces the
   // old always-expanded layout.
-  const [panelOpen, setPanelOpen] = useState({ type: false, teams: false, matches: false });
-  const togglePanel = useCallback((key: 'type' | 'teams' | 'matches') => {
+  const [panelOpen, setPanelOpen] = useState({ type: false, teams: false, matches: false, credits: false });
+  const togglePanel = useCallback((key: 'type' | 'teams' | 'matches' | 'credits') => {
     setPanelOpen(prev => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
@@ -201,12 +211,15 @@ export default function PlayerPickerScreen() {
     return players.filter(p => {
       if (matchTeams && !matchTeams.has(p.team)) return false;
       if (teamFilter !== 'ALL' && p.team !== teamFilter) return false;
+      if (creditsFilter === 'LT8'  && !(p.credits < 8)) return false;
+      if (creditsFilter === 'MID'  && !(p.credits >= 8 && p.credits <= 10)) return false;
+      if (creditsFilter === 'GT10' && !(p.credits > 10)) return false;
       if (roleFilter !== 'ALL' && p.role !== roleFilter) return false;
       if (overseasOnly && !p.overseas) return false;
       if (q && !p.name.toLowerCase().includes(q) && !p.team.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [players, matchTeams, teamFilter, roleFilter, overseasOnly, search]);
+  }, [players, matchTeams, teamFilter, creditsFilter, roleFilter, overseasOnly, search]);
 
   const isDisabled = useCallback((player: Player): boolean => {
     if (selectedIds.has(player.id)) return false;
@@ -332,6 +345,14 @@ export default function PlayerPickerScreen() {
           >
             <Text style={[styles.pillText, panelOpen.matches && styles.pillTextActive]}>
               Matches {panelOpen.matches ? '▴' : '▾'}
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.pill, panelOpen.credits && styles.pillActive]}
+            onPress={() => togglePanel('credits')}
+          >
+            <Text style={[styles.pillText, panelOpen.credits && styles.pillTextActive]}>
+              Credits {panelOpen.credits ? '▴' : '▾'}
             </Text>
           </Pressable>
         </View>
@@ -463,6 +484,30 @@ export default function PlayerPickerScreen() {
             })}
           </ScrollView>
         </View>
+        )}
+
+        {/* Credits panel: single-select credits filter — hidden until its pill is open */}
+        {panelOpen.credits && (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chips}
+          >
+            {CREDITS_OPTIONS.map(opt => {
+              const active = creditsFilter === opt.key;
+              return (
+                <Pressable
+                  key={opt.key}
+                  style={[styles.chip, active && styles.chipActive]}
+                  onPress={() => setCreditsFilter(opt.key)}
+                >
+                  <Text style={[styles.chipText, active && styles.chipTextActive]}>
+                    {opt.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
         )}
 
         {/* Filter summary hint */}

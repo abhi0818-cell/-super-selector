@@ -1335,6 +1335,7 @@
           <span class="pf-pill" data-panel="pfPanelType">Type <i class="pf-pill-chev">▾</i></span>
           <span class="pf-pill" data-panel="pfPanelTeam">Teams <i class="pf-pill-chev">▾</i></span>
           <span class="pf-pill" data-panel="pfPanelMatch">Matches <i class="pf-pill-chev">▾</i></span>
+          <span class="pf-pill" data-panel="pfPanelCredits">Credits <i class="pf-pill-chev">▾</i></span>
         </div>
         <!-- Type panel: Role chips + OS — hidden until its pill is toggled on -->
         <div class="pf-panel" id="pfPanelType" style="display:none;">
@@ -1359,6 +1360,13 @@
         <div class="pf-panel" id="pfPanelMatch" style="display:none;">
           <div class="pf-match-row-wrap">
             <div class="pf-match-row" id="matchFilterChips"></div>
+          </div>
+        </div>
+        <!-- Credits panel — hidden until its pill is toggled on -->
+        <div class="pf-panel" id="pfPanelCredits" style="display:none;">
+          <div class="pf-row" id="pfCreditsRow">
+            <span class="pf-label">Credits</span>
+            <span id="creditsFilterChips" style="display:contents;"></span>
           </div>
         </div>
       </div>
@@ -2552,6 +2560,7 @@ p31,Sample Player,MI,bat,9.0,false
       adminSearch: '',
       adminTab: 'players',
       filterTeam: 'ALL',
+      filterCredits: 'ALL', // 'ALL' | 'LT8' | 'MID' | 'GT10'
       lastScorecard: null,
       matches: [],              // loaded from DB
       activeMatchId: null,      // currently-selected match for pool filter
@@ -3749,6 +3758,34 @@ p31,Sample Player,MI,bat,9.0,false
       }
     }
 
+    function renderCreditsFilter() {
+      const wrap = $('#creditsFilterChips');
+      if (!wrap) return;
+      const cur = state.filterCredits;
+      const opts = [
+        ['ALL',  'All'],
+        ['LT8',  'Less than 8'],
+        ['MID',  'Between 8 & 10'],
+        ['GT10', 'Greater than 10'],
+      ];
+
+      let html = '';
+      opts.forEach(([key, label]) => {
+        html += `<span class="pf-chip${cur===key?' active':''}" data-credits="${key}">${escapeHtml(label)}</span>`;
+      });
+      wrap.innerHTML = html;
+
+      // Wire click handlers — single-select (radio)
+      wrap.querySelectorAll('.pf-chip[data-credits]').forEach(chip => {
+        chip.addEventListener('click', () => {
+          state.filterCredits = chip.dataset.credits;
+          wrap.querySelectorAll('.pf-chip[data-credits]').forEach(c => c.classList.remove('active'));
+          chip.classList.add('active');
+          renderPool();
+        });
+      });
+    }
+
     // ─── TOURNAMENT SELECTOR ────────────────────────────────────────────────
 
     /**
@@ -4810,7 +4847,8 @@ p31,Sample Player,MI,bat,9.0,false
       state.matches       = [];
       state.activeMatchId = null;
       // Reset pool filters on tournament change
-      state.filterTeam = 'ALL';
+      state.filterTeam    = 'ALL';
+      state.filterCredits = 'ALL';
       state.filterOS   = false;
       state.selectedMatchIds = new Set();
       state.matchChipPage = 0;
@@ -7612,6 +7650,7 @@ p31,Sample Player,MI,bat,9.0,false
 
     function renderPool(){
       renderTeamFilter();
+      renderCreditsFilter();
       renderMatchSelector();
       const grid = $('#playerGrid');
       const term = state.search.trim().toLowerCase();
@@ -7635,6 +7674,9 @@ p31,Sample Player,MI,bat,9.0,false
       const list = PLAYERS.filter(p => {
         if (state.filterRole !== 'ALL' && p.role !== state.filterRole) return false;
         if (state.filterTeam !== 'ALL' && p.team !== state.filterTeam) return false;
+        if (state.filterCredits === 'LT8'  && !(p.credits < 8)) return false;
+        if (state.filterCredits === 'MID'  && !(p.credits >= 8 && p.credits <= 10)) return false;
+        if (state.filterCredits === 'GT10' && !(p.credits > 10)) return false;
         if (state.filterOS && !p.overseas) return false;
         if (matchTeams && !matchTeams.has(p.team)) return false;
         if (term && !(p.name.toLowerCase().includes(term) || p.team.toLowerCase().includes(term))) return false;
