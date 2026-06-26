@@ -3,7 +3,7 @@
  * Contests, SL squad stats, and match info all come from the DB.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation, CommonActions } from '@react-navigation/native';
+import { useNavigation, useFocusEffect, CommonActions } from '@react-navigation/native';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { RootTabParamList, ContestContext, PrivateLeague } from '../types';
 import { useAuthStore } from '../store/authStore';
@@ -70,16 +70,33 @@ interface SlSquadStats {
   transfersUsed:        number;
   totalTransfersAllowed: number | null;
   extraCost:            number;
+  // Best-performing scored match so far — mirrors web's Season tab "Best
+  // match" tile (renderPageSeasonTab in index.html): for each match the
+  // squad has scores recorded for, net = that match's points minus that
+  // match's transfer penalty; bestMatch* tracks the highest net.
+  bestMatchPoints:      number | null;
+  bestMatchLabel:       string | null;   // e.g. "M5"
   loading:              boolean;
 }
 
 function useSlSquadStats(contestId: string | null, userId: string | null): SlSquadStats {
   const [stats, setStats] = useState<SlSquadStats>({
     squadId: null, points: 0, rank: null,
-    transfersUsed: 0, totalTransfersAllowed: null, extraCost: 4, loading: false,
+    transfersUsed: 0, totalTransfersAllowed: null, extraCost: 4,
+    bestMatchPoints: null, bestMatchLabel: null, loading: false,
   });
 
-  useEffect(() => {
+  // useFocusEffect (not plain useEffect) — Home stays mounted in the tab
+  // navigator, so a plain mount-only effect would fetch once on cold start
+  // and then freeze forever: scores/transfers that get written later in the
+  // same app session (a match getting locked/scored while the app is still
+  // open) would never show up here, even though every other screen that
+  // re-fetches on its own mount (e.g. LeaderboardScreen) stays current. This
+  // was the actual cause of "Rank updates, Points stays stuck at 0" — Rank
+  // comes from leaderboardStore, which LeaderboardScreen refreshes each time
+  // it's opened; Points came from this hook's one-time snapshot.
+  useFocusEffect(
+    useCallback(() => {
     if (!contestId || !userId) {
       setStats(s => ({ ...s, squadId: null, loading: false }));
       return;
@@ -99,22 +116,53 @@ function useSlSquadStats(contestId: string | null, userId: string | null): SlSqu
         const squad = squads?.[0] ?? null;
         if (!squad || cancelled) { setStats(s => ({ ...s, loading: false })); return; }
 
-        // 2. Sum scored points
+        // 2. Scored points, grouped per match (needed for the Best Match tile;
+        // the season total is just the sum across all matches).
         const { data: scores } = await supabase
           .from('user_match_xi_scores')
-          .select('total_points')
+          .select('match_id, total_points')
           .eq('squad_id', squad.id);
 
-        const rawPts = (scores ?? []).reduce((s: number, r: any) => s + Number(r.total_points ?? 0), 0);
+        const pointsByMatch: Record<string, number> = {};
+        (scores ?? []).forEach((r: any) => {
+          pointsByMatch[r.match_id] = (pointsByMatch[r.match_id] ?? 0) + Number(r.total_points ?? 0);
+        });
+        const rawPts = Object.values(pointsByMatch).reduce((s, n) => s + n, 0);
 
-        // 3. Transfer penalties
+        // 3. Transfer penalties, also grouped per match for the Best Match net.
         const { data: transfers } = await supabase
           .from('user_transfers')
-          .select('points_deducted')
+          .select('match_id, points_deducted')
           .eq('squad_id', squad.id);
 
-        const penalty       = (transfers ?? []).reduce((s: number, t: any) => s + Number(t.points_deducted ?? 0), 0);
+        const penaltyByMatch: Record<string, number> = {};
+        (transfers ?? []).forEach((t: any) => {
+          penaltyByMatch[t.match_id] = (penaltyByMatch[t.match_id] ?? 0) + Number(t.points_deducted ?? 0);
+        });
+        const penalty       = Object.values(penaltyByMatch).reduce((s, n) => s + n, 0);
         const transfersUsed = transfers?.length ?? 0;
+
+        // 4. Best match — highest (points - penalty) among matches that have
+        // at least one scored row. No scored matches yet → both null, tile
+        // shows a placeholder.
+        let bestMatchId: string | null = null;
+        let bestNet = -Infinity;
+        Object.keys(pointsByMatch).forEach(matchId => {
+          const net = pointsByMatch[matchId] - (penaltyByMatch[matchId] ?? 0);
+          if (net > bestNet) { bestNet = net; bestMatchId = matchId; }
+        });
+
+        let bestMatchLabel: string | null = null;
+        let bestMatchPoints: number | null = null;
+        if (bestMatchId && !cancelled) {
+          bestMatchPoints = bestNet;
+          const { data: m } = await supabase
+            .from('matches')
+            .select('match_number')
+            .eq('id', bestMatchId)
+            .maybeSingle();
+          bestMatchLabel = m?.match_number != null ? `M${m.match_number}` : null;
+        }
 
         if (!cancelled) {
           setStats({
@@ -124,6 +172,8 @@ function useSlSquadStats(contestId: string | null, userId: string | null): SlSqu
             transfersUsed,
             totalTransfersAllowed: squad.total_transfers_allowed ?? null,
             extraCost:            squad.extra_transfer_point_cost ?? 4,
+            bestMatchPoints,
+            bestMatchLabel,
             loading:              false,
           });
         }
@@ -134,7 +184,8 @@ function useSlSquadStats(contestId: string | null, userId: string | null): SlSqu
     };
     load();
     return () => { cancelled = true; };
-  }, [contestId, userId]);
+    }, [contestId, userId])
+  );
 
   return stats;
 }
@@ -160,7 +211,11 @@ function useXIStatus(opts: {
   const { contestId, matchId, userId, carryForward } = opts;
   const [hasXI, setHasXI] = useState(false);
 
-  useEffect(() => {
+  // useFocusEffect for the same reason as useSlSquadStats above — Home stays
+  // mounted across tab switches, so a saved-XI status fetched once on cold
+  // start would never reflect a save that happened later in the session.
+  useFocusEffect(
+    useCallback(() => {
     if (!contestId || !matchId || !userId) { setHasXI(false); return; }
     let cancelled = false;
     (async () => {
@@ -196,7 +251,8 @@ function useXIStatus(opts: {
       }
     })();
     return () => { cancelled = true; };
-  }, [contestId, matchId, userId, carryForward]);
+    }, [contestId, matchId, userId, carryForward])
+  );
 
   return hasXI;
 }
@@ -431,16 +487,23 @@ function SLStatsGrid({ stats, rank }: { stats: SlSquadStats; rank: number | null
   if (stats.loading) {
     return <ActivityIndicator size="small" color={C.accent} style={{ marginVertical: 16 }} />;
   }
-  if (!stats.squadId) {
-    return (
-      <View style={styles.notJoined}>
-        <Text style={styles.notJoinedText}>You haven't joined this season yet</Text>
-      </View>
-    );
-  }
-  const freeLeft = stats.totalTransfersAllowed !== null
+  // No join gate — mirrors the web Season tab, which always shows the active
+  // screen and silently creates the squad on first XI save (see saveSlXiHandler
+  // in index.html / teamStore.ts's saveXI). Before that first save, squadId is
+  // null and these stats are just their zero/empty defaults — same shape a
+  // freshly-joined squad would show, so there's nothing to gate here.
+  //
+  // All four tiles below always render (previously the Transfers tile was
+  // hidden whenever totalTransfersAllowed came back null — which happens both
+  // pre-squad AND for genuinely-unlimited-transfer contests — leaving the grid
+  // looking incomplete). Each tile now falls back to its own placeholder
+  // instead of disappearing.
+  const hasSquad      = stats.squadId !== null;
+  const unlimitedXfer = hasSquad && stats.totalTransfersAllowed === null;
+  const freeLeft      = stats.totalTransfersAllowed !== null
     ? Math.max(0, stats.totalTransfersAllowed - stats.transfersUsed)
     : null;
+
   return (
     <View style={styles.slGrid}>
       <LinearGradient colors={G.statPts} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.slStatCard}>
@@ -451,17 +514,29 @@ function SLStatsGrid({ stats, rank }: { stats: SlSquadStats; rank: number | null
         <Text style={styles.slStatVal}>{rank != null ? `#${rank}` : '—'}</Text>
         <Text style={styles.slStatLabel}>Your Rank</Text>
       </LinearGradient>
-      {freeLeft !== null && (
-        <LinearGradient
-          colors={freeLeft === 0 ? ['rgba(192,57,43,0.18)', 'rgba(245,240,224,0.9)'] : G.statXfer}
-          start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.slStatCard}
-        >
+      <LinearGradient
+        colors={freeLeft === 0 ? ['rgba(192,57,43,0.18)', 'rgba(245,240,224,0.9)'] : G.statXfer}
+        start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.slStatCard}
+      >
+        {!hasSquad ? (
+          <Text style={styles.slStatVal}>—</Text>
+        ) : unlimitedXfer ? (
+          <Text style={styles.slStatVal}>{stats.transfersUsed}<Text style={styles.slStatSub}>/∞</Text></Text>
+        ) : (
           <Text style={[styles.slStatVal, freeLeft === 0 && { color: C.bad }]}>
             {freeLeft}<Text style={styles.slStatSub}>/{stats.totalTransfersAllowed}</Text>
           </Text>
-          <Text style={styles.slStatLabel}>Transfers</Text>
-        </LinearGradient>
-      )}
+        )}
+        <Text style={styles.slStatLabel}>Transfers</Text>
+      </LinearGradient>
+      <LinearGradient colors={G.statPts} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.slStatCard}>
+        <Text style={styles.slStatVal}>
+          {stats.bestMatchPoints != null ? stats.bestMatchPoints : '—'}
+        </Text>
+        <Text style={styles.slStatLabel}>
+          {stats.bestMatchLabel ? `Best · ${stats.bestMatchLabel}` : 'Best Match'}
+        </Text>
+      </LinearGradient>
     </View>
   );
 }
@@ -528,10 +603,16 @@ export default function HomeScreen() {
     if (selectedTournamentId) loadContests(selectedTournamentId);
   }, [selectedTournamentId]);
 
-  // Load leaderboard once SL contest is known
-  useEffect(() => {
-    if (slContest?.id) loadLeaderboard(slContest.id);
-  }, [slContest?.id]);
+  // Load leaderboard on every focus, not just once when the SL contest is
+  // first known — Home stays mounted across tab switches, so a mount-only
+  // fetch goes stale the moment a match gets scored later in the session.
+  // (Rank had been masking this: it only looked fresh because visiting the
+  // Leaderboard screen separately refreshes this same shared store.)
+  useFocusEffect(
+    useCallback(() => {
+      if (slContest?.id) loadLeaderboard(slContest.id);
+    }, [slContest?.id])
+  );
 
   const toggleTile = (tile: TileType) => setOpenTile(prev => prev === tile ? null : tile);
 
@@ -826,8 +907,10 @@ const styles = StyleSheet.create({
   slHeaderXfer:    { color: C.gold, fontSize: fontSize.sm, fontWeight: '800' },
   slHeaderXferWarn:{ color: '#C0392B' },
 
-  slGrid:    { flexDirection: 'row', gap: spacing.sm },
-  slStatCard: { flex: 1, alignItems: 'center', gap: 4, paddingVertical: spacing.md, borderRadius: radius.lg, borderWidth: 1, borderColor: 'rgba(0,0,0,0.06)', overflow: 'hidden' },
+  // Wraps to a 2x2 layout — now that there are 4 SL tiles (Points/Rank/
+  // Transfers/Best Match), a single row would squeeze each one too narrow.
+  slGrid:    { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  slStatCard: { flexBasis: '47%', flexGrow: 1, alignItems: 'center', gap: 4, paddingVertical: spacing.md, borderRadius: radius.lg, borderWidth: 1, borderColor: 'rgba(0,0,0,0.06)', overflow: 'hidden' },
   slStatVal:   { color: C.text, fontSize: fontSize.xl, fontWeight: '800' },
   slStatSub:   { color: C.muted, fontSize: fontSize.sm, fontWeight: '400' },
   slStatLabel: { color: C.muted, fontSize: fontSize.xs, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: '600' },
