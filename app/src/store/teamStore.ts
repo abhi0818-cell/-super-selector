@@ -649,7 +649,29 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     if (!user) return 'Not signed in';
 
     try {
-      // 0. Guard against saving into an already-locked match. Unlike web's
+      // 0a. Guard against matchId/contestId pointing at two different
+      // tournaments. matchId here comes from teamStore.currentMatchId, which
+      // is set by loadTournamentContext(tournamentId) for whichever tournament
+      // was *globally* selected at that time — it isn't re-derived from the
+      // contestId this save actually targets. If the user switches the
+      // tournament picker while activeContext still references a contest from
+      // the previous tournament (e.g. opening MyXI for a season-long contest
+      // right as the Home tournament selector flips to a different
+      // tournament), this function used to trust matchId blindly and write a
+      // real user_match_xi row for the wrong contest's squad against a match
+      // from a completely unrelated tournament — confirmed in production data:
+      // a season-long squad ended up with a full saved XI for an ENG-W vs
+      // SL-W (Women's T20 WC) match even though its contest belongs to a
+      // different tournament entirely. Re-resolve matchId against the
+      // contest's OWN tournament_id before trusting it for anything.
+      const { data: contestRow } = await supabase
+        .from('contests')
+        .select('tournament_id')
+        .eq('id', contestId)
+        .maybeSingle();
+      const contestTournamentId = contestRow?.tournament_id ?? null;
+
+      // 0b. Guard against saving into an already-locked match. Unlike web's
       // saveTargetMatch() (index.html), this save path had no lock-time check
       // at all — a stale screen (e.g. currentMatchId loaded before this match's
       // lock_time passed) could silently write a real user_teams/user_match_xi
@@ -662,8 +684,13 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         .eq('id', matchId)
         .maybeSingle();
 
-      if (targetMatch && isMatchLocked(targetMatch)) {
-        const tournamentId = targetMatch.tournament_id ?? get().tournamentId;
+      const wrongTournament = Boolean(
+        contestTournamentId && targetMatch?.tournament_id &&
+        targetMatch.tournament_id !== contestTournamentId
+      );
+
+      if (!targetMatch || wrongTournament || isMatchLocked(targetMatch)) {
+        const tournamentId = contestTournamentId ?? targetMatch?.tournament_id ?? get().tournamentId;
         let nextMatchId: string | null = null;
 
         if (tournamentId) {
@@ -677,7 +704,9 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         }
 
         if (!nextMatchId) {
-          return 'This match has already locked and there is no upcoming match to save against.';
+          return wrongTournament
+            ? 'Could not match this save to the right tournament. Please reopen Pick XI and try again.'
+            : 'This match has already locked and there is no upcoming match to save against.';
         }
         matchId = nextMatchId;
       }
