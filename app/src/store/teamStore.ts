@@ -490,6 +490,40 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         .maybeSingle();
 
       if (squad?.id) {
+        // ── Path A0: squad_draft_xi (web's decoupled "current pick" draft) ────
+        // Web's Save XI button (saveSlXiHandler in index.html) only writes to
+        // squad_draft_xi — it does NOT touch user_match_xi until an auto-lock
+        // copies the draft over at the match's start_time. So a web save made
+        // before lock time is otherwise invisible to mobile. Mirrors web's own
+        // load precedence in slLoadDraft: draft > lastLocked > mobile XI.
+        if (contestType !== 'daily') {
+          const { data: draftRow } = await supabase
+            .from('squad_draft_xi')
+            .select('player_ids, captain_id, vc_id')
+            .eq('squad_id', squad.id)
+            .maybeSingle();
+
+          if (draftRow?.player_ids?.length === 11) {
+            const restored: SelectedPlayer[] = draftRow.player_ids
+              .map((pid: string) => {
+                const player = players.find(p => p.id === pid);
+                if (!player) return null;
+                const captaincy: CaptaincyRole =
+                  pid === draftRow.captain_id ? 'captain'
+                  : pid === draftRow.vc_id ? 'vice_captain'
+                  : 'normal';
+                return { ...player, captaincy };
+              })
+              .filter(Boolean) as SelectedPlayer[];
+
+            if (restored.length > 0) {
+              set({ selected: restored, ...deriveStats(restored, format, budgetCapSuspended) });
+              console.log(`[teamStore] loadSavedXI: restored ${restored.length} players from squad_draft_xi (web draft)`);
+              return null; // success
+            }
+          }
+        }
+
         const { data: xiRows, error: xiErr } = await supabase
           .from('user_match_xi')
           .select('player_id, is_captain, is_vc, role')
@@ -765,6 +799,25 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         }
       } else {
         console.warn('[teamStore] saveXI: skipped user_teams mirror (XI incomplete or missing C/VC)');
+      }
+
+      // 3e. Mirror into squad_draft_xi (sl/private only) — keeps web's draft
+      // table in sync with a mobile save, mirroring db.js's saveDraft exactly.
+      // Without this, web's slLoadDraft (draft > lastLocked > mobile XI) could
+      // keep showing an older draft instead of what was just saved here.
+      // Best-effort: a failure here must not fail the save the user asked for.
+      if (contestType !== 'daily' && captainId && viceCaptainId) {
+        try {
+          await supabase.from('squad_draft_xi').upsert({
+            squad_id:   squadId,
+            player_ids: selected.map(p => p.id),
+            captain_id: captainId,
+            vc_id:      viceCaptainId,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'squad_id' });
+        } catch (draftErr) {
+          console.warn('[teamStore] squad_draft_xi mirror failed (non-fatal, web may show a stale draft):', draftErr);
+        }
       }
 
       return null; // success
