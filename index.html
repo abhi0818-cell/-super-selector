@@ -6114,7 +6114,12 @@ p31,Sample Player,MI,bat,9.0,false
           ? `Draft saved — no changes from last locked XI.${lockNote}`
           : `Draft saved — ${changes} pending transfer${changes !== 1 ? 's' : ''}.${lockNote}`) + boosterNote,
           3500);
-        // Jump to the Contest tab instead of leaving the user on the picker.
+        // Close the editor, then jump to the Contest tab — mirrors
+        // saveCurrentXI's daily-mode flow. Without this, #poolPanel stays
+        // open (its display style is untouched by switchPageTab/
+        // ensureEditTeamBtnVisible), so the next visit to My Team renders
+        // straight into Edit mode instead of the read-only Pick 11 view.
+        if ($('#poolPanel').style.display !== 'none') setPoolOpen(false);
         switchPageTab('contest');
       } catch (e) {
         toast('Save failed: ' + e.message, 5000);
