@@ -4380,12 +4380,22 @@ p31,Sample Player,MI,bat,9.0,false
                 if (!playerId) { toast('Select a player first.'); return; }
                 try {
                   await state.db.resolveUnmatchedAsAlias(uid, playerId, tid, rawName, src);
+                  // Cascade the now-linked player's stats into every user team's
+                  // totals for this match — matches were already played, and a
+                  // completed match is never re-polled, so this is the only way
+                  // the recovered points show up anywhere besides raw stats.
+                  if (matchId) {
+                    try {
+                      await computeAndSaveXIScoresForMatch(matchId);
+                      await computeAndSaveSLScoresForMatch(matchId);
+                    } catch (e) { console.warn('rescore after alias failed', e); }
+                  }
                   row.remove();
                   // Update badge
                   const remaining = panel.querySelectorAll('.unmatched-row').length;
                   if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
                   if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All names resolved.</span>';
-                  toast('Alias saved — next scraper run will auto-resolve this name.');
+                  toast('Alias saved and team scores updated for this match.');
                 } catch (err) { toast('Failed: ' + err.message); }
               });
 
@@ -4404,11 +4414,19 @@ p31,Sample Player,MI,bat,9.0,false
                     { name, playerId: pid || undefined, role, teamId, credits, overseas: os },
                     tid, matchId, rawName, src
                   );
+                  // Cascade into user team totals for this match — same reasoning
+                  // as the alias path above.
+                  if (matchId) {
+                    try {
+                      await computeAndSaveXIScoresForMatch(matchId);
+                      await computeAndSaveSLScoresForMatch(matchId);
+                    } catch (e) { console.warn('rescore after add-new-player failed', e); }
+                  }
                   row.remove();
                   const remaining = panel.querySelectorAll('.unmatched-row').length;
                   if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
                   if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All names resolved.</span>';
-                  toast(`Player added (${newId}) and alias saved.`);
+                  toast(`Player added (${newId}), alias saved, and team scores updated.`);
                 } catch (err) { toast('Failed: ' + err.message); }
               });
 
@@ -4597,11 +4615,21 @@ p31,Sample Player,MI,bat,9.0,false
                   const rules = rulesFor(fmt);
                   const points = 1 * (rules[FIELDING_RULE_KEY[field]] || 0);
                   await state.db.resolveFieldingIssueAsCredit(issue, playerId, points, !ambiguous);
+                  // Cascade into every user team's totals for this match — same
+                  // reasoning as the placeholder-stats credit flow below: a
+                  // completed match is never re-polled, so this is the only way
+                  // the recovered points actually show up anywhere besides raw stats.
+                  if (matchId) {
+                    try {
+                      await computeAndSaveXIScoresForMatch(matchId);
+                      await computeAndSaveSLScoresForMatch(matchId);
+                    } catch (e) { console.warn('rescore after fielding credit failed', e); }
+                  }
                   row.remove();
                   const remaining = panel.querySelectorAll('.fi-row').length;
                   if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
                   if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All fielding issues resolved.</span>';
-                  toast(ambiguous ? 'Credited for this match.' : 'Credited — alias saved for future runs.');
+                  toast(ambiguous ? 'Credited for this match — team scores updated.' : 'Credited, alias saved, and team scores updated.');
                 } catch (err) { toast('Failed: ' + err.message); }
               });
 
@@ -4643,11 +4671,17 @@ p31,Sample Player,MI,bat,9.0,false
                   // Treat like the "unmatched" case — save an alias so future
                   // scraper runs auto-credit this newly-added player by name.
                   await state.db.resolveFieldingIssueAsCredit(issue, inserted.id, points, true);
+                  if (matchId) {
+                    try {
+                      await computeAndSaveXIScoresForMatch(matchId);
+                      await computeAndSaveSLScoresForMatch(matchId);
+                    } catch (e) { console.warn('rescore after add+credit failed', e); }
+                  }
                   row.remove();
                   const remaining = panel.querySelectorAll('.fi-row').length;
                   if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
                   if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All fielding issues resolved.</span>';
-                  toast(`Added ${name} and credited.`);
+                  toast(`Added ${name}, credited, and team scores updated.`);
                 } catch (err) { toast('Failed: ' + err.message, 4000); }
               });
             });
