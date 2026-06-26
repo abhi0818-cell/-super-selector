@@ -105,16 +105,31 @@ function useSlSquadStats(contestId: string | null, userId: string | null): SlSqu
     const load = async () => {
       setStats(s => ({ ...s, loading: true }));
       try {
-        // 1. Squad row
-        const { data: squads } = await supabase
+        // 1. Squad row — total_transfers_allowed/extra_transfer_point_cost are
+        // NOT columns on user_squads (they live on `contests`, see
+        // migration_v3_season_transfer_cap.sql). Selecting them here against
+        // user_squads made this whole query error out silently (only `data`
+        // was destructured, not `error`), so `squads` came back null on every
+        // load — the real cause of "Points/Transfers/Best Match never
+        // populate," independent of any focus/staleness issue.
+        const { data: squads, error: squadErr } = await supabase
           .from('user_squads')
-          .select('id, total_transfers_allowed, extra_transfer_point_cost')
+          .select('id')
           .eq('contest_id', contestId)
           .eq('user_id', userId)
           .limit(1);
+        if (squadErr) console.warn('[useSlSquadStats] squad lookup failed:', squadErr);
 
         const squad = squads?.[0] ?? null;
         if (!squad || cancelled) { setStats(s => ({ ...s, loading: false })); return; }
+
+        // 1b. Transfer config lives on the contest, not the squad.
+        const { data: contestRow, error: contestErr } = await supabase
+          .from('contests')
+          .select('total_transfers_allowed, extra_transfer_point_cost')
+          .eq('id', contestId)
+          .maybeSingle();
+        if (contestErr) console.warn('[useSlSquadStats] contest lookup failed:', contestErr);
 
         // 2. Scored points, grouped per match (needed for the Best Match tile;
         // the season total is just the sum across all matches).
@@ -170,8 +185,8 @@ function useSlSquadStats(contestId: string | null, userId: string | null): SlSqu
             points:               rawPts - penalty,
             rank:                 null,   // populated via leaderboard store
             transfersUsed,
-            totalTransfersAllowed: squad.total_transfers_allowed ?? null,
-            extraCost:            squad.extra_transfer_point_cost ?? 4,
+            totalTransfersAllowed: contestRow?.total_transfers_allowed ?? null,
+            extraCost:            contestRow?.extra_transfer_point_cost ?? 4,
             bestMatchPoints,
             bestMatchLabel,
             loading:              false,
