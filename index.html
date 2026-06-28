@@ -7712,8 +7712,13 @@ p31,Sample Player,MI,bat,9.0,false
             if (m.away_team_id) matchTeams.add(m.away_team_id);
           }
         });
-      } else if (state.mode !== 'season_long') {
-        // Daily mode with no chip selected: fall back to active match filter
+      } else if (state.mode !== 'season_long' && state.filterTeam === 'ALL') {
+        // Daily mode with no match chip AND no explicit Team filter: default to
+        // the active match's two teams (convenient default for picking today's XI).
+        // Once the user picks an explicit Team filter, that's a clear signal they
+        // want to browse a team outside the active match — so this fallback must
+        // not also be in effect, or it'd silently AND against the team filter and
+        // return zero players whenever the chosen team isn't in the active match.
         const m = activeMatch();
         if (m) matchTeams = new Set([m.home_team_id, m.away_team_id]);
       }
