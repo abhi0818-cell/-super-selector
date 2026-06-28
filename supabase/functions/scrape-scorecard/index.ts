@@ -59,6 +59,15 @@ const COUNTRY_CODE_TO_SLUG: Record<string, string> = {
   uae: 'united-arab-emirates', ned: 'netherlands', nam: 'namibia', png: 'papua-new-guinea',
   can: 'canada', nep: 'nepal', oma: 'oman', qat: 'qatar', ken: 'kenya', hk: 'hong-kong',
   jer: 'jersey', ber: 'bermuda', tha: 'thailand', vct: 'vanuatu',
+  // Major League Cricket franchise codes (our DB short codes, per MLC SQUAD.csv)
+  // → CricketAddictor's full franchise-name slugs. Without these, discoverUrl()
+  // guesses URLs like "mny-vs-lakr-..." which never exist — CricketAddictor uses
+  // full franchise names (e.g. "mi-new-york-vs-los-angeles-knight-riders-...").
+  // This is why MLC scorecard discovery has failed outright rather than being a
+  // CricketAddictor coverage gap or outage; confirmed against live MLC 2026 URLs.
+  lakr: 'los-angeles-knight-riders', tsk: 'texas-super-kings',
+  sfu: 'san-francisco-unicorns', mny: 'mi-new-york',
+  so: 'seattle-orcas', wf: 'washington-freedom',
 }
 
 /** Expand a short team-code slug (e.g. "nz-w", "nz") into the full slug
