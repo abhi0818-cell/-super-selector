@@ -768,8 +768,11 @@
       /* ── Header ─────────────────────────────────────────────────── */
       header { padding: 10px 14px; gap: 8px; flex-wrap: wrap; }
       .brand { font-size: 15px; gap: 7px; }
-      /* Hide dev/internal pills, dividers and admin button on small screens */
-      #simBtn, #adminBtn, .hdr-divider { display: none !important; }
+      /* Hide dev/internal pills and dividers on small screens — but keep
+         #adminBtn visible: admins need it on mobile too, and now that header
+         wraps (flex-wrap above) it no longer forces any overflow. */
+      #simBtn, .hdr-divider { display: none !important; }
+      #adminBtn { font-size: 11px !important; padding: 4px 9px !important; }
       .controls { gap: 6px; flex-wrap: wrap; }
       /* Make the tournament picker readable */
       #headerTournamentWrap select { max-width: 160px; font-size: 13px; }
@@ -889,6 +892,11 @@
 
       /* ── Reset btn: keep it visible but small ───────────────────── */
       #resetBtn { display: inline-flex !important; font-size: 12px; padding: 5px 10px; }
+
+      /* ── Season header tiles: a bit tighter so the 2-col grid has room ── */
+      .season-metrics { gap: 8px; }
+      .season-metric { padding: 10px 12px; }
+      .season-metric-value { font-size: 19px; }
     }
   
     /* ═══ PITCH XI VIEW ═══════════════════════════════════════════════════════ */
@@ -8837,16 +8845,29 @@ p31,Sample Player,MI,bat,9.0,false
       // Squad for matching/captaincy comes from THIS match's own saved team —
       // not from state.selected, which may currently hold a different match's
       // in-progress edit (e.g. the next match, once saves redirect there).
+      //
+      // IMPORTANT: a missing saved XI must NOT stop the function here. The
+      // match's existence and completion status are facts about the match
+      // itself (from CricAPI/scraper), not about whether any user happened to
+      // pick a team for it. Previously this returned early with "No saved XI
+      // found" whenever nobody had saved a team — which silently skipped the
+      // scorecard fetch, the player_match_stats write, AND the completion-status
+      // update below, leaving matches like this permanently stuck un-finalized.
+      // squad is only used for cosmetic captaincy tagging (fromCricAPI's cap()
+      // already defaults to 'normal' for anyone not in it) and an XI-coverage
+      // diagnostic log further down — neither is required to fetch/save/finalize.
       const liveXI = await resolveSquadForMatch(localMatch?.id);
-      if (!liveXI) { toast('No saved XI found for this match — save a team first.'); return; }
-      const squad = liveXI.playerIds.map(pid => {
+      if (!liveXI) {
+        toast('No saved XI for this match — fetching full scorecard without personalized highlighting.', 4000);
+      }
+      const squad = liveXI ? liveXI.playerIds.map(pid => {
         const p = playerById(pid);
         return {
           id       : pid,
           name     : p?.name ?? '',
           captaincy: liveXI.captainId === pid ? 'captain' : liveXI.vcId === pid ? 'vice_captain' : 'normal',
         };
-      });
+      }) : [];
       stopSim();
       state.stats = {};
       render();
@@ -8961,8 +8982,10 @@ p31,Sample Player,MI,bat,9.0,false
               .catch(() => {});
           }
           // Diagnostic: this match's XI players with no data from the API
+          // (liveXI may be null when nobody saved a team for this match — that's
+          // fine, just means there's nothing to diagnose here.)
           const apiNames = new Set(players.map(p => p.name));
-          const xiWithoutData = liveXI.playerIds
+          const xiWithoutData = (liveXI?.playerIds ?? [])
             .map(playerById)
             .filter(p => p && ![...apiNames].some(n => findLocalByName(n)?.id === p.id))
             .map(p => p.name);
