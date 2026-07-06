@@ -411,7 +411,10 @@ interface ResolveResult { playerId: string | null; method: 'exact' | 'alias' | '
 // scraper_unmatched (where an admin could "Map" them to a player by mistake).
 const PLACEHOLDER_NAMES = new Set(['player not found'])
 function isPlaceholderName(name: string): boolean {
-  return PLACEHOLDER_NAMES.has(name.toLowerCase().trim())
+  const norm = name.toLowerCase().trim()
+  // "empty" is a broader/prefix check (not an exact-set entry) because this
+  // source sends variants like "empty &" rather than one fixed literal.
+  return PLACEHOLDER_NAMES.has(norm) || norm.startsWith('empty')
 }
 
 function resolvePlayerName(name: string, exactMap: Map<string, string>, aliasMap: Map<string, string>): ResolveResult {
