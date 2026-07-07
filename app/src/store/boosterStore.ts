@@ -143,20 +143,59 @@ export const BOOSTER_META: Record<string, BoosterMeta> = {
 
 const TRANSFER_BOOSTERS = new Set(['wildcard', 'free_hit']);
 
-// ─── Tile-boost helper ────────────────────────────────────────────────────────
+// ─── Tile-boost decor ─────────────────────────────────────────────────────────
 
-export function getActiveTileBoosts(
+export interface TileBoosterDecor {
+  /** Overrides the C/VC badge's letter (e.g. '⚡', '👥') — null = show the plain letter. */
+  badgeIcon: string | null;
+  /** Gold ring around the jersey (mirrors web's .pitch-jwrap.boosted). */
+  boosted: boolean;
+  /** Small badge bottom-left of the jersey — US Double only, so far. */
+  bottomLeftIcon: string | null;
+}
+
+/**
+ * Mirrors web's pitchBoosterDecor (index.html) exactly, id-by-id, instead of
+ * generically matching on `scope`. Only one booster is ever active per
+ * match, so this takes that single booster's id directly rather than a list.
+ *
+ * scope: 'all' was NOT a safe stand-in for this on its own — os_double and
+ * indian_double are also scope: 'all' (their contest-config grouping is
+ * still "applies across the whole squad"), but which INDIVIDUAL tiles they
+ * decorate depends on that player's overseas status, which a bare scope
+ * check has no way to see. Matching web's per-id logic here fixes that:
+ * previously every tile in the XI lit up for os_double/indian_double
+ * regardless of whether that specific player was actually overseas.
+ */
+export function getTileBoosterDecor(
   captaincy: CaptaincyRole,
-  activeBoosters: Booster[],
-): Booster[] {
-  return activeBoosters.filter(b => {
-    if (TRANSFER_BOOSTERS.has(b.id)) return false;
-    if (b.scope === 'all')                                          return true;
-    if (b.scope === 'captain'      && captaincy === 'captain')      return true;
-    if (b.scope === 'vice_captain' && captaincy === 'vice_captain') return true;
-    if (b.scope === 'captain_and_vc' && (captaincy === 'captain' || captaincy === 'vice_captain')) return true;
-    return false;
-  });
+  overseas: boolean,
+  boosterKey: string | null,
+): TileBoosterDecor {
+  if (boosterKey && TRANSFER_BOOSTERS.has(boosterKey)) boosterKey = null;
+
+  const isCap = captaincy === 'captain';
+  const isVc  = captaincy === 'vice_captain';
+
+  const capIcon = boosterKey === 'triple_captain' ? '⚡'
+                : boosterKey === 'dual_captain'   ? '👥' : null;
+
+  const badgeIcon =
+    isCap ? capIcon
+    : isVc ? (boosterKey === 'dual_captain' ? capIcon : null)
+    : null;
+
+  const boosted = !!(
+    (boosterKey === 'triple_captain' && isCap) ||
+    (boosterKey === 'dual_captain'   && (isCap || isVc)) ||
+    (boosterKey === 'os_double'      && overseas) ||
+    (boosterKey === 'indian_double'  && !overseas) ||
+    boosterKey === 'team_double'
+  );
+
+  const bottomLeftIcon = (boosterKey === 'indian_double' && !overseas) ? '🇺🇸' : null;
+
+  return { badgeIcon, boosted, bottomLeftIcon };
 }
 
 // ─── Low-level DB ops (mirror db.js's activateBooster / deactivateBooster) ────

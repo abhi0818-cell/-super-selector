@@ -15,7 +15,7 @@ import {
   View,
 } from 'react-native';
 import { CaptaincyRole, PlayerRole, SelectedPlayer } from '../types';
-import { useBoosterStore, getActiveTileBoosts } from '../store/boosterStore';
+import { useBoosterStore, getTileBoosterDecor } from '../store/boosterStore';
 import Jersey from './Jersey';
 
 // ─── Field palette ────────────────────────────────────────────────────────────
@@ -58,15 +58,15 @@ function PlayerTile({ player, onSetCaptaincy, onRemove, readOnly }: TileProps) {
 
   // Directly select the boosters array — Zustand tracks this reference properly.
   // activeBoosters() is a derived method and can miss reactivity in some builds.
-  const boosters   = useBoosterStore(s => s.boosters);
-  // Include 'pending' (staged-not-yet-saved) alongside 'active' so the pitch
-  // preview reflects whichever booster is currently effective — mirrors
-  // web's getEffectiveBoosterForMatch (pending-or-committed), used for the
-  // same "preview the multiplier before you save" purpose.
-  const tileBoosts = getActiveTileBoosts(
-    player.captaincy,
-    boosters.filter(b => b.status === 'active' || b.status === 'pending'),
-  );
+  const boosters = useBoosterStore(s => s.boosters);
+  // Only one booster is ever active per match — include 'pending' (staged-
+  // not-yet-saved) alongside 'active' so the pitch preview reflects whichever
+  // booster is currently effective, mirroring web's getEffectiveBoosterForMatch
+  // (pending-or-committed), for the same "preview before you save" purpose.
+  const boosterKey = boosters.find(b => b.status === 'active' || b.status === 'pending')?.id ?? null;
+  // Mirrors web's pitchBoosterDecor exactly — same badge-icon-swap / jersey-ring
+  // / bottom-left-badge rules, id by id, instead of a separate icon row.
+  const decor = getTileBoosterDecor(player.captaincy, player.overseas, boosterKey);
 
   // "Virat Kohli" → "V. Kohli"
   const words     = player.name.trim().split(' ');
@@ -89,37 +89,36 @@ function PlayerTile({ player, onSetCaptaincy, onRemove, readOnly }: TileProps) {
       style={({ pressed }) => [styles.tile, !readOnly && pressed && styles.tilePressed]}
       onPress={handlePress}
     >
-      {/* C / VC badge — top-right corner */}
-      {(isCap || isVC) && (
-        <View style={[styles.capBadge, isCap ? styles.capBadgeC : styles.capBadgeVC]}>
-          <Text style={styles.capBadgeText}>{isCap ? 'C' : 'VC'}</Text>
-        </View>
-      )}
+      <View style={styles.avatarWrap}>
+        {/* C / VC badge — top-right corner, letter swapped for a booster icon
+            (⚡ Triple Captain, 👥 Dual Captain) exactly like web's pitch-cbadge */}
+        {(isCap || isVC) && (
+          <View style={[styles.capBadge, isCap ? styles.capBadgeC : styles.capBadgeVC]}>
+            <Text style={[styles.capBadgeText, isCap ? styles.capBadgeTextC : styles.capBadgeTextVC]}>
+              {decor.badgeIcon ?? (isCap ? 'C' : 'VC')}
+            </Text>
+          </View>
+        )}
 
-      <View style={[styles.avatarWrap, (isCap || isVC) && styles.avatarWrapHighlight]}>
+        {/* US Double badge — bottom-left, mirrors web's .pitch-usd-badge */}
+        {decor.bottomLeftIcon && (
+          <View style={styles.bottomLeftBadge}>
+            <Text style={styles.bottomLeftBadgeText}>{decor.bottomLeftIcon}</Text>
+          </View>
+        )}
+
         <Jersey
           code={player.team}
           color1={player.teamColor}
           color2={player.teamColor2}
           size={32}
           variant="pitch"
-          boosted={tileBoosts.length > 0}
+          boosted={decor.boosted}
         />
       </View>
 
       <Text style={styles.tileName} numberOfLines={1}>{shortName}</Text>
       <Text style={styles.tileTeam} numberOfLines={1}>{player.team}</Text>
-
-      {/* Booster icon badges — one per active booster that applies to this tile */}
-      {tileBoosts.length > 0 && (
-        <View style={styles.boostRow}>
-          {tileBoosts.map(b => (
-            <View key={b.id} style={styles.boostBadge}>
-              <Text style={styles.boostIcon}>{b.icon}</Text>
-            </View>
-          ))}
-        </View>
-      )}
     </Pressable>
   );
 }
@@ -309,7 +308,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
   },
 
-  // Individual tile — fixed width so it never inflates to fill the row
+  // Individual tile — no card/border, matches web's borderless floating
+  // token (.pitch-player): just the jersey + name sitting on the green field.
   tile: {
     width:           56,
     alignItems:      'center',
@@ -317,83 +317,83 @@ const styles = StyleSheet.create({
     gap:             2,
     paddingVertical: 5,
     paddingHorizontal: 2,
-    backgroundColor: 'rgba(255,255,255,0.9)',
-    borderRadius:    10,
-    borderWidth:     1,
-    borderColor:     'rgba(0,0,0,0.1)',
     position:        'relative',
   },
   tilePressed: {
-    backgroundColor: 'rgba(201,168,76,0.2)',
-    borderColor:     'rgba(201,168,76,0.5)',
-    transform:       [{ scale: 0.96 }],
+    opacity:   0.75,
+    transform: [{ scale: 0.96 }],
   },
 
-  // Jersey wrapper — highlight ring shows for the active C/VC tile
+  // Jersey wrapper — relatively positioned so the C/VC and US-Double badges
+  // can sit just outside its corners (mirrors web's .pitch-jwrap).
   avatarWrap: {
-    padding:      2,
-    borderRadius: 6,
-  },
-  avatarWrapHighlight: {
-    borderWidth:     2,
-    borderColor:     'rgba(255,255,255,0.65)',
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    position: 'relative',
   },
 
-  // Name / team text
+  // Name / team text — white with a shadow for legibility directly against
+  // the green field, since there's no card background behind it anymore
+  // (mirrors web's .pitch-nametag).
   tileName: {
-    color:         '#1C1F26',
-    fontSize:      9,
-    fontWeight:    '700',
-    textAlign:     'center',
-    letterSpacing: 0.2,
+    color:           '#ffffff',
+    fontSize:        9,
+    fontWeight:      '700',
+    textAlign:       'center',
+    letterSpacing:   0.2,
+    textShadowColor: 'rgba(0,0,0,0.85)',
+    textShadowOffset:{ width: 0, height: 1 },
+    textShadowRadius: 3,
   },
   tileTeam: {
-    color:         'rgba(28,31,38,0.55)',
-    fontSize:      8,
-    textAlign:     'center',
-    letterSpacing: 0.3,
-    fontWeight:    '500',
+    color:           'rgba(255,255,255,0.85)',
+    fontSize:        8,
+    textAlign:       'center',
+    letterSpacing:   0.3,
+    fontWeight:      '500',
+    textShadowColor: 'rgba(0,0,0,0.85)',
+    textShadowOffset:{ width: 0, height: 1 },
+    textShadowRadius: 3,
   },
 
-  // Booster icon row — sits at the bottom of the tile
-  boostRow: {
-    flexDirection:  'row',
-    gap:             2,
-    justifyContent: 'center',
-    flexWrap:        'wrap',
-    marginTop:       1,
-  },
-  boostBadge: {
-    backgroundColor: 'rgba(255,255,255,0.7)',
-    borderRadius:     4,
-    paddingHorizontal: 2,
-    paddingVertical:   0,
-    borderWidth:      1,
-    borderColor:      'rgba(0,0,0,0.1)',
-  },
-  boostIcon: {
-    fontSize:   9,
-    lineHeight: 13,
-  },
-
-  // C / VC badge
+  // C / VC badge — top-right corner of the jersey, letter swapped for a
+  // booster icon when one applies (see getTileBoosterDecor). Mirrors web's
+  // .pitch-cbadge, including its slightly-protruding offset.
   capBadge: {
     position:       'absolute',
-    top:             3,
-    right:           3,
+    top:             -5,
+    right:           -6,
     width:           16,
     height:          16,
     borderRadius:    8,
     alignItems:      'center',
     justifyContent:  'center',
     zIndex:          10,
+    shadowColor:     '#000',
+    shadowOffset:    { width: 0, height: 1 },
+    shadowOpacity:   0.5,
+    shadowRadius:    2,
+    elevation:       3,
   },
   capBadgeC:  { backgroundColor: '#C9A84C' },
-  capBadgeVC: { backgroundColor: '#7A7060' },
+  capBadgeVC: { backgroundColor: '#ffffffee' },
   capBadgeText: {
-    color:      '#1C1F26',
     fontSize:   8,
     fontWeight: '900',
+  },
+  capBadgeTextC:  { color: '#1C1F26' },
+  capBadgeTextVC: { color: '#7a5500' },
+
+  // US Double badge — bottom-left of the jersey, mirrors web's .pitch-usd-badge.
+  bottomLeftBadge: {
+    position:       'absolute',
+    bottom:          -2,
+    left:            -6,
+    width:           16,
+    height:          16,
+    alignItems:      'center',
+    justifyContent:  'center',
+    zIndex:          10,
+  },
+  bottomLeftBadgeText: {
+    fontSize: 10,
   },
 });
