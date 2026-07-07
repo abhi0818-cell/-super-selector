@@ -2340,10 +2340,32 @@ export function createDb(cfg = {}) {
       // same RLS pitfall migration_v30 fixed for user_transfers.
       const { data: boosterRows } = await sb
         .from('user_booster_activations')
-        .select('squad_id')
+        .select('squad_id, match_id')
         .in('squad_id', squadIds);
+
+      // A booster is committed to the DB the moment a squad hits Save — which
+      // can be well before the match it applies to actually starts. Showing
+      // it on this PUBLIC leaderboard before that match locks leaks strategy
+      // to opponents (e.g. "they've already burned Triple Captain for next
+      // week"), so — same as pending transfers — an activation only counts
+      // once its match has actually locked (coalesce(lock_time, start_time) <= now()).
+      const boosterMatchIds = [...new Set((boosterRows || []).map(b => b.match_id).filter(Boolean))];
+      const lockedMatchIds = new Set();
+      if (boosterMatchIds.length) {
+        const { data: matchRows } = await sb
+          .from('matches')
+          .select('id, lock_time, start_time')
+          .in('id', boosterMatchIds);
+        const now = Date.now();
+        (matchRows || []).forEach(m => {
+          const lockAt = m.lock_time ?? m.start_time ?? null;
+          if (lockAt && new Date(lockAt).getTime() <= now) lockedMatchIds.add(m.id);
+        });
+      }
+
       const boosterCountBySquad = {};
       (boosterRows || []).forEach(b => {
+        if (!lockedMatchIds.has(b.match_id)) return; // match hasn't locked yet — don't count
         boosterCountBySquad[b.squad_id] = (boosterCountBySquad[b.squad_id] || 0) + 1;
       });
 

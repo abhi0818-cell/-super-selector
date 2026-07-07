@@ -353,7 +353,9 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
 function UserHighlight({ entry, showSlCols }: { entry: LeaderboardEntry | undefined; showSlCols: boolean }) {
   if (!entry) return null;
   const boosterLabel = entry.boosterAllowed ? `${entry.boosterCount ?? 0}/${entry.boosterAllowed}` : '—';
-  const xferLabel     = `${entry.transferCount ?? 0}/${entry.transfersAllowed ?? '∞'}`;
+  const xferLabel     = entry.transfersAllowed == null
+    ? '∞'
+    : `${Math.max(0, entry.transfersAllowed - (entry.transferCount ?? 0))}/${entry.transfersAllowed}`;
   return (
     <LinearGradient
       colors={G.highlight}
@@ -391,7 +393,9 @@ function EntryRow({ entry, onPress, showSlCols }: EntryRowProps) {
   const isTop3    = entry.rank <= 3;
   const podGrad   = podiumGrad(entry.rank);
   const boosterLabel = entry.boosterAllowed ? `${entry.boosterCount ?? 0}/${entry.boosterAllowed}` : '—';
-  const xferLabel     = `${entry.transferCount ?? 0}/${entry.transfersAllowed ?? '∞'}`;
+  const xferLabel     = entry.transfersAllowed == null
+    ? '∞'
+    : `${Math.max(0, entry.transfersAllowed - (entry.transferCount ?? 0))}/${entry.transfersAllowed}`;
 
   const inner = (
     <View style={styles.rowInner}>

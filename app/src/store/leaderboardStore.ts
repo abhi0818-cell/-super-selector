@@ -11,6 +11,7 @@
 
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
+import { isMatchLocked } from '../lib/matchLock';
 
 // ─── Public type ──────────────────────────────────────────────────────────────
 
@@ -104,7 +105,7 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
       // so it's safe to always fetch rather than branch on contest type here.
       const { data: contestRow } = await supabase
         .from('contests')
-        .select('available_boosters, total_transfers_allowed')
+        .select('tournament_id, available_boosters, total_transfers_allowed')
         .eq('id', contestId)
         .maybeSingle();
       const boosterAllowed = contestRow?.available_boosters
@@ -115,10 +116,31 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
 
       const { data: boosterRows } = await supabase
         .from('user_booster_activations')
-        .select('squad_id')
+        .select('squad_id, match_id')
         .in('squad_id', squadIds);
+
+      // A booster activation is committed to the DB as soon as the squad
+      // hits Save (mirrors the "save is the lock" model), which can be well
+      // before the match it applies to actually starts. Showing it on a
+      // PUBLIC leaderboard before that match locks leaks strategy to
+      // opponents (e.g. "they've already burned Triple Captain for next
+      // week") — so, like pending transfers, an activation only counts here
+      // once its match has actually locked.
+      const boosterMatchIds = [...new Set((boosterRows ?? []).map((b: any) => b.match_id).filter(Boolean))];
+      const lockedMatchIds = new Set<string>();
+      if (boosterMatchIds.length) {
+        const { data: matchRows } = await supabase
+          .from('matches')
+          .select('id, lock_time, start_time, status')
+          .in('id', boosterMatchIds);
+        (matchRows ?? []).forEach((m: any) => {
+          if (isMatchLocked(m)) lockedMatchIds.add(m.id);
+        });
+      }
+
       const boosterCountBySquad: Record<string, number> = {};
       (boosterRows ?? []).forEach((b: any) => {
+        if (!lockedMatchIds.has(b.match_id)) return; // match hasn't locked yet — don't count
         boosterCountBySquad[b.squad_id] = (boosterCountBySquad[b.squad_id] ?? 0) + 1;
       });
 

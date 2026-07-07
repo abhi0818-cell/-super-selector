@@ -13585,7 +13585,7 @@ p31,Sample Player,MI,bat,9.0,false
             <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">#</div>
             <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">Squad <span style="font-size:9px;">(tap to expand)</span></div>
             <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Booster</div>
-            <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Xfers</div>
+            <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Xfers Left</div>
             <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Points</div>
             ${rows.map((r, i) => {
               const isMe = r.squadId === state.sl?.squad?.id;
@@ -13597,7 +13597,11 @@ p31,Sample Player,MI,bat,9.0,false
               const key = 'sl_' + (entityId || i);
               const detailId = `inlineLbDetail_${key.replace(/[^a-zA-Z0-9]/g, '')}`;
               const boosterLabel = r.boosterAllowed ? `${r.boosterCount ?? 0}/${r.boosterAllowed}` : '—';
-              const xferLabel    = `${r.transferCount ?? 0}/${r.transfersAllowed ?? '∞'}`;
+              // Show transfers LEFT, not used — mirrors the Transfers-left
+              // stat on the My XI tab (#slXiStatXfers) instead of a raw used count.
+              const xferLabel    = r.transfersAllowed == null
+                ? '∞'
+                : `${Math.max(0, r.transfersAllowed - (r.transferCount ?? 0))}/${r.transfersAllowed}`;
               return `<div style="padding:8px 10px;font-size:12px;${bg}border-bottom:1px solid var(--border);">${rank}</div>
                 <div class="inline-lb-row" data-kind="sl" data-entity="${entityId || ''}" data-key="${key}" data-detail="${detailId}" style="cursor:pointer;padding:8px 10px;font-size:12px;font-weight:${isMe?'600':'400'};${bg}border-bottom:1px solid var(--border);">
                   ${isMe ? `<span style="color:var(--accent);">★</span> ` : ''}${squadName}${sub} <span class="inline-lb-caret" style="font-size:10px;color:var(--muted);">▾</span>
