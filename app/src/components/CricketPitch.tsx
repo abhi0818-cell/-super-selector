@@ -14,9 +14,18 @@ import {
   Text,
   View,
 } from 'react-native';
-import { CaptaincyRole, PlayerRole, SelectedPlayer } from '../types';
+import { CaptaincyRole, MatchFormat, PlayerRole, SelectedPlayer } from '../types';
 import { useBoosterStore, getTileBoosterDecor } from '../store/boosterStore';
+import { useTeamStore, RULES } from '../store/teamStore';
 import Jersey from './Jersey';
+
+// True only when this tournament/format actually enforces an overseas cap —
+// mirrors web's osCapApplies(). A cap of 0 or 11+ means "no restriction", so
+// the overseas ✈️ badge on pitch jerseys is only worth showing when it does.
+function osCapApplies(format: MatchFormat): boolean {
+  const cap = RULES.maxOverseas[format] ?? 11;
+  return cap > 0 && cap < 11;
+}
 
 // ─── Field palette ────────────────────────────────────────────────────────────
 
@@ -68,6 +77,13 @@ function PlayerTile({ player, onSetCaptaincy, onRemove, readOnly }: TileProps) {
   // / bottom-left-badge rules, id by id, instead of a separate icon row.
   const decor = getTileBoosterDecor(player.captaincy, player.overseas, boosterKey);
 
+  // Overseas ✈️ badge, top-left of the jersey — mirrors web's .pitch-os-badge.
+  // Mobile never rendered this at all, so there was no way to SEE which
+  // players os_double/indian_double actually applied to (they just looked
+  // like every tile lit up the same, since nothing distinguished them).
+  const format = useTeamStore(s => s.format);
+  const showOsBadge = player.overseas && osCapApplies(format);
+
   // "Virat Kohli" → "V. Kohli"
   const words     = player.name.trim().split(' ');
   const shortName = words.length > 1
@@ -97,6 +113,13 @@ function PlayerTile({ player, onSetCaptaincy, onRemove, readOnly }: TileProps) {
             <Text style={[styles.capBadgeText, isCap ? styles.capBadgeTextC : styles.capBadgeTextVC]}>
               {decor.badgeIcon ?? (isCap ? 'C' : 'VC')}
             </Text>
+          </View>
+        )}
+
+        {/* Overseas badge — top-left, mirrors web's .pitch-os-badge */}
+        {showOsBadge && (
+          <View style={styles.osBadge}>
+            <Text style={styles.osBadgeText}>✈️</Text>
           </View>
         )}
 
@@ -381,6 +404,21 @@ const styles = StyleSheet.create({
   },
   capBadgeTextC:  { color: '#1C1F26' },
   capBadgeTextVC: { color: '#7a5500' },
+
+  // Overseas badge — top-left of the jersey, mirrors web's .pitch-os-badge.
+  osBadge: {
+    position:       'absolute',
+    top:             -5,
+    left:            -6,
+    width:           16,
+    height:          16,
+    alignItems:      'center',
+    justifyContent:  'center',
+    zIndex:          10,
+  },
+  osBadgeText: {
+    fontSize: 10,
+  },
 
   // US Double badge — bottom-left of the jersey, mirrors web's .pitch-usd-badge.
   bottomLeftBadge: {
