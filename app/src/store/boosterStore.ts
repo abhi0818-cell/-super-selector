@@ -44,7 +44,7 @@ import {
 //             match (transfer boosters on a transfers-unlimited match)
 // 'available' = selectable, nothing chosen
 export type BoosterStatus = 'available' | 'pending' | 'active' | 'used';
-export type BoosterScope  = 'captain' | 'vice_captain' | 'all';
+export type BoosterScope  = 'captain' | 'vice_captain' | 'captain_and_vc' | 'all';
 export type BoosterSlot   = 'captain' | 'vice_captain' | 'squad' | 'transfers';
 
 export interface Booster {
@@ -82,7 +82,11 @@ export const BOOSTER_META: Record<string, BoosterMeta> = {
     icon:  '👥',
     name:  'Dual Captain',
     desc:  "Both Captain and Vice-Captain score 2× their base points for one match. Use once per season.",
-    scope: 'vice_captain',
+    // Applies to BOTH the Captain and Vice-Captain tiles — mirrors web's
+    // pitchBoosterDecor, which sets `boosted` for `(isCap || isVc)` when
+    // dual_captain is active. 'vice_captain' scope only lit up the VC tile
+    // on mobile, which was the mobile-only rendering bug.
+    scope: 'captain_and_vc',
     slot:  'vice_captain',
   },
   team_double: {
@@ -150,6 +154,7 @@ export function getActiveTileBoosts(
     if (b.scope === 'all')                                          return true;
     if (b.scope === 'captain'      && captaincy === 'captain')      return true;
     if (b.scope === 'vice_captain' && captaincy === 'vice_captain') return true;
+    if (b.scope === 'captain_and_vc' && (captaincy === 'captain' || captaincy === 'vice_captain')) return true;
     return false;
   });
 }
