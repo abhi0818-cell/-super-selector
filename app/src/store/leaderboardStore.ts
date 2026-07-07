@@ -86,17 +86,17 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
 
       // Step 2b: fetch transfer penalties and subtract from totals; also
       // count rows per squad for the SL "Xfers used/allowed" column (mirrors
-      // db.js's getLeaderboardSL).
+      // db.js's getLeaderboardSL). match_id is needed to gate the COUNT on
+      // lock status below (points penalty is left as-is — not what was
+      // reported).
       const { data: transfers } = await supabase
         .from('user_transfers')
-        .select('squad_id, points_deducted')
+        .select('squad_id, match_id, points_deducted')
         .in('squad_id', squadIds);
 
       const penaltyBySquad: Record<string, number> = {};
-      const transferCountBySquad: Record<string, number> = {};
       (transfers ?? []).forEach((t: any) => {
-        penaltyBySquad[t.squad_id]      = (penaltyBySquad[t.squad_id] ?? 0) + Number(t.points_deducted ?? 0);
-        transferCountBySquad[t.squad_id] = (transferCountBySquad[t.squad_id] ?? 0) + 1;
+        penaltyBySquad[t.squad_id] = (penaltyBySquad[t.squad_id] ?? 0) + Number(t.points_deducted ?? 0);
       });
 
       // Step 2c: SL/private-league-only columns — contest-level booster/transfer
@@ -119,20 +119,23 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
         .select('squad_id, match_id')
         .in('squad_id', squadIds);
 
-      // A booster activation is committed to the DB as soon as the squad
-      // hits Save (mirrors the "save is the lock" model), which can be well
-      // before the match it applies to actually starts. Showing it on a
-      // PUBLIC leaderboard before that match locks leaks strategy to
-      // opponents (e.g. "they've already burned Triple Captain for next
-      // week") — so, like pending transfers, an activation only counts here
-      // once its match has actually locked.
-      const boosterMatchIds = [...new Set((boosterRows ?? []).map((b: any) => b.match_id).filter(Boolean))];
+      // Both a booster activation AND a transfer are committed to the DB as
+      // soon as a squad hits Save (mirrors the "save is the lock" model),
+      // which can be well before the match they apply to actually starts.
+      // Showing either on this PUBLIC leaderboard before that match locks
+      // leaks strategy to opponents (e.g. "they've already burned Triple
+      // Captain for next week" or "they just made 3 transfers") — so both
+      // only count here once their match has actually locked.
+      const candidateMatchIds = [
+        ...(boosterRows ?? []).map((b: any) => b.match_id),
+        ...(transfers ?? []).map((t: any) => t.match_id),
+      ].filter(Boolean);
       const lockedMatchIds = new Set<string>();
-      if (boosterMatchIds.length) {
+      if (candidateMatchIds.length) {
         const { data: matchRows } = await supabase
           .from('matches')
           .select('id, lock_time, start_time, status')
-          .in('id', boosterMatchIds);
+          .in('id', [...new Set(candidateMatchIds)]);
         (matchRows ?? []).forEach((m: any) => {
           if (isMatchLocked(m)) lockedMatchIds.add(m.id);
         });
@@ -142,6 +145,12 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
       (boosterRows ?? []).forEach((b: any) => {
         if (!lockedMatchIds.has(b.match_id)) return; // match hasn't locked yet — don't count
         boosterCountBySquad[b.squad_id] = (boosterCountBySquad[b.squad_id] ?? 0) + 1;
+      });
+
+      const transferCountBySquad: Record<string, number> = {};
+      (transfers ?? []).forEach((t: any) => {
+        if (!lockedMatchIds.has(t.match_id)) return; // match hasn't locked yet — don't count
+        transferCountBySquad[t.squad_id] = (transferCountBySquad[t.squad_id] ?? 0) + 1;
       });
 
       // Step 3: fetch leaderboard names from profiles (team_name preferred,

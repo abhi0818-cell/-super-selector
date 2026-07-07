@@ -2370,10 +2370,12 @@ export function createDb(cfg = {}) {
         .in('squad_id', squadIds);
       if (scErr) throw scErr;
 
-      // Fetch transfer penalties for all squads in this contest
+      // Fetch transfer penalties for all squads in this contest. match_id is
+      // needed below to gate the "Xfers used" COUNT on lock status (points
+      // penalty itself is left as-is — not what was reported).
       const { data: xferRows } = await sb
         .from('user_transfers')
-        .select('squad_id, points_deducted')
+        .select('squad_id, match_id, points_deducted')
         .in('squad_id', squadIds);
 
       const penaltyBySquad = {};
@@ -2405,19 +2407,23 @@ export function createDb(cfg = {}) {
         .select('squad_id, match_id')
         .in('squad_id', squadIds);
 
-      // A booster is committed to the DB the moment a squad hits Save — which
-      // can be well before the match it applies to actually starts. Showing
-      // it on this PUBLIC leaderboard before that match locks leaks strategy
-      // to opponents (e.g. "they've already burned Triple Captain for next
-      // week"), so — same as pending transfers — an activation only counts
-      // once its match has actually locked (coalesce(lock_time, start_time) <= now()).
-      const boosterMatchIds = [...new Set((boosterRows || []).map(b => b.match_id).filter(Boolean))];
+      // Both a booster activation AND a transfer are committed to the DB as
+      // soon as a squad hits Save — which can be well before the match they
+      // apply to actually starts. Showing either on this PUBLIC leaderboard
+      // before that match locks leaks strategy to opponents (e.g. "they've
+      // already burned Triple Captain for next week" or "they just made 3
+      // transfers"), so both only count once their match has actually locked
+      // (coalesce(lock_time, start_time) <= now()).
+      const candidateMatchIds = [
+        ...(boosterRows || []).map(b => b.match_id),
+        ...(xferRows    || []).map(t => t.match_id),
+      ].filter(Boolean);
       const lockedMatchIds = new Set();
-      if (boosterMatchIds.length) {
+      if (candidateMatchIds.length) {
         const { data: matchRows } = await sb
           .from('matches')
           .select('id, lock_time, start_time')
-          .in('id', boosterMatchIds);
+          .in('id', [...new Set(candidateMatchIds)]);
         const now = Date.now();
         (matchRows || []).forEach(m => {
           const lockAt = m.lock_time ?? m.start_time ?? null;
@@ -2452,7 +2458,9 @@ export function createDb(cfg = {}) {
           // Net points = raw fantasy points minus transfer penalties
           totalPoints : (pointsBySquad[s.id] || 0) - (penaltyBySquad[s.id] || 0),
           matchCount  : matchesBySquad[s.id]?.size  || 0,
-          transferCount   : (xferRows || []).filter(t => t.squad_id === s.id).length,
+          // Only counts transfers whose match has actually locked — see
+          // lockedMatchIds comment above.
+          transferCount   : (xferRows || []).filter(t => t.squad_id === s.id && lockedMatchIds.has(t.match_id)).length,
           transfersAllowed,
           boosterCount    : boosterCountBySquad[s.id] || 0,
           boosterAllowed,
