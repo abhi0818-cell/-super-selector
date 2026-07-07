@@ -241,6 +241,46 @@ function phaseMatchIdSet(
   );
 }
 
+// ─── Transfer usage for display (mirrors the tail of checkAndLogTransfers) ─────
+
+/**
+ * "Transfers used / cap" for the info-strip pill on MyXIScreen. Counts actual
+ * PLAYER SWAPS logged in `user_transfers` (phase-scoped), exactly like the
+ * seasonXferCount tally at the end of checkAndLogTransfers — NOT rows in
+ * user_match_xi, which has 11 rows per match (one per XI player) and so wildly
+ * overcounts if used as a transfer tally.
+ */
+export async function getTransferUsage(
+  squadId: string,
+  currentMatchId: string,
+  config: ContestTransferConfig,
+  allMatches: MatchLite[],
+): Promise<{ used: number; cap: number | null; phase: SeasonPhase }> {
+  const startMatchNumber = config.start_match_number         ?? null;
+  const playoffStartMN   = config.playoff_start_match_number ?? null;
+
+  const saveMatchNum = allMatches.find(m => m.id === currentMatchId)?.match_number ?? null;
+  const phase = detectPhase(saveMatchNum, startMatchNumber, playoffStartMN);
+  const activeCap = phase === 'playoff'
+    ? (config.playoff_transfers_allowed ?? null)
+    : phase === 'regular'
+      ? (config.total_transfers_allowed ?? null)
+      : null;
+  const phaseIds = phaseMatchIdSet(phase, allMatches, startMatchNumber, playoffStartMN);
+
+  let countQuery = supabase
+    .from('user_transfers')
+    .select('id', { count: 'exact', head: true })
+    .eq('squad_id', squadId);
+  if (phaseIds) {
+    const ids = [...phaseIds];
+    countQuery = countQuery.in('match_id', ids.length ? ids : ['__none__']);
+  }
+  const { count } = await countQuery;
+
+  return { used: count ?? 0, cap: activeCap, phase };
+}
+
 // ─── Cap check + transfer logging (mirrors db.js saveMatchXI's transfer block) ──
 
 export interface CheckAndLogTransfersOpts {

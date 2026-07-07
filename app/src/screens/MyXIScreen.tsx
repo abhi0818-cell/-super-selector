@@ -30,6 +30,7 @@ import RoleStats from '../components/RoleStats';
 import ContestPicker from '../components/ContestPicker';
 import PlayerPickerScreen from './PlayerPickerScreen';
 import { fontSize, radius, spacing, shadow } from '../theme';
+import { fetchContestTransferConfig, fetchTournamentMatches, getTransferUsage } from '../lib/transferCap';
 
 type Props = BottomTabScreenProps<RootTabParamList, 'MyXI'>;
 
@@ -197,14 +198,9 @@ export default function MyXIScreen({ route }: Props) {
   async function loadTransfers() {
     if (!activeContext) return;
     try {
-      // Fetch contest config
-      const { data: contest } = await supabase
-        .from('contests')
-        .select('total_transfers_allowed, free_transfers_per_match')
-        .eq('id', activeContext.contestId)
-        .single();
+      // Fetch contest config (mirrors web's transfer-cap config lookup)
+      const { config, tournamentId } = await fetchContestTransferConfig(activeContext.contestId);
 
-      // Count transfers used so far (user_match_xi rows for past matches in this squad)
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
@@ -221,28 +217,25 @@ export default function MyXIScreen({ route }: Props) {
       }
 
       if (!squad) {
-        setTransferInfo({ used: 0, total: contest?.total_transfers_allowed ?? null, free: contest?.free_transfers_per_match ?? 1 });
+        setTransferInfo({ used: 0, total: config.total_transfers_allowed, free: config.free_transfers_per_match ?? 1 });
         return;
       }
 
       // Track squadId so BoostersBar can activate / deactivate boosters
       setSquadId(squad.id);
 
-      // Count distinct match_ids with saved XI (each unique match = 1 transfer used except the first)
-      const { count } = await supabase
-        .from('user_match_xi')
-        .select('match_id', { count: 'exact', head: true })
-        .eq('squad_id', squad.id);
-
-      const matchesSaved = count ?? 0;
-      // Transfers used = matches saved - 1 (first pick is free)
-      const used = Math.max(0, matchesSaved - 1);
-
-      setTransferInfo({
-        used,
-        total: contest?.total_transfers_allowed ?? null,
-        free:  contest?.free_transfers_per_match ?? 1,
-      });
+      // Transfers used = actual player swaps logged in user_transfers, scoped
+      // to the current phase (regular/playoff) — mirrors checkAndLogTransfers'
+      // seasonXferCount tally. Previously this counted user_match_xi rows,
+      // which has 11 rows per match (one per XI player), massively overcounting
+      // "transfers" as roughly (matches saved × 11).
+      if (currentMatchId && tournamentId) {
+        const allMatches = await fetchTournamentMatches(tournamentId);
+        const { used, cap } = await getTransferUsage(squad.id, currentMatchId, config, allMatches);
+        setTransferInfo({ used, total: cap, free: config.free_transfers_per_match ?? 1 });
+      } else {
+        setTransferInfo({ used: 0, total: config.total_transfers_allowed, free: config.free_transfers_per_match ?? 1 });
+      }
     } catch (e) {
       console.warn('[MyXI] loadTransfers failed', e);
     }
