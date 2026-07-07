@@ -49,6 +49,68 @@ export function createDb(cfg = {}) {
     return client;
   }
 
+  /**
+   * Postgres's generic RLS-violation error — raised when a write's WITH CHECK
+   * (or implicit USING-as-WITH-CHECK, for UPDATE) evaluates false. Code 42501.
+   */
+  function isRlsViolation(err) {
+    return !!err && (err.code === '42501' || /row-level security/i.test(err.message || ''));
+  }
+
+  /**
+   * Runs a Supabase write, and if it fails with an RLS violation, refreshes
+   * the session and retries ONCE before giving up.
+   *
+   * Why: the most common real-world trigger for "new row violates row-level
+   * security policy" on an otherwise-correct, ownership-scoped policy (like
+   * squad_draft_xi's "squad belongs to auth.uid()" check) isn't a genuine
+   * ownership mismatch — it's a stale access token. supabase-js's background
+   * auto-refresh timer is throttled while a tab sits inactive (e.g. the user
+   * spends a few minutes deciding on a booster before hitting Save), so by
+   * the time a write actually fires, the token backing it has quietly gone
+   * stale even though the user never signed out. A silent refresh + retry
+   * fixes that case with no user-visible error at all.
+   *
+   * Throws on any error still present after the retry — RLS violations get
+   * the friendlier diagnostic message above; every other error (e.g. a
+   * unique-constraint violation) is re-thrown AS-IS (same `.code`/`.message`)
+   * so callers can keep their own special-case handling (see activateBooster's
+   * 23505 check) without withRlsRetry swallowing it.
+   *
+   * Resolves to `result.data` on success, for callers that need it.
+   *
+   * @param {object} sb           the supabase client
+   * @param {() => Promise<{error: any, data?: any}>} run   the write to attempt (and retry)
+   * @param {string} actionLabel  human label for the diagnostic error if it still fails
+   */
+  async function withRlsRetry(sb, run, actionLabel) {
+    let result = await run();
+
+    if (result.error && isRlsViolation(result.error)) {
+      console.warn(`[db] ${actionLabel} hit an RLS violation — refreshing session and retrying once:`, result.error.message);
+      const { error: refreshErr } = await sb.auth.refreshSession();
+      if (!refreshErr) {
+        result = await run();
+      }
+    }
+
+    if (result.error) {
+      if (isRlsViolation(result.error)) {
+        // Still failing after a fresh token — distinguish "not signed in"
+        // from "genuinely not yours" so the message actually points at a
+        // fix, instead of surfacing Postgres's raw internal wording.
+        const { data: userData } = await sb.auth.getUser();
+        const detail = !userData?.user
+          ? 'Your session has expired — please sign in again.'
+          : 'Your session is out of sync — please refresh the page and try again.';
+        throw new Error(`Could not complete ${actionLabel}. ${detail}`);
+      }
+      throw result.error;
+    }
+
+    return result.data;
+  }
+
   return {
     isConfigured() { return configured; },
 
@@ -3518,7 +3580,7 @@ export function createDb(cfg = {}) {
      */
     async saveDraft(squadId, { playerIds, captainId, vcId }) {
       const sb = await getClient();
-      const { error } = await sb
+      await withRlsRetry(sb, () => sb
         .from('squad_draft_xi')
         .upsert({
           squad_id  : squadId,
@@ -3526,8 +3588,8 @@ export function createDb(cfg = {}) {
           captain_id: captainId ?? null,
           vc_id     : vcId      ?? null,
           updated_at: new Date().toISOString(),
-        }, { onConflict: 'squad_id' });
-      if (error) throw error;
+        }, { onConflict: 'squad_id' }),
+        'saving your draft XI');
     },
 
     /**
@@ -3906,16 +3968,17 @@ export function createDb(cfg = {}) {
           vcId     : snapshotXI.vcId,
         } : null,
       };
-      const { data, error } = await sb
-        .from('user_booster_activations')
-        .insert(row)
-        .select()
-        .single();
-      if (error) {
+      try {
+        return await withRlsRetry(sb, () => sb
+          .from('user_booster_activations')
+          .insert(row)
+          .select()
+          .single(),
+          `activating ${booster.replace(/_/g, ' ')}`);
+      } catch (error) {
         if (error.code === '23505') throw new Error(`You already have ${booster.replace(/_/g,' ')} active for this match.`);
         throw error;
       }
-      return data;
     },
 
     /**
@@ -3928,13 +3991,13 @@ export function createDb(cfg = {}) {
      */
     async deactivateBooster(squadId, matchId, booster) {
       const sb = await getClient();
-      const { error } = await sb
+      await withRlsRetry(sb, () => sb
         .from('user_booster_activations')
         .delete()
         .eq('squad_id', squadId)
         .eq('match_id', matchId)
-        .eq('booster', booster);
-      if (error) throw error;
+        .eq('booster', booster),
+        `removing ${booster.replace(/_/g, ' ')}`);
     },
 
     /**
