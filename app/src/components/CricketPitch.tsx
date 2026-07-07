@@ -59,20 +59,16 @@ interface TileProps {
   onSetCaptaincy: (role: CaptaincyRole) => void;
   onRemove:       () => void;
   readOnly?:      boolean;
+  /** Effective (pending-or-committed) booster for this match, or null — lifted
+   *  up to CricketPitch so both the tiles AND the role-chip label (team_double's
+   *  🚀 — see RoleZone) read the same single value. */
+  boosterKey:     string | null;
 }
 
-function PlayerTile({ player, onSetCaptaincy, onRemove, readOnly }: TileProps) {
+function PlayerTile({ player, onSetCaptaincy, onRemove, readOnly, boosterKey }: TileProps) {
   const isCap = player.captaincy === 'captain';
   const isVC  = player.captaincy === 'vice_captain';
 
-  // Directly select the boosters array — Zustand tracks this reference properly.
-  // activeBoosters() is a derived method and can miss reactivity in some builds.
-  const boosters = useBoosterStore(s => s.boosters);
-  // Only one booster is ever active per match — include 'pending' (staged-
-  // not-yet-saved) alongside 'active' so the pitch preview reflects whichever
-  // booster is currently effective, mirroring web's getEffectiveBoosterForMatch
-  // (pending-or-committed), for the same "preview before you save" purpose.
-  const boosterKey = boosters.find(b => b.status === 'active' || b.status === 'pending')?.id ?? null;
   // Mirrors web's pitchBoosterDecor exactly — same badge-icon-swap / jersey-ring
   // / bottom-left-badge rules, id by id, instead of a separate icon row.
   const decor = getTileBoosterDecor(player.captaincy, player.overseas, boosterKey);
@@ -156,21 +152,24 @@ interface ZoneProps {
   onRemove:       (id: string) => void;
   isCenter?:      boolean;
   readOnly?:      boolean;
+  boosterKey:     string | null;
 }
 
-function RoleZone({ role, flex, players, onSetCaptaincy, onRemove, isCenter, readOnly }: ZoneProps) {
+function RoleZone({ role, flex, players, onSetCaptaincy, onRemove, isCenter, readOnly, boosterKey }: ZoneProps) {
   return (
     <View style={[
       styles.zone,
       { flex },
       isCenter && styles.zoneCenter,
     ]}>
-      {/* Role chip */}
+      {/* Role chip — Team Double's 🚀 shows once here per row instead of
+          repeating on every tile in it, mirroring web's renderSlPitchView
+          (RLBL[role] + (boosterKey === 'team_double' ? ' 🚀' : '')). */}
       <View style={styles.chipRow}>
         <View style={styles.chipLine} />
         <View style={[styles.chip, { borderColor: ROLE_CHIP_COLOR[role] + '66', backgroundColor: ROLE_CHIP_COLOR[role] + '22' }]}>
           <Text style={[styles.chipText, { color: ROLE_CHIP_COLOR[role] }]}>
-            {ROLE_LABEL[role]}
+            {ROLE_LABEL[role]}{boosterKey === 'team_double' ? ' 🚀' : ''}
           </Text>
         </View>
         <View style={styles.chipLine} />
@@ -186,6 +185,7 @@ function RoleZone({ role, flex, players, onSetCaptaincy, onRemove, isCenter, rea
               onSetCaptaincy={(r) => onSetCaptaincy(p.id, r)}
               onRemove={() => onRemove(p.id)}
               readOnly={readOnly}
+              boosterKey={boosterKey}
             />
           ))}
         </View>
@@ -209,6 +209,11 @@ export default function CricketPitch({ players, onSetCaptaincy, onRemove, readOn
   const ar   = players.filter(p => p.role === 'ar');
   const bowl = players.filter(p => p.role === 'bowl');
 
+  // Single source of truth for "the booster in effect right now" — shared by
+  // every tile AND the role-chip label, so they can never disagree.
+  const boosters = useBoosterStore(s => s.boosters);
+  const boosterKey = boosters.find(b => b.status === 'active' || b.status === 'pending')?.id ?? null;
+
   return (
     <View style={styles.field}>
       {/* Oval grass field */}
@@ -221,10 +226,10 @@ export default function CricketPitch({ players, onSetCaptaincy, onRemove, readOn
       <View style={styles.creaseTop}    pointerEvents="none" />
       <View style={styles.creaseBottom} pointerEvents="none" />
 
-      <RoleZone role="wk"   flex={1}   players={wk}   onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} readOnly={readOnly} />
-      <RoleZone role="bat"  flex={1.8} players={bat}  onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} readOnly={readOnly} />
-      <RoleZone role="ar"   flex={1.4} players={ar}   onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} isCenter readOnly={readOnly} />
-      <RoleZone role="bowl" flex={1.8} players={bowl} onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} readOnly={readOnly} />
+      <RoleZone role="wk"   flex={1}   players={wk}   onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} readOnly={readOnly} boosterKey={boosterKey} />
+      <RoleZone role="bat"  flex={1.8} players={bat}  onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} readOnly={readOnly} boosterKey={boosterKey} />
+      <RoleZone role="ar"   flex={1.4} players={ar}   onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} isCenter readOnly={readOnly} boosterKey={boosterKey} />
+      <RoleZone role="bowl" flex={1.8} players={bowl} onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} readOnly={readOnly} boosterKey={boosterKey} />
     </View>
   );
 }
