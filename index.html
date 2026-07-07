@@ -4622,7 +4622,7 @@ p31,Sample Player,MI,bat,9.0,false
                 try {
                   const rules = rulesFor(fmt);
                   const points = 1 * (rules[FIELDING_RULE_KEY[field]] || 0);
-                  await state.db.resolveFieldingIssueAsCredit(issue, playerId, points, !ambiguous);
+                  const { aliasCreated } = await state.db.resolveFieldingIssueAsCredit(issue, playerId, points, !ambiguous);
                   // Cascade into every user team's totals for this match — same
                   // reasoning as the placeholder-stats credit flow below: a
                   // completed match is never re-polled, so this is the only way
@@ -4637,7 +4637,7 @@ p31,Sample Player,MI,bat,9.0,false
                   const remaining = panel.querySelectorAll('.fi-row').length;
                   if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
                   if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All fielding issues resolved.</span>';
-                  toast(ambiguous ? 'Credited for this match — team scores updated.' : 'Credited, alias saved, and team scores updated.');
+                  toast(aliasCreated ? 'Credited, alias saved, and team scores updated.' : 'Credited for this match — team scores updated.');
                 } catch (err) { toast('Failed: ' + err.message); }
               });
 
@@ -4678,7 +4678,9 @@ p31,Sample Player,MI,bat,9.0,false
                   const points = 1 * (rules[FIELDING_RULE_KEY[field]] || 0);
                   // Treat like the "unmatched" case — save an alias so future
                   // scraper runs auto-credit this newly-added player by name.
-                  await state.db.resolveFieldingIssueAsCredit(issue, inserted.id, points, true);
+                  // (Blocked automatically if rawName turns out to be a
+                  // placeholder like "empty &" — see resolveFieldingIssueAsCredit.)
+                  const { aliasCreated } = await state.db.resolveFieldingIssueAsCredit(issue, inserted.id, points, true);
                   if (matchId) {
                     try {
                       await computeAndSaveXIScoresForMatch(matchId);
@@ -4689,7 +4691,9 @@ p31,Sample Player,MI,bat,9.0,false
                   const remaining = panel.querySelectorAll('.fi-row').length;
                   if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
                   if (!remaining) panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ All fielding issues resolved.</span>';
-                  toast(`Added ${name}, credited, and team scores updated.`);
+                  toast(aliasCreated
+                    ? `Added ${name}, credited, and team scores updated.`
+                    : `Added ${name} and credited this match — team scores updated (no alias, source name looks like a placeholder).`);
                 } catch (err) { toast('Failed: ' + err.message, 4000); }
               });
             });

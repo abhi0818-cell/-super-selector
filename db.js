@@ -1084,7 +1084,11 @@ export function createDb(cfg = {}) {
      */
     isPlaceholderName(rawName) {
       const PLACEHOLDER_NAMES = new Set(['player not found']);
-      return PLACEHOLDER_NAMES.has(String(rawName ?? '').toLowerCase().trim());
+      const norm = String(rawName ?? '').toLowerCase().trim();
+      // "empty" is a broader/prefix check (not an exact-set entry) because
+      // this source sends variants like "empty &" rather than one fixed
+      // literal. Mirrors poll-cricapi's/scrape-scorecard's isPlaceholderName.
+      return PLACEHOLDER_NAMES.has(norm) || norm.startsWith('empty');
     },
 
     /**
@@ -1419,6 +1423,12 @@ export function createDb(cfg = {}) {
      */
     async resolveFieldingIssueAsCredit(issue, playerId, fieldingPoints, createAlias) {
       const sb = await getClient();
+      // A placeholder raw name (e.g. "empty &") is a different real fielder
+      // every time it shows up — same reasoning as isPlaceholderName above.
+      // Never let it become a static alias, even if the caller asked for one
+      // (unmatched case defaults createAlias to true); always fall back to
+      // crediting this one match only.
+      if (createAlias && this.isPlaceholderName(issue.rawName)) createAlias = false;
       if (createAlias) {
         const { error: ae } = await sb.from('player_name_aliases').upsert({
           player_id    : playerId,
@@ -1434,6 +1444,10 @@ export function createDb(cfg = {}) {
         .update({ resolved_at: new Date().toISOString(), resolved_by: createAlias ? 'alias' : 'credit_only' })
         .eq('id', issue.id);
       if (error) throw error;
+      // Callers use this to report accurately whether an alias was actually
+      // saved — it may differ from the requested createAlias if the raw name
+      // turned out to be a placeholder (see override above).
+      return { aliasCreated: createAlias };
     },
 
     /** Dismiss a fielding issue without crediting anyone (e.g. a sub fielder, or a mis-scraped dismissal line). */
