@@ -30,7 +30,13 @@ import RoleStats from '../components/RoleStats';
 import ContestPicker from '../components/ContestPicker';
 import PlayerPickerScreen from './PlayerPickerScreen';
 import { fontSize, radius, spacing, shadow } from '../theme';
-import { fetchContestTransferConfig, fetchTournamentMatches, getTransferUsage } from '../lib/transferCap';
+import {
+  fetchContestTransferConfig,
+  fetchTournamentMatches,
+  getTransferUsage,
+  getPreviousMatchXI,
+  computeIsFirstActiveLock,
+} from '../lib/transferCap';
 
 type Props = BottomTabScreenProps<RootTabParamList, 'MyXI'>;
 
@@ -162,12 +168,27 @@ export default function MyXIScreen({ route }: Props) {
     used: number; total: number | null; free: number;
   } | null>(null);
   const [squadId, setSquadId] = useState<string | null>(null);
+  // Transfers already committed for the CURRENT (not-yet-locked) match —
+  // i.e. swaps made against the squad's last locked XI that will take effect
+  // once this match's transfer window closes. Read straight from
+  // user_transfers (match_id = currentMatchId), the same rows
+  // checkAndLogTransfers writes on Save — so this count always matches what
+  // was actually logged, not a UI-only diff.
+  const [pendingTransfers, setPendingTransfers] = useState(0);
+  // The squad's true previous LOCKED XI (baseline checkAndLogTransfers diffs
+  // against) — used as the "previous" comparison for the Review & Save
+  // modal's IN/OUT list, so that list always matches what actually gets
+  // counted as a transfer server-side.
+  const [previousLockedXI, setPreviousLockedXI] = useState<SelectedPlayer[]>([]);
 
   useEffect(() => {
     setSquadId(null);  // reset when contest changes
     if (!activeContext || activeContext.contestType === 'daily') return;
     loadTransfers();
-  }, [activeContext?.contestId, currentMatchId]);
+    // players.length included so the previousLockedXI baseline (built from
+    // the `players` pool) gets (re)built once the pool finishes loading,
+    // instead of staying empty forever if this effect's first run raced it.
+  }, [activeContext?.contestId, currentMatchId, players.length]);
 
   // ── Auto-restore saved XI on mount / contest change ────────────────────────
   // Fires once all three prerequisites are ready: contest known, match known,
@@ -218,6 +239,8 @@ export default function MyXIScreen({ route }: Props) {
 
       if (!squad) {
         setTransferInfo({ used: 0, total: config.total_transfers_allowed, free: config.free_transfers_per_match ?? 1 });
+        setPendingTransfers(0);
+        setPreviousLockedXI([]);
         return;
       }
 
@@ -233,8 +256,38 @@ export default function MyXIScreen({ route }: Props) {
         const allMatches = await fetchTournamentMatches(tournamentId);
         const { used, cap } = await getTransferUsage(squad.id, currentMatchId, config, allMatches);
         setTransferInfo({ used, total: cap, free: config.free_transfers_per_match ?? 1 });
+
+        // Transfers already committed FOR this specific (not-yet-locked) match
+        // — the rows checkAndLogTransfers writes with match_id = currentMatchId
+        // when the XI was last saved. These are the swaps that will "take"
+        // once this match's transfer window closes.
+        const { count: pendingCount } = await supabase
+          .from('user_transfers')
+          .select('id', { count: 'exact', head: true })
+          .eq('squad_id', squad.id)
+          .eq('match_id', currentMatchId);
+        setPendingTransfers(pendingCount ?? 0);
+
+        // The squad's true previous LOCKED XI — same baseline
+        // checkAndLogTransfers diffs against — so the Review & Save modal's
+        // IN/OUT list always matches what actually gets counted as a
+        // transfer, instead of diffing against whatever was on-screen when
+        // the picker happened to be opened.
+        const prev = await getPreviousMatchXI(squad.id, currentMatchId, allMatches, config.start_match_number);
+        const isFirstActiveLock = await computeIsFirstActiveLock(squad.id, prev, allMatches);
+        const baseline = isFirstActiveLock ? { playerIds: [] as string[], captainId: null, vcId: null } : prev;
+        const baselineXI: SelectedPlayer[] = baseline.playerIds
+          .map(id => players.find(p => p.id === id))
+          .filter((p): p is typeof players[number] => !!p)
+          .map(p => ({
+            ...p,
+            captaincy: (p.id === baseline.captainId ? 'captain' : p.id === baseline.vcId ? 'vice_captain' : 'normal') as CaptaincyRole,
+          }));
+        setPreviousLockedXI(baselineXI);
       } else {
         setTransferInfo({ used: 0, total: config.total_transfers_allowed, free: config.free_transfers_per_match ?? 1 });
+        setPendingTransfers(0);
+        setPreviousLockedXI([]);
       }
     } catch (e) {
       console.warn('[MyXI] loadTransfers failed', e);
@@ -398,23 +451,45 @@ export default function MyXIScreen({ route }: Props) {
               </View>
             ) : null}
 
-            {/* Transfers — SL / private only */}
+            {/* Transfers left — SL / private only */}
             {activeContext && activeContext.contestType !== 'daily' && (
               <View style={styles.infoPill}>
                 <Text style={styles.infoPillIcon}>⇄</Text>
-                <Text style={styles.infoPillLabel}>Transfers </Text>
+                <Text style={styles.infoPillLabel}>Transfers left </Text>
                 <Text style={styles.infoPillValue}>
                   {isFirstMatch
                     ? '∞'
                     : transferInfo === null
                       ? '…'
                       : transferInfo.total === null
-                        ? `${transferInfo.used} used`
-                        : `${transferInfo.used}/${transferInfo.total}`
+                        ? 'Unlimited'
+                        : `${Math.max(0, transferInfo.total - transferInfo.used)}/${transferInfo.total}`
                   }
                 </Text>
               </View>
             )}
+
+            {/* Pending — transfers already saved for the upcoming match that
+                haven't locked yet (i.e. made against the last locked XI). */}
+            {activeContext && activeContext.contestType !== 'daily' && pendingTransfers > 0 && (
+              <View style={styles.infoPill}>
+                <Text style={styles.infoPillIcon}>🔄</Text>
+                <Text style={styles.infoPillLabel}>Pending </Text>
+                <Text style={styles.infoPillValue}>
+                  {pendingTransfers} transfer{pendingTransfers !== 1 ? 's' : ''}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+
+        {/* Clarifying note for pending transfers — shown until the match locks */}
+        {activeContext && activeContext.contestType !== 'daily' && pendingTransfers > 0 && (
+          <View style={styles.pendingNote}>
+            <Text style={styles.pendingNoteText}>
+              {pendingTransfers} transfer{pendingTransfers !== 1 ? 's' : ''} made from your last locked XI
+              {countdown && countdown !== 'Locked' ? ` — locks in ${countdown}` : ' — locks with this match'}
+            </Text>
           </View>
         )}
 
@@ -511,7 +586,13 @@ export default function MyXIScreen({ route }: Props) {
             visible={confirmOpen}
             contestName={activeContext.leagueName}
             current={selected}
-            previous={snapshot}
+            // SL/private: diff against the squad's true previous LOCKED XI —
+            // the same baseline checkAndLogTransfers counts transfers
+            // against — so the IN/OUT list here always matches what actually
+            // gets logged on Save. Daily has no transfer concept, so it
+            // keeps diffing against the picker-open snapshot (just shows
+            // what changed this session).
+            previous={isDaily ? snapshot : previousLockedXI}
             onSetCaptaincy={(id, role) => setCaptaincy(id, role)}
             onRemove={(id) => removePlayer(id)}
             onConfirm={handleConfirm}
@@ -821,4 +902,16 @@ const styles = StyleSheet.create({
   infoPillIcon:  { fontSize: 11 },
   infoPillLabel: { fontSize: fontSize.sm, color: C.muted },
   infoPillValue: { fontSize: fontSize.sm, fontWeight: '700', color: C.accent },
+
+  pendingNote: {
+    paddingHorizontal: spacing.lg,
+    paddingVertical:   4,
+    backgroundColor:   'rgba(201,168,76,0.05)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(201,168,76,0.12)',
+  },
+  pendingNoteText: {
+    fontSize: fontSize.xs,
+    color:    C.muted,
+  },
 });
