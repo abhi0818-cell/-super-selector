@@ -5752,7 +5752,18 @@ p31,Sample Player,MI,bat,9.0,false
       const available = contest?.available_boosters;
       if (!available || !Object.keys(available).length) return null;
 
-      const nextMatch = findNextScheduledMatch();
+      // Must resolve to the SAME match saveSlXiHandler will actually commit
+      // the booster against (state.activeMatchId, redirected via
+      // slSaveTargetMatch() if that match has already started) — NOT the
+      // tournament-wide "earliest unlocked match" (findNextScheduledMatch()).
+      // Those two can differ (e.g. the SL screen is showing a different match
+      // than the globally-earliest one), and when they did, staging a
+      // booster here against one match id while saveSlXiHandler only commits
+      // when state.activeMatchId matches state.sl.pendingBoosterMatchId meant
+      // the commit silently no-op'd — the booster looked "picked" and the
+      // save succeeded, but nothing was ever written to
+      // user_booster_activations, so it never showed up on the pitch.
+      const nextMatch = slSaveTargetMatch();
 
       let activations = state.sl.boosterActivations;
       if (!activations) {
@@ -6086,7 +6097,15 @@ p31,Sample Player,MI,bat,9.0,false
         // pick into a real activation/deactivation. Only acts when the
         // pending slot actually targets this draft's match and differs from
         // what's already committed; otherwise there's nothing to do.
-        const boosterMatchId = state.activeMatchId;
+        //
+        // Must match getSlBoosterContext()'s resolution exactly (slSaveTargetMatch(),
+        // not raw state.activeMatchId) — otherwise, whenever the active match
+        // has already started (so saves redirect to the next match) this
+        // matched state.sl.pendingBoosterMatchId against the WRONG id and
+        // silently skipped the commit: the pill looked selected and Save XI
+        // reported success, but nothing was ever written to
+        // user_booster_activations.
+        const boosterMatchId = slSaveTargetMatch()?.id ?? null;
         let boosterNote = '';
         if (boosterMatchId && state.sl.pendingBoosterMatchId === boosterMatchId) {
           const committed = getCachedBoosterForMatch(boosterMatchId);
@@ -14839,12 +14858,18 @@ p31,Sample Player,MI,bat,9.0,false
         if (p && groups[p.role]) groups[p.role].push({p: p, id: id});
       });
 
-      // Booster for the NEXT unlocked match, read synchronously from the cache
-      // renderSlBoosterBar() already populates (state.sl.boosterActivations).
-      // On a cold load that cache may not be filled yet — renderSlBoosterBar()
+      // Booster for the match this draft is currently being edited/saved
+      // against, read synchronously from the cache renderSlBoosterBar()
+      // already populates (state.sl.boosterActivations). Must use the same
+      // match resolution as getSlBoosterContext()/saveSlXiHandler
+      // (slSaveTargetMatch()) — NOT findNextScheduledMatch(), which resolves
+      // to the tournament-wide earliest match and can point at a different
+      // match than the one actually being edited, silently hiding a booster
+      // that genuinely is active for this match.
+      // On a cold load the cache may not be filled yet — renderSlBoosterBar()
       // re-calls renderSlPitchView() once its async fetch resolves, so the
       // tile decorations catch up a beat after the top banner does.
-      var nextMatch  = findNextScheduledMatch();
+      var nextMatch  = slSaveTargetMatch();
       var boosterKey = getCachedBoosterForMatch(nextMatch?.id);
 
       var rowsHtml = ROLES_ORDER.map(function(role) {
