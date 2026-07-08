@@ -3493,7 +3493,7 @@ p31,Sample Player,MI,bat,9.0,false
         pillWrap.style.display = '';
         signOut.style.display  = '';
         adminBtn.style.display = isAdmin ? '' : 'none';
-        if (isAdmin) loadAdminModule().then(() => window.__admin?.renderApiPill?.());
+        if (isAdmin) loadAdminModule().then(() => window.__admin?.refreshAdminViews?.());
         pageTabs.style.display = 'flex';
         renderProfileCard(user);
       } else {
@@ -3739,7 +3739,8 @@ p31,Sample Player,MI,bat,9.0,false
           });
           applyDotBallGate(state.activeTournamentId);
         } catch (e) { console.warn('Could not load scoring rules from DB', e); }
-        renderPool(); renderSavedTeams(); renderHistory(); window.__admin?.renderRulesEditor?.(); render();
+        renderPool(); renderSavedTeams(); renderHistory(); render();
+        window.__admin?.refreshAdminViews?.();
         refreshRecentForm(); // fire-and-forget: populates form strips once loaded, then re-renders pool
         // Restore persisted scorecard so page reloads don't wipe the live view.
         // Try localStorage first (instant), fall back to DB (handles localStorage clears).

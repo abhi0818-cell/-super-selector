@@ -3757,6 +3757,20 @@
 
 
   // ─── REGISTER ADMIN API ──────────────────────────────────────────────────
+  /**
+   * Re-render all data-dependent admin views after a DB connect or page reload.
+   * Called from connectDb() in index.html (via guard) and from loadAdminModule().then().
+   */
+  function refreshAdminViews() {
+    renderApiPill();
+    if (!state.db) return;
+    renderMatchesAdmin();
+    renderContestsAdmin();
+    renderTeamsAdmin();
+    renderAdmin();
+    if (state.rulesEditing) renderRulesEditor();
+  }
+
   // Functions needed from index.html are accessed via window.__admin?.fn?.()
   window.__admin = {
     openAdmin,
@@ -3791,6 +3805,7 @@
     csvImportHandler,
     downloadCSVTemplate,
     forcePollNow: A.forcePollNow,
+    refreshAdminViews,
   };
 
 })();
