@@ -593,6 +593,10 @@ export default function MyXIScreen({ route }: Props) {
             // keeps diffing against the picker-open snapshot (just shows
             // what changed this session).
             previous={isDaily ? snapshot : previousLockedXI}
+            // Effective (pending-or-committed) booster for this match — same
+            // single-source-of-truth lookup CricketPitch uses, so the Review
+            // & Save banner always agrees with what the pitch/stat tile show.
+            activeBoosterId={boosters.find(b => b.status === 'active' || b.status === 'pending')?.id ?? null}
             onSetCaptaincy={(id, role) => setCaptaincy(id, role)}
             onRemove={(id) => removePlayer(id)}
             onConfirm={handleConfirm}

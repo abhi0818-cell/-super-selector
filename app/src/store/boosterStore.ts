@@ -142,7 +142,7 @@ export const BOOSTER_META: Record<string, BoosterMeta> = {
   },
 };
 
-const TRANSFER_BOOSTERS = new Set(['wildcard', 'free_hit']);
+export const TRANSFER_BOOSTERS = new Set(['wildcard', 'free_hit']);
 
 // ─── Tile-boost decor ─────────────────────────────────────────────────────────
 

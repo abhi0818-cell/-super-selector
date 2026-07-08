@@ -20,6 +20,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CaptaincyRole, PlayerRole, SelectedPlayer } from '../types';
 import CricketPitch from './CricketPitch';
 import Jersey from './Jersey';
+import { BOOSTER_META, TRANSFER_BOOSTERS } from '../store/boosterStore';
 import { fontSize, radius, spacing, shadow } from '../theme';
 
 // ─── Role colours (fallback when no teamColor set) ────────────────────────────
@@ -200,16 +201,23 @@ function CaptainStep({ players, onAssign, onNext }: CaptainStepProps) {
 interface SummaryStepProps {
   current:        SelectedPlayer[];
   previous:       SelectedPlayer[];
+  activeBoosterId?: string | null;
   onBack:         () => void;
   onSave:         () => void;
   onSetCaptaincy: (id: string, role: CaptaincyRole) => void;
   onRemove:       (id: string) => void;
 }
 
-function SummaryStep({ current, previous, onBack, onSave, onSetCaptaincy, onRemove }: SummaryStepProps) {
+function SummaryStep({ current, previous, activeBoosterId, onBack, onSave, onSetCaptaincy, onRemove }: SummaryStepProps) {
   const added      = current.filter(p => !previous.find(b => b.id === p.id));
   const removed    = previous.filter(b => !current.find(p => p.id === b.id));
   const hasChanges = added.length > 0 || removed.length > 0;
+
+  const boosterMeta = activeBoosterId ? BOOSTER_META[activeBoosterId] : null;
+  // Wildcard/Free Hit make transfers unlimited-and-uncapped, so the IN/OUT
+  // list below can run to a full 11-for-11 swap — this note explains why,
+  // rather than leaving a long list unexplained.
+  const isTransferBooster = !!activeBoosterId && TRANSFER_BOOSTERS.has(activeBoosterId);
 
   return (
     <View style={styles.stepContainer}>
@@ -226,6 +234,21 @@ function SummaryStep({ current, previous, onBack, onSave, onSetCaptaincy, onRemo
         </View>
 
         <View style={styles.summaryChangesPanel}>
+          {/* Booster banner — pinned above the (scrollable) IN/OUT list so it
+              stays visible even when that list is long, mirrors the pitch's
+              single-source-of-truth booster lookup (see MyXIScreen). */}
+          {boosterMeta && (
+            <View style={styles.boosterBanner}>
+              <Text style={styles.boosterBannerIcon}>{boosterMeta.icon}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.boosterBannerName}>{boosterMeta.name} active</Text>
+                {isTransferBooster && (
+                  <Text style={styles.boosterBannerNote}>Unlimited transfers this match — no cap or deduction</Text>
+                )}
+              </View>
+            </View>
+          )}
+
           <Text style={styles.summaryChangesPanelTitle}>
             {hasChanges ? 'Transfers' : 'No changes'}
           </Text>
@@ -290,6 +313,9 @@ interface Props {
   contestName:    string;
   current:        SelectedPlayer[];
   previous:       SelectedPlayer[];
+  /** Effective (pending-or-committed) booster for this match, or null/undefined
+   *  on Daily contests (no boosters). Shown as a banner on the Review & Save step. */
+  activeBoosterId?: string | null;
   onSetCaptaincy: (id: string, role: CaptaincyRole) => void;
   onRemove:       (id: string) => void;
   onConfirm:      () => void;
@@ -297,7 +323,7 @@ interface Props {
 }
 
 export default function ConfirmXIModal({
-  visible, contestName, current, previous,
+  visible, contestName, current, previous, activeBoosterId,
   onSetCaptaincy, onRemove, onConfirm, onEditMore,
 }: Props) {
   const [step, setStep] = useState<'captain' | 'summary'>('captain');
@@ -357,6 +383,7 @@ export default function ConfirmXIModal({
             <SummaryStep
               current={current}
               previous={previous}
+              activeBoosterId={activeBoosterId}
               onBack={() => setStep('captain')}
               onSave={onConfirm}
               onSetCaptaincy={onSetCaptaincy}
@@ -568,6 +595,23 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
     marginBottom:  4,
   },
+
+  // Booster banner — pinned above the IN/OUT list (outside its ScrollView),
+  // so it stays visible no matter how long the transfer list scrolls.
+  boosterBanner: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               spacing.sm,
+    padding:           spacing.sm,
+    borderRadius:      radius.lg,
+    borderWidth:       1,
+    borderColor:       C.borderA,
+    backgroundColor:   'rgba(201,168,76,0.1)',
+    marginBottom:      spacing.sm,
+  },
+  boosterBannerIcon: { fontSize: 20 },
+  boosterBannerName: { color: C.gold, fontSize: fontSize.sm, fontWeight: '800' },
+  boosterBannerNote: { color: C.muted, fontSize: 9, fontWeight: '600', marginTop: 1 },
 
   changeItem: {
     flexDirection:     'row',
