@@ -663,8 +663,7 @@ export default function HomeScreen() {
             <View style={styles.brandRow}>
               <LinearGradient colors={[C.accent, C.gold]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.brandDot} />
               <Text style={styles.brandText}>
-                <Text style={styles.brandSuper}>Super </Text>
-                <Text style={styles.brandSelector}>Selector</Text>
+                <Text style={styles.brandSuper}>Maestro</Text>
               </Text>
             </View>
             <Text style={styles.welcomeText}>Hey {firstName} 👋</Text>
@@ -842,9 +841,8 @@ const styles = StyleSheet.create({
   headerLeft:   { gap: 4 },
   brandRow:     { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
   brandDot: { width: 10, height: 10, borderRadius: radius.full, shadowColor: '#C9A84C', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.9, shadowRadius: 8, elevation: 4 },
-  brandText:     { fontSize: fontSize.xl, fontWeight: '800', letterSpacing: 0.2 },
-  brandSuper:    { color: '#1C1F26' },
-  brandSelector: { color: '#C9A84C' },
+  brandText:     { fontSize: fontSize.xl, letterSpacing: 0.2 },
+  brandSuper:    { color: '#1C1F26', fontFamily: 'PlayfairDisplay_700Bold' },
   welcomeText: { color: C.muted, fontSize: fontSize.base, letterSpacing: 0.1, marginLeft: 18 },
   signOutBtn: { paddingHorizontal: spacing.md, paddingVertical: 6, borderWidth: 1.5, borderColor: 'rgba(28,31,38,0.30)', borderRadius: radius.full },
   signOutText: { color: C.text, fontSize: fontSize.sm, fontWeight: '600' },

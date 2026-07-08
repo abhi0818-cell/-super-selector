@@ -118,7 +118,7 @@ export default function AuthScreen() {
                 <Text style={styles.brandSuper}>Maestro</Text>
               </View>
             </View>
-            <Text style={styles.tagline}>Fantasy Cricket · IPL 2026</Text>
+            <Text style={styles.tagline}>Fantasy Cricket</Text>
 
             {/* ── Card ────────────────────────────────────────────────────── */}
             <LinearGradient

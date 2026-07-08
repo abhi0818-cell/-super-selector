@@ -132,8 +132,7 @@ export default function TournamentLobbyScreen() {
         <View style={styles.header}>
           <View>
             <Text style={styles.brand}>
-              <Text style={styles.brandSuper}>Super </Text>
-              <Text style={styles.brandSelector}>Selector</Text>
+              <Text style={styles.brandSuper}>Maestro</Text>
             </Text>
             <Text style={styles.greeting}>Hey {firstName} 👋</Text>
           </View>
@@ -189,9 +188,8 @@ const styles = StyleSheet.create({
     alignItems:     'flex-start',
     marginBottom:   spacing.xl,
   },
-  brand: { fontSize: fontSize.xl, fontWeight: '800', letterSpacing: 0.2 },
-  brandSuper:     { color: colors.text },
-  brandSelector:  { color: colors.accent },
+  brand: { fontSize: fontSize.xl, letterSpacing: 0.2 },
+  brandSuper:     { color: colors.text, fontFamily: 'PlayfairDisplay_700Bold' },
   greeting: {
     color:      colors.muted,
     fontSize:   fontSize.base,
