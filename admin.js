@@ -1,0 +1,3767 @@
+/**
+ * admin.js — Super Selector admin panel
+ *
+ * Loaded lazily only for admin users. See loadAdminModule() in index.html.
+ *
+ * Context is provided via window.__app (set by index.html before auth):
+ *   A.state, A.PLAYERS, A.$, A.toast, A.render, A.renderPool, ...
+ *
+ * A.PLAYERS is accessed as A.PLAYERS everywhere (not destructured) because
+ * the array reference is reassigned on each data load in index.html.
+ */
+/* global window */
+(function () {
+  'use strict';
+
+  const A = window.__app;                    // shared app context from index.html
+  const state                = A.state;      // same object, mutations visible both ways
+  const $                    = A.$;
+  const toast                = A.toast;
+  const render               = A.render;
+  const renderPool           = A.renderPool;
+  const renderSavedTeams     = A.renderSavedTeams;
+  const renderHistory        = A.renderHistory;
+  const renderMatchSelector  = A.renderMatchSelector;
+  const renderTeamFilter     = A.renderTeamFilter;
+  const renderScorecard      = A.renderScorecard;
+  const renderScores         = A.renderScores;
+  const SCORING_RULES        = A.SCORING_RULES;
+  const DEFAULT_SCORING_RULES = A.DEFAULT_SCORING_RULES;
+  const BOOSTER_META         = A.BOOSTER_META;
+  const ADMIN_EMAIL          = A.ADMIN_EMAIL;
+  const escapeHtml           = A.escapeHtml;
+  const playerById           = A.playerById;
+  const findLocalByName      = A.findLocalByName;
+  const teamCodes            = A.teamCodes;
+  const teamByCode           = A.teamByCode;
+  const isAdmin              = A.isAdmin;
+  const fromCricAPI          = A.fromCricAPI;
+  // NB: A.PLAYERS — always read as A.PLAYERS (reference is reassigned on data loads)
+
+
+    // ─── PLAYER ADMIN ────────────────────────────────────────────────────────
+    // All functions below this point (through RULES EDITOR) live in admin.js
+    // and are loaded lazily for admin users. See loadAdminModule() in BOOT.
+    function openAdmin() {
+      if (!isAdmin()) { toast('Admin access is restricted.'); return; }
+      $('#adminModal').classList.add('open');
+      $('#adminStatus').textContent = state.db
+        ? 'Edits save to Postgres on blur.'
+        : 'Connect a database in the Tournament tab to edit. Local-mode edits are not persisted.';
+      renderAdmin();
+    }
+    function closeAdmin() { $('#adminModal').classList.remove('open'); }
+
+    function setAdminTab(tab) {
+      state.adminTab = tab;
+      document.querySelectorAll('.a-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+      const title = {
+        tournament : 'Tournament Setup',
+        teams      : 'Manage Teams',
+        schedule   : 'Schedule',
+        scoring    : 'Scoring Rules',
+        contests   : 'Contests',
+      }[tab] || 'Manage Players';
+      $('#adminTitle').textContent = title;
+      $('#adminTournamentView').style.display = (tab === 'tournament') ? 'flex'  : 'none';
+      $('#adminTableView').style.display      = (tab === 'players')    ? 'block' : 'none';
+      $('#adminTeamsView').style.display      = (tab === 'teams')      ? 'block' : 'none';
+      $('#adminMatchesView').style.display    = (tab === 'schedule')   ? 'block' : 'none';
+      $('#adminScoringView').style.display    = (tab === 'scoring')    ? 'block' : 'none';
+      $('#adminContestsView').style.display   = (tab === 'contests')   ? 'block' : 'none';
+      $('#adminCsvView').style.display        = 'none';
+      // Toolbar (search + import) is only useful for players
+      document.querySelector('.admin-toolbar').style.display = (tab === 'players') ? 'flex' : 'none';
+      if (tab === 'tournament')    renderTournamentScoringRules();
+      else if (tab === 'teams')    renderTeamsAdmin();
+      else if (tab === 'schedule') renderMatchesAdmin();
+      else if (tab === 'scoring')  renderRulesEditor();
+      else if (tab === 'contests') renderContestsAdmin();
+      else                         renderAdmin();
+    }
+
+    /**
+     * Build the HTML for the booster configuration panel inside a contest card.
+     * Shows one row per booster type: checkbox (enabled) + number input (uses).
+     * contestId is used to build unique input IDs; available is the current JSONB value or null.
+     */
+    function buildBoosterConfigHtml(contestId, available) {
+      const av = available || {};
+      const rows = Object.entries(BOOSTER_META).map(([key, meta]) => {
+        const enabled = key in av;
+        const count   = av[key] ?? 1;
+        const uid     = `boost_${key}_${contestId.replace(/-/g,'')}`;
+        return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);">
+          <input type="checkbox" id="${uid}_chk" data-booster="${key}" class="boost-chk" ${enabled ? 'checked' : ''} style="flex-shrink:0;" />
+          <label for="${uid}_chk" style="font-size:12px;flex:1;cursor:pointer;">
+            ${meta.icon} <strong>${meta.label}</strong>
+            <span style="color:var(--muted);font-size:11px;margin-left:4px;">${meta.desc}</span>
+          </label>
+          <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+            <span style="font-size:11px;color:var(--muted);">Uses:</span>
+            <input type="number" min="1" max="10" value="${count}" id="${uid}_count"
+              style="width:50px;font-size:12px;padding:3px 6px;" ${enabled ? '' : 'disabled'} />
+          </div>
+        </div>`;
+      }).join('');
+      return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border);">
+        <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--muted);">⚡ Boosters</div>
+        <div id="boostGrid_${contestId.replace(/-/g,'')}">${rows}</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+          <button class="primary boost-save-btn" data-contest="${contestId}" style="font-size:12px;padding:4px 12px;">Save Boosters</button>
+          <span class="boost-status" data-contest="${contestId}" style="font-size:11px;color:var(--muted);"></span>
+        </div>
+      </div>`;
+    }
+
+    // ── Close-Out Tournament panel ────────────────────────────────────────────
+    // Injected at the top of the Contests tab. Lets the admin:
+    //   • Preview row counts for every tournament-scoped table
+    //   • Toggle which tables to wipe
+    //   • Execute the close-out (end_date = today + optional deletes)
+
+    function renderCloseOutPanel(preselectedId) {
+      const panelId = 'closeOutPanel';
+      const existing = $(`#${panelId}`);
+      if (existing) existing.remove();
+
+      const panel = document.createElement('div');
+      panel.id = panelId;
+      panel.style.cssText = [
+        'border:1px solid var(--bad)',
+        'border-radius:8px',
+        'padding:14px 16px',
+        'margin-bottom:16px',
+        'background:rgba(248,113,113,0.04)',
+      ].join(';');
+
+      // Build tournament options for dropdown
+      const hasTournaments = state.tournaments && state.tournaments.length > 0;
+      const tournamentOptions = hasTournaments
+        ? state.tournaments.map(t => {
+            const sel = t.id === preselectedId ? ' selected' : '';
+            const label = escapeHtml(t.name) + ' (' + (t.format || 'T20') + ')';
+            return `<option value="${t.id}"${sel}>${label}</option>`;
+          }).join('')
+        : '<option value="">— no tournaments found —</option>';
+
+      panel.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:16px;">🏁</span>
+            <strong style="font-size:14px;color:var(--bad);">Close Out Tournament</strong>
+          </div>
+          <button id="coPreviewBtn" style="font-size:12px;padding:5px 12px;" ${hasTournaments ? '' : 'disabled'}>
+            Preview data
+          </button>
+        </div>
+        <div style="margin-bottom:12px;">
+          <label style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;display:block;margin-bottom:6px;">
+            Tournament to close out
+          </label>
+          <select id="coTournamentSelect" style="width:100%;font-size:13px;" ${hasTournaments ? '' : 'disabled'}>
+            ${hasTournaments ? '' : ''}
+            <option value="" ${preselectedId ? 'style="display:none"' : ''}>— select a tournament —</option>
+            ${tournamentOptions}
+          </select>
+        </div>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 12px;">
+          Marks the selected tournament as finished (sets <code>end_date = today</code>,
+          <code>is_active = false</code>, and deactivates all contests). Optionally wipe
+          transactional tables below — reference data (players, teams, profiles) is never touched.
+        </p>
+        <div id="coTableList" style="display:none;margin-bottom:12px;"></div>
+        <div id="coActions" style="display:none;align-items:center;gap:10px;flex-wrap:wrap;">
+          <button id="coExecuteBtn" class="danger" style="font-size:13px;padding:7px 18px;" disabled>
+            Close Out Tournament
+          </button>
+          <span id="coStatus" style="font-size:12px;color:var(--muted);"></span>
+        </div>
+      `;
+
+      // Insert after the existing #adminContestsList content (bottom of the tab)
+      const wrap = $('#adminContestsList');
+      wrap.parentNode.insertBefore(panel, wrap.nextSibling);
+
+      // Reset preview when the dropdown changes
+      panel.querySelector('#coTournamentSelect').addEventListener('change', () => {
+        const listEl  = $('#coTableList');
+        const actions = $('#coActions');
+        const execBtn = $('#coExecuteBtn');
+        if (listEl)  { listEl.style.display  = 'none'; listEl.innerHTML  = ''; }
+        if (actions) { actions.style.display = 'none'; }
+        if (execBtn) { execBtn.disabled = true; }
+        $('#coStatus') && ($('#coStatus').textContent = '');
+      });
+
+      // ── Preview button ───────────────────────────────────────────────────────
+      $('#coPreviewBtn').addEventListener('click', async () => {
+        const selectedId = $('#coTournamentSelect')?.value;
+        if (!selectedId) { toast('Select a tournament first.'); return; }
+
+        const btn = $('#coPreviewBtn');
+        const listEl = $('#coTableList');
+        const actionsEl = $('#coActions');
+        btn.disabled = true;
+        btn.textContent = 'Loading…';
+        listEl.style.display = 'none';
+        actionsEl.style.display = 'none';
+
+        try {
+          const counts = await state.db.getTournamentTableCounts(selectedId);
+
+          listEl.innerHTML = `
+            <div style="font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">
+              Select tables to clear
+            </div>
+            <table style="width:100%;border-collapse:collapse;font-size:12px;">
+              <thead>
+                <tr>
+                  <th style="text-align:left;padding:4px 6px;color:var(--muted);border-bottom:1px solid var(--border);font-weight:600;">Clear?</th>
+                  <th style="text-align:left;padding:4px 6px;color:var(--muted);border-bottom:1px solid var(--border);font-weight:600;">Table</th>
+                  <th style="text-align:left;padding:4px 6px;color:var(--muted);border-bottom:1px solid var(--border);font-weight:600;">Description</th>
+                  <th style="text-align:right;padding:4px 6px;color:var(--muted);border-bottom:1px solid var(--border);font-weight:600;">Rows</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${Object.entries(counts).map(([key, t]) => `
+                  <tr>
+                    <td style="padding:6px 6px;">
+                      <input type="checkbox"
+                        class="co-table-chk"
+                        data-table="${key}"
+                        ${t.defaultOn ? 'checked' : ''}
+                        style="cursor:pointer;"
+                      />
+                    </td>
+                    <td style="padding:6px 6px;">
+                      <code style="font-size:11px;background:var(--panel-2);padding:2px 6px;border-radius:4px;">${key}</code>
+                      <div style="font-size:11px;font-weight:600;margin-top:2px;">${t.label}</div>
+                    </td>
+                    <td style="padding:6px 6px;color:var(--muted);font-size:11px;">${t.description}</td>
+                    <td style="padding:6px 6px;text-align:right;">
+                      <span style="font-size:13px;font-weight:700;color:${t.count > 0 ? 'var(--accent-2)' : 'var(--muted)'};">${t.count.toLocaleString()}</span>
+                    </td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+            <div style="font-size:11px;color:var(--muted);margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);">
+              ✅ Always kept (not shown): <code>players</code>, <code>teams</code>, <code>profiles</code>, <code>tournaments</code>
+            </div>
+          `;
+
+          listEl.style.display = 'block';
+          actionsEl.style.display = 'flex';
+
+          // Enable execute once we have count data
+          const execBtn = $('#coExecuteBtn');
+          execBtn.disabled = false;
+
+          // Update button label when checkboxes change
+          function updateExecLabel() {
+            const checked = [...listEl.querySelectorAll('.co-table-chk:checked')].map(c => c.dataset.table);
+            const totalRows = checked.reduce((sum, key) => sum + (counts[key]?.count ?? 0), 0);
+            execBtn.textContent = checked.length === 0
+              ? 'Close Out (flag only — no deletions)'
+              : `Close Out + Delete ${totalRows.toLocaleString()} rows from ${checked.length} table${checked.length !== 1 ? 's' : ''}`;
+          }
+          updateExecLabel();
+          listEl.querySelectorAll('.co-table-chk').forEach(chk => {
+            chk.addEventListener('change', updateExecLabel);
+          });
+
+        } catch (e) {
+          listEl.innerHTML = `<div style="color:var(--bad);font-size:12px;">Failed to load counts: ${escapeHtml(e.message)}</div>`;
+          listEl.style.display = 'block';
+        } finally {
+          btn.disabled = false;
+          btn.textContent = '↻ Refresh';
+        }
+      });
+
+      // ── Execute button ───────────────────────────────────────────────────────
+      panel.addEventListener('click', async (e) => {
+        if (e.target.id !== 'coExecuteBtn') return;
+        const selectedId = $('#coTournamentSelect')?.value;
+        if (!selectedId) { toast('Select a tournament first.'); return; }
+
+        const selectedName = $('#coTournamentSelect').options[$('#coTournamentSelect').selectedIndex]?.text ?? selectedId;
+        const btn = e.target;
+        const statusEl = $('#coStatus');
+        const listEl = $('#coTableList');
+
+        const tablesToClear = [...listEl.querySelectorAll('.co-table-chk:checked')]
+          .map(c => c.dataset.table);
+
+        const tableLabel = tablesToClear.length === 0
+          ? 'No tables will be deleted — only end_date and is_active flags will be updated.'
+          : `This will permanently delete rows from: ${tablesToClear.join(', ')}.`;
+
+        if (!confirm(
+          `⚠️  Close out "${selectedName}"?\n\n${tableLabel}\n\nThis cannot be undone.`
+        )) return;
+
+        btn.disabled = true;
+        statusEl.textContent = 'Running…';
+        statusEl.style.color = 'var(--muted)';
+
+        try {
+          const result = await state.db.closeOutTournament(selectedId, tablesToClear);
+
+          if (result.errors.length) {
+            statusEl.textContent = `Partial: cleared ${result.tablesCleared.length} table(s). Errors: ${result.errors.join(' | ')}`;
+            statusEl.style.color = 'var(--bad)';
+          } else {
+            const msg = result.tablesCleared.length === 0
+              ? '✓ Tournament closed out — flags updated, no rows deleted.'
+              : `✓ Done — deleted rows from: ${result.tablesCleared.join(', ')}. Tournament marked finished.`;
+            statusEl.textContent = msg;
+            statusEl.style.color = 'var(--good,#4ade80)';
+            // Refresh the counts after close-out
+            $('#coPreviewBtn')?.click();
+          }
+        } catch (err) {
+          statusEl.textContent = 'Failed: ' + err.message;
+          statusEl.style.color = 'var(--bad)';
+          btn.disabled = false;
+        }
+      });
+    }
+
+    function renderNewContestForm(isEmpty) {
+      const activeTournament = state.tournaments.find(t => t.id === state.activeTournamentId);
+      const tName = activeTournament ? escapeHtml(activeTournament.name) : 'the active tournament';
+      const boosterRows = Object.entries(BOOSTER_META).map(([key, meta]) => `
+        <div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);">
+          <input type="checkbox" id="ncBoost_${key}" data-booster="${key}" class="nc-boost-chk" style="flex-shrink:0;" />
+          <label for="ncBoost_${key}" style="font-size:12px;flex:1;cursor:pointer;">
+            ${meta.icon} <strong>${meta.label}</strong>
+            <span style="color:var(--muted);font-size:11px;margin-left:4px;">${meta.desc}</span>
+          </label>
+          <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+            <span style="font-size:11px;color:var(--muted);">Uses:</span>
+            <input type="number" min="1" max="10" value="1" id="ncBoost_${key}_count"
+              style="width:50px;font-size:12px;padding:3px 6px;" disabled />
+          </div>
+        </div>`).join('');
+
+      return `
+        <div id="newContestForm" style="border:1px solid var(--border); border-radius:8px;
+             padding:14px 16px; margin-top:${isEmpty ? '0' : '16px'};
+             background:rgba(201,168,76,0.04);">
+          <div style="font-size:13px; font-weight:600; color:var(--accent); margin-bottom:4px;">
+            ${isEmpty ? '🏆 No contests yet' : '＋ Add Contest'}
+          </div>
+          <div style="font-size:11px; color:var(--muted); margin-bottom:12px;">
+            Creating for: <strong style="color:var(--text);">${tName}</strong>
+          </div>
+          ${isEmpty ? `<p style="font-size:12px; color:var(--muted); margin:0 0 12px;">
+            A tournament needs at least one public contest before users can play.
+            Create a <strong>Daily</strong> contest (single-match XI each game) and/or a
+            <strong>Season Long</strong> contest (one squad, weekly transfers).
+          </p>` : ''}
+
+          <!-- Name + Type row -->
+          <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap; margin-bottom:12px;">
+            <div style="display:flex; flex-direction:column; gap:4px; flex:1; min-width:180px;">
+              <label style="font-size:11px; color:var(--muted); font-weight:600;">Contest name</label>
+              <input id="ncName" type="text" placeholder="e.g. IPL 2026 Daily, IPL 2026 Season Long"
+                     style="font-size:13px;" />
+            </div>
+            <div style="display:flex; flex-direction:column; gap:4px;">
+              <label style="font-size:11px; color:var(--muted); font-weight:600;">Type</label>
+              <select id="ncType" style="font-size:13px; padding:6px 10px;">
+                <option value="daily">Daily (per-match XI)</option>
+                <option value="season_long">Season Long (squad + transfers)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Season Long config — hidden until type = season_long -->
+          <div id="ncSlConfig" style="display:none; border:1px solid var(--border); border-radius:6px; padding:12px 14px; margin-bottom:12px; background:rgba(34,211,238,0.03);">
+            <div style="font-size:12px; font-weight:600; color:var(--muted); margin-bottom:10px;">⚙️ Season Long settings</div>
+
+            <!-- Transfer settings -->
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:10px;">
+              <div style="display:flex; flex-direction:column; gap:4px;">
+                <label style="font-size:11px; color:var(--muted); font-weight:600;">Total transfer budget
+                  <span style="font-weight:400;">(blank = unlimited)</span></label>
+                <input id="ncTotalXfers" type="number" min="0" step="1" placeholder="Unlimited"
+                       style="font-size:13px; padding:6px 9px;" />
+              </div>
+              <div style="display:flex; flex-direction:column; gap:4px;">
+                <label style="font-size:11px; color:var(--muted); font-weight:600;">Free transfers per match</label>
+                <select id="ncFreeXfersPerMatch" style="font-size:13px; padding:6px 9px;">
+                  <option value="na">N/A — no per-match allocation</option>
+                  <option value="0">0 — every transfer costs pts</option>
+                  <option value="1">1 free per match</option>
+                  <option value="2">2 free per match</option>
+                  <option value="3">3 free per match</option>
+                  <option value="unlimited">Unlimited free (no penalty)</option>
+                </select>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:4px;">
+                <label id="ncXferCostLabel" style="font-size:11px; color:var(--muted); font-weight:600;">Extra transfer cost (pts)
+                  <span style="font-weight:400;">(per transfer over free allowance)</span></label>
+                <input id="ncXferCost" type="number" min="0" step="1" value="4"
+                       style="font-size:13px; padding:6px 9px;" />
+              </div>
+              <div style="display:flex; flex-direction:column; gap:4px;">
+                <label style="font-size:11px; color:var(--muted); font-weight:600;">Season start match #
+                  <span style="font-weight:400;">(blank = all matches)</span></label>
+                <input id="ncStartMN" type="number" min="1" step="1" placeholder="All matches"
+                       style="font-size:13px; padding:6px 9px;" />
+              </div>
+            </div>
+
+            <!-- Playoff section -->
+            <div style="border-top:1px solid var(--border); padding-top:10px; margin-bottom:10px;">
+              <div style="font-size:11px; font-weight:600; color:var(--muted); margin-bottom:8px;">🏟️ Playoff phase
+                <span style="font-weight:400;">(leave blank if no playoff phase)</span></div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                  <label style="font-size:11px; color:var(--muted); font-weight:600;">Playoff start match #</label>
+                  <input id="ncPlayoffStartMN" type="number" min="1" step="1" placeholder="No playoffs"
+                         style="font-size:13px; padding:6px 9px;" />
+                </div>
+                <div style="display:flex; flex-direction:column; gap:4px;">
+                  <label style="font-size:11px; color:var(--muted); font-weight:600;">Playoff transfer budget
+                    <span style="font-weight:400;">(blank = unlimited)</span></label>
+                  <input id="ncPlayoffXfers" type="number" min="0" step="1" placeholder="Unlimited"
+                         style="font-size:13px; padding:6px 9px;" />
+                </div>
+              </div>
+            </div>
+
+            <!-- Boosters -->
+            <div style="border-top:1px solid var(--border); padding-top:10px;">
+              <div style="font-size:12px; font-weight:600; margin-bottom:8px; color:var(--muted);">⚡ Boosters
+                <span style="font-weight:400;">(check to enable, set how many uses each member gets)</span></div>
+              <div id="ncBoostersGrid">${boosterRows}</div>
+            </div>
+          </div>
+
+          <button id="ncCreateBtn" class="primary" style="font-size:13px; padding:7px 18px; white-space:nowrap;">
+            Create contest
+          </button>
+          <div id="ncStatus" style="font-size:11px; color:var(--muted); margin-top:8px;"></div>
+        </div>`;
+    }
+
+    function wireNewContestForm() {
+      const btn      = $('#ncCreateBtn');
+      const statusEl = $('#ncStatus');
+      const typeEl   = $('#ncType');
+      const slConfig = $('#ncSlConfig');
+      if (!btn) return;
+
+      // Show/hide SL config section based on type
+      const toggleSlConfig = () => {
+        if (slConfig) slConfig.style.display = typeEl.value === 'season_long' ? 'block' : 'none';
+      };
+      typeEl.addEventListener('change', toggleSlConfig);
+
+      // Grey out extra transfer cost when free transfers = N/A
+      const freeXferEl  = $('#ncFreeXfersPerMatch');
+      const xferCostEl  = $('#ncXferCost');
+      const xferCostLbl = $('#ncXferCostLabel');
+      const toggleXferCost = () => {
+        const isNA = freeXferEl && freeXferEl.value === 'na';
+        if (xferCostEl)  { xferCostEl.disabled = isNA; xferCostEl.style.opacity = isNA ? '0.4' : '1'; }
+        if (xferCostLbl) xferCostLbl.style.opacity = isNA ? '0.4' : '1';
+      };
+      if (freeXferEl) freeXferEl.addEventListener('change', toggleXferCost);
+
+      // Wire booster checkboxes — enable/disable count inputs
+      document.querySelectorAll('.nc-boost-chk').forEach(chk => {
+        chk.addEventListener('change', () => {
+          const countEl = $(`#ncBoost_${chk.dataset.booster}_count`);
+          if (countEl) countEl.disabled = !chk.checked;
+        });
+      });
+
+      btn.addEventListener('click', async () => {
+        const name        = $('#ncName').value.trim();
+        const contestType = typeEl.value;
+        if (!name) { statusEl.textContent = 'Enter a contest name.'; statusEl.style.color = 'var(--bad)'; return; }
+        if (!state.activeTournamentId) { statusEl.textContent = 'No active tournament selected.'; statusEl.style.color = 'var(--bad)'; return; }
+
+        const parseIntOrNull = raw => (raw == null || String(raw).trim() === '' ? null : parseInt(raw, 10));
+
+        const opts = { name, contestType };
+
+        if (contestType === 'season_long') {
+          opts.totalTransfersAllowed    = parseIntOrNull($('#ncTotalXfers')?.value);
+          // Free transfers: 'na' → null (no per-match tracking), 'unlimited' → null,
+          // numeric string → that integer
+          const freeVal = freeXferEl?.value ?? 'na';
+          opts.freeTransfersPerMatch    = (freeVal === 'na' || freeVal === 'unlimited') ? null : parseInt(freeVal, 10);
+          // Extra cost: irrelevant when N/A — store as 0 so no accidental deductions
+          opts.extraTransferPointCost   = (freeVal === 'na') ? 0 : (parseIntOrNull($('#ncXferCost')?.value) ?? 4);
+          opts.startMatchNumber         = parseIntOrNull($('#ncStartMN')?.value);
+          opts.playoffStartMatchNumber  = parseIntOrNull($('#ncPlayoffStartMN')?.value);
+          opts.playoffTransfersAllowed  = parseIntOrNull($('#ncPlayoffXfers')?.value);
+
+          // Collect enabled boosters
+          const boosters = {};
+          document.querySelectorAll('.nc-boost-chk').forEach(chk => {
+            if (chk.checked) {
+              const countEl = $(`#ncBoost_${chk.dataset.booster}_count`);
+              boosters[chk.dataset.booster] = parseInt(countEl?.value || '1', 10);
+            }
+          });
+          opts.availableBoosters = Object.keys(boosters).length > 0 ? boosters : null;
+        }
+
+        btn.disabled = true;
+        statusEl.textContent = 'Creating…';
+        statusEl.style.color = 'var(--muted)';
+        try {
+          await state.db.createContest(state.activeTournamentId, opts);
+          toast(`Contest "${name}" created.`);
+          renderContestsAdmin(); // full re-render so the new card appears
+        } catch (e) {
+          statusEl.textContent = 'Failed: ' + e.message;
+          statusEl.style.color = 'var(--bad)';
+          btn.disabled = false;
+        }
+      });
+    }
+
+    function renderContestsTournamentBar(contestCount) {
+      const sw    = $('#contestsTournamentSwitch');
+      const badge = $('#contestsCountBadge');
+      if (!sw) return;
+      sw.innerHTML = state.tournaments.length
+        ? state.tournaments.map(t =>
+            `<option value="${t.id}" ${t.id === state.activeTournamentId ? 'selected' : ''}>${escapeHtml(t.name)} (${t.format || 'T20'})</option>`
+          ).join('')
+        : '<option value="">— no tournaments loaded —</option>';
+      if (badge) {
+        badge.textContent = contestCount === null ? '' :
+          contestCount === 0 ? 'No contests yet' :
+          `${contestCount} contest${contestCount !== 1 ? 's' : ''}`;
+      }
+      // Wire switcher (only once — avoid duplicate listeners by replacing the node)
+      const fresh = sw.cloneNode(true);
+      sw.parentNode.replaceChild(fresh, sw);
+      fresh.addEventListener('change', e => {
+        if (state.db) {
+          switchTournament(e.target.value);
+          const picker = $('#tournamentPicker');
+          if (picker) picker.value = e.target.value;
+          renderContestsAdmin();
+        }
+      });
+    }
+
+    async function renderContestsAdmin() {
+      const wrap = $('#adminContestsList');
+      if (!state.db) {
+        renderContestsTournamentBar(null);
+        wrap.innerHTML = '<div class="msg warn" style="margin:10px 0;">Connect a database in the Tournament tab first.</div>';
+        return;
+      }
+      wrap.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:6px 0;">Loading…</div>';
+      try {
+        const contests = await state.db.getContests(state.activeTournamentId);
+
+        renderContestsTournamentBar(contests.length);
+
+        if (!contests.length) {
+          wrap.innerHTML = renderNewContestForm(true);
+          wireNewContestForm();
+          renderCloseOutPanel(state.activeTournamentId ?? null);
+          return;
+        }
+
+        // Helper: labelled number row
+        const numRow = (label, hint, id, val, placeholder) => `
+          <div style="display:flex; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:10px;">
+            <label style="font-size:12px; color:var(--muted); min-width:200px;">
+              ${label}
+              <div style="font-size:10px; color:var(--muted); margin-top:2px;">${hint}</div>
+            </label>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <input type="number" min="0" step="1"
+                id="${id}"
+                value="${val}"
+                placeholder="${placeholder}"
+                style="width:100px; font-size:13px; padding:5px 8px;"
+              />
+              <button class="primary" style="font-size:12px; padding:5px 12px;"
+                data-savephase="${id}">Save</button>
+              <span id="${id}_status" style="font-size:11px; color:var(--muted);"></span>
+            </div>
+          </div>`;
+
+        const publicContests  = contests.filter(c => !c.is_private);
+        const privateLeagues  = contests.filter(c => c.is_private);
+
+        wrap.innerHTML = publicContests.map(c => {
+          const isSL = c.contest_type === 'season_long';
+          const budget        = c.total_transfers_allowed     ?? '';
+          const startMN       = c.start_match_number          ?? '';
+          const playoffStartMN= c.playoff_start_match_number  ?? '';
+          const playoffBudget = c.playoff_transfers_allowed   ?? '';
+          return `
+            <div style="border:1px solid var(--border); border-radius:8px; padding:14px 16px; margin-bottom:12px;">
+              <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+                <strong style="font-size:14px;">${escapeHtml(c.name)}</strong>
+                <span style="font-size:11px; color:var(--muted); background:var(--panel-2); padding:2px 7px; border-radius:10px;">${c.contest_type}</span>
+              </div>
+              ${isSL ? `
+                ${numRow('Season transfer budget','Total player changes allowed across the whole season. Leave blank for unlimited.',`xferBudget_${c.id}`,budget,'Unlimited')}
+                <div style="border-top:1px solid var(--border); margin:8px 0 12px;"></div>
+                ${numRow('Season start match number','Season-long scoring and transfers only apply from this match number onward. Leave blank to include all matches.',`startMN_${c.id}`,startMN,'All matches')}
+                ${numRow('Playoff start match number','Match number where the playoff phase begins (uses a separate transfer budget). Leave blank if no playoff phase.',`playoffStartMN_${c.id}`,playoffStartMN,'No playoffs')}
+                ${numRow('Playoff transfer budget','Separate transfer allowance for the playoff phase. Leave blank for unlimited playoff transfers.',`playoffBudget_${c.id}`,playoffBudget,'Unlimited')}
+                ${buildBoosterConfigHtml(c.id, c.available_boosters)}
+              ` : `<div style="font-size:12px;color:var(--muted);">No configurable options for daily contests.</div>`}
+            </div>`;
+        }).join('') +
+
+        // ── Private Leagues section ───────────────────────────────────────────
+        `<div style="border-top:2px solid var(--border); margin:16px 0 12px; padding-top:14px;">
+          <div style="font-size:13px; font-weight:600; margin-bottom:12px; display:flex; align-items:center; gap:8px;">
+            🔒 Private Leagues
+            <span style="font-size:11px; font-weight:400; color:var(--muted);">invite-only · custom scoring · separate leaderboard</span>
+          </div>
+
+          ${await (async () => {
+            if (!privateLeagues.length) return `<div style="font-size:12px; color:var(--muted); padding:8px 0;">No private leagues yet.</div>`;
+            // Fetch live member counts for all private leagues in one query
+            const memberCounts = await state.db.getMemberCountsForContests(privateLeagues.map(c => c.id)).catch(() => ({}));
+            return privateLeagues.map(c => {
+              const hasCustomRules = c.scoring_rules && Object.keys(c.scoring_rules).length > 0;
+              const memberCount    = memberCounts[c.id] ?? 0;
+              const cap            = c.max_members;
+              const capDisplay     = cap ? `${memberCount} / ${cap}` : `${memberCount} members`;
+              const capFull        = cap && memberCount >= cap;
+              return `
+              <div style="border:1px solid var(--border); border-radius:8px; padding:12px 14px; margin-bottom:10px; background:rgba(34,211,238,0.04);">
+                <!-- Header row: name + badges + invite code -->
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <strong style="font-size:13px;">${escapeHtml(c.name)}</strong>
+                    ${hasCustomRules ? `<span style="font-size:10px; background:rgba(166,124,0,0.15); color:var(--accent-2); padding:2px 6px; border-radius:8px;">custom rules</span>` : ''}
+                    <span style="font-size:11px; color:${capFull ? 'var(--bad)' : 'var(--muted)'};">${capDisplay}${capFull ? ' · full' : ''}</span>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="font-size:12px; color:var(--muted);">Invite code:</span>
+                    <code style="font-size:14px; font-weight:700; color:var(--accent); background:var(--panel-2); padding:3px 10px; border-radius:6px; letter-spacing:2px;">${escapeHtml(c.invite_code || '—')}</code>
+                    <button class="copy-invite-btn" data-code="${escapeHtml(c.invite_code || '')}" style="font-size:11px; padding:3px 8px;">Copy</button>
+                  </div>
+                </div>
+                <!-- Scoring info -->
+                <div style="font-size:11px; color:var(--muted); margin-top:6px;">
+                  ${hasCustomRules ? `Custom scoring: ${Object.keys(c.scoring_rules).join(', ')} format(s) overridden` : 'Uses tournament scoring rules'}
+                </div>
+                <!-- Admin: editable member cap -->
+                <div style="display:flex; align-items:center; gap:8px; margin-top:10px; padding-top:10px; border-top:1px dashed var(--border);">
+                  <span style="font-size:12px; color:var(--muted); flex-shrink:0;">Member cap:</span>
+                  <input type="number" min="2" max="500"
+                    class="pl-cap-input"
+                    data-contest="${c.id}"
+                    value="${cap ?? ''}"
+                    placeholder="Unlimited"
+                    style="width:100px; font-size:13px; padding:4px 8px;" />
+                  <button class="primary pl-cap-save" data-contest="${c.id}" style="font-size:12px; padding:4px 10px;">Save</button>
+                  <span class="pl-cap-status" data-contest="${c.id}" style="font-size:11px; color:var(--muted);"></span>
+                </div>
+                ${buildBoosterConfigHtml(c.id, c.available_boosters)}
+              </div>`;
+            }).join('');
+          })()}
+
+          <!-- New Private League form -->
+          <div style="border:1px dashed var(--border); border-radius:8px; padding:12px 14px; margin-top:8px;">
+            <div style="font-size:12px; font-weight:600; color:var(--accent); margin-bottom:10px;">+ New Private League</div>
+            <div style="display:flex; flex-direction:column; gap:8px;">
+              <input id="plName" type="text" placeholder="League name (e.g. The Office League)" style="font-size:13px;" />
+              <div style="display:flex; gap:6px; align-items:center;">
+                <input id="plMaxMembers" type="number" min="2" max="100" placeholder="Max members (optional)" style="font-size:13px; flex:1;" />
+              </div>
+              <!-- Boosters for new league -->
+              <div style="border:1px solid var(--border); border-radius:6px; padding:10px; margin-top:2px;">
+                <div style="font-size:12px; font-weight:600; margin-bottom:8px; color:var(--muted);">⚡ Boosters <span style="font-weight:400;">(check to enable, set how many uses each member gets)</span></div>
+                <div id="plBoostersGrid">
+                  ${Object.entries(BOOSTER_META).map(([key, meta]) => `
+                    <div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);">
+                      <input type="checkbox" id="plBoost_${key}" data-booster="${key}" class="pl-new-boost-chk" style="flex-shrink:0;" />
+                      <label for="plBoost_${key}" style="font-size:12px;flex:1;cursor:pointer;">
+                        ${meta.icon} <strong>${meta.label}</strong>
+                        <span style="color:var(--muted);font-size:11px;margin-left:4px;">${meta.desc}</span>
+                      </label>
+                      <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+                        <span style="font-size:11px;color:var(--muted);">Uses:</span>
+                        <input type="number" min="1" max="10" value="1" id="plBoost_${key}_count"
+                          style="width:50px;font-size:12px;padding:3px 6px;" disabled />
+                      </div>
+                    </div>`).join('')}
+                </div>
+              </div>
+              <label style="font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; cursor:pointer;">
+                <input type="checkbox" id="plCustomRules" />
+                Use custom scoring rules for this league
+              </label>
+              <div id="plRulesSection" style="display:none; border:1px solid var(--border); border-radius:6px; padding:10px; margin-top:2px;">
+                <div style="font-size:11px; color:var(--muted); margin-bottom:8px;">Overrides tournament rules for this league only. Leave unchanged to inherit the tournament default.</div>
+                <div class="rules-tabs" style="margin-bottom:10px;" id="plRulesTabs">
+                  <span class="tab active" data-plfmt="T20">T20</span>
+                  <span class="tab" data-plfmt="ODI">ODI</span>
+                  <span class="tab" data-plfmt="TEST">Test</span>
+                </div>
+                <div id="plRulesEditor"></div>
+              </div>
+              <button id="plCreateBtn" class="primary" style="align-self:flex-start; font-size:12px; padding:6px 14px;">Create league</button>
+              <span id="plStatus" style="font-size:11px; color:var(--muted);"></span>
+            </div>
+          </div>
+        </div>
+
+        ${renderNewContestForm(false)}`;
+
+        wireNewContestForm();
+
+        // Close-out panel at the bottom
+        renderCloseOutPanel(state.activeTournamentId ?? null);
+
+        // ── Wire "Save" buttons ────────────────────────────────────────────────
+
+        // Helper: parse an int-or-null input value
+        const parseIntOrNull = raw => (raw.trim() === '' ? null : parseInt(raw, 10));
+
+        // Season transfer budget
+        wrap.querySelectorAll('[data-savephase]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const inputId  = btn.dataset.savephase;
+            const inp      = $(`#${inputId}`);
+            const statusEl = $(`#${inputId}_status`);
+            const raw      = inp.value.trim();
+            const val      = parseIntOrNull(raw);
+            if (raw !== '' && (isNaN(val) || val < 0)) {
+              statusEl.textContent = 'Enter a whole number ≥ 0, or leave blank.';
+              statusEl.style.color = 'var(--bad)'; return;
+            }
+
+            // Determine which contest + which field this button belongs to
+            const cid = inputId.replace(/^(xferBudget|startMN|playoffStartMN|playoffBudget)_/, '');
+            const kind = inputId.startsWith('xferBudget')       ? 'xferBudget'
+                       : inputId.startsWith('startMN')          ? 'startMN'
+                       : inputId.startsWith('playoffStartMN')   ? 'playoffStartMN'
+                                                                 : 'playoffBudget';
+
+            btn.disabled = true; statusEl.textContent = 'Saving…'; statusEl.style.color = 'var(--muted)';
+            try {
+              if (kind === 'xferBudget') {
+                await state.db.updateContestTransferBudget(cid, val);
+                statusEl.textContent = val === null ? 'Saved — unlimited.' : `Saved — ${val} transfers.`;
+                if (state.sl.seasonContest?.id === cid) {
+                  state.sl.seasonContest.total_transfers_allowed = val;
+                }
+              } else {
+                const field = kind === 'startMN'        ? 'start_match_number'
+                            : kind === 'playoffStartMN' ? 'playoff_start_match_number'
+                                                        : 'playoff_transfers_allowed';
+                await state.db.updateContestPhases(cid, { [field]: val });
+                statusEl.textContent = val === null
+                  ? 'Saved — cleared.'
+                  : kind === 'playoffBudget'
+                    ? `Saved — ${val} transfers.`
+                    : `Saved — M${val}.`;
+                if (state.sl.seasonContest?.id === cid) {
+                  state.sl.seasonContest[field] = val;
+                }
+              }
+              statusEl.style.color = 'var(--good,#4ade80)';
+              if (state.sl.seasonContest?.id === cid) { renderSlXiTab(); renderSlLiveTab(); }
+            } catch (e) {
+              statusEl.textContent = 'Save failed: ' + e.message;
+              statusEl.style.color = 'var(--bad)';
+            } finally { btn.disabled = false; }
+          });
+        });
+        // ── Copy invite code buttons ──────────────────────────────────────────
+        wrap.querySelectorAll('.copy-invite-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            navigator.clipboard?.writeText(btn.dataset.code).catch(() => {});
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+          });
+        });
+
+        // ── Member cap save buttons ───────────────────────────────────────────
+        wrap.querySelectorAll('.pl-cap-save').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const contestId = btn.dataset.contest;
+            const inp       = wrap.querySelector(`.pl-cap-input[data-contest="${contestId}"]`);
+            const statusEl  = wrap.querySelector(`.pl-cap-status[data-contest="${contestId}"]`);
+            const raw       = inp?.value.trim() ?? '';
+            const val       = raw === '' ? null : parseInt(raw, 10);
+            if (raw !== '' && (!Number.isFinite(val) || val < 2)) {
+              statusEl.textContent = 'Enter a number ≥ 2, or leave blank to remove cap.';
+              statusEl.style.color = 'var(--bad)'; return;
+            }
+            btn.disabled = true; statusEl.textContent = 'Saving…'; statusEl.style.color = 'var(--muted)';
+            try {
+              await state.db.updateContestMaxMembers(contestId, val);
+              statusEl.textContent = val === null ? 'Cap removed.' : `Cap set to ${val}.`;
+              statusEl.style.color = 'var(--good,#4ade80)';
+              // Update in-memory contests list
+              const c = state.sl.contests?.find(x => x.id === contestId);
+              if (c) c.max_members = val;
+            } catch (e) {
+              statusEl.textContent = 'Save failed: ' + e.message;
+              statusEl.style.color = 'var(--bad)';
+            } finally { btn.disabled = false; }
+          });
+        });
+
+        // ── Booster checkbox → enable/disable count input ─────────────────────
+        wrap.querySelectorAll('.boost-chk').forEach(chk => {
+          chk.addEventListener('change', () => {
+            // Find sibling count input (same parent div)
+            const countInp = chk.closest('div').querySelector('input[type="number"]');
+            if (countInp) countInp.disabled = !chk.checked;
+          });
+        });
+
+        // ── Booster Save buttons ──────────────────────────────────────────────
+        wrap.querySelectorAll('.boost-save-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const contestId = btn.dataset.contest;
+            const statusEl  = wrap.querySelector(`.boost-status[data-contest="${contestId}"]`);
+            const gridId    = `boostGrid_${contestId.replace(/-/g,'')}`;
+            const grid      = wrap.querySelector(`#${gridId}`);
+            if (!grid) return;
+            // Collect enabled boosters + their counts
+            const boosters = {};
+            grid.querySelectorAll('.boost-chk').forEach(chk => {
+              if (chk.checked) {
+                const key      = chk.dataset.booster;
+                const countInp = chk.closest('div').querySelector('input[type="number"]');
+                const count    = parseInt(countInp?.value || '1', 10);
+                boosters[key]  = Number.isFinite(count) && count >= 1 ? count : 1;
+              }
+            });
+            btn.disabled = true; statusEl.textContent = 'Saving…'; statusEl.style.color = 'var(--muted)';
+            try {
+              const payload = Object.keys(boosters).length ? boosters : null;
+              await state.db.updateContestBoosters(contestId, payload);
+              // Update in-memory so the active contest reflects new boosters
+              const mc = state.sl.contests?.find(x => x.id === contestId);
+              if (mc) mc.available_boosters = payload;
+              if (state.sl.seasonContest?.id === contestId) state.sl.seasonContest.available_boosters = payload;
+              statusEl.textContent = payload ? `✓ Saved (${Object.keys(payload).length} booster${Object.keys(payload).length !== 1 ? 's' : ''})` : '✓ Boosters cleared.';
+              statusEl.style.color = 'var(--good,#4ade80)';
+            } catch (e) {
+              statusEl.textContent = 'Save failed: ' + e.message; statusEl.style.color = 'var(--bad)';
+            } finally { btn.disabled = false; }
+          });
+        });
+
+        // ── New private league form ───────────────────────────────────────────
+        // Toggle count inputs on new-league booster checkboxes
+        wrap.querySelectorAll('.pl-new-boost-chk').forEach(chk => {
+          chk.addEventListener('change', () => {
+            const countInp = document.getElementById(`plBoost_${chk.dataset.booster}_count`);
+            if (countInp) countInp.disabled = !chk.checked;
+          });
+        });
+
+        // State for the new-league scoring rules (starts as a copy of current tournament rules)
+        let plFmt = 'T20';
+        const plRules = JSON.parse(JSON.stringify(SCORING_RULES));
+        let plUseCustom = false;
+
+        function renderPlRulesEditor() {
+          const editor = $('#plRulesEditor');
+          if (!editor) return;
+          editor.innerHTML = buildRulesGrid(plFmt, false);
+          editor.querySelectorAll('input.rule-input').forEach(inp => {
+            inp.addEventListener('input', e => {
+              const key = e.target.dataset.key;
+              const num = parseFloat(e.target.value);
+              if (Number.isFinite(num)) {
+                plRules[plFmt][key] = num;
+                const dv = DEFAULT_SCORING_RULES[plFmt]?.[key];
+                e.target.classList.toggle('changed', Number(num) !== Number(dv));
+              }
+            });
+          });
+        }
+
+        $('#plCustomRules')?.addEventListener('change', e => {
+          plUseCustom = e.target.checked;
+          const section = $('#plRulesSection');
+          if (section) section.style.display = plUseCustom ? 'block' : 'none';
+          if (plUseCustom) renderPlRulesEditor();
+        });
+
+        wrap.querySelectorAll('#plRulesTabs .tab').forEach(t => {
+          t.addEventListener('click', () => {
+            plFmt = t.dataset.plfmt;
+            wrap.querySelectorAll('#plRulesTabs .tab').forEach(x => x.classList.toggle('active', x.dataset.plfmt === plFmt));
+            renderPlRulesEditor();
+          });
+        });
+
+        $('#plCreateBtn')?.addEventListener('click', async () => {
+          const name = $('#plName')?.value.trim();
+          const maxM = parseInt($('#plMaxMembers')?.value || '', 10);
+          const statusEl = $('#plStatus');
+          if (!name) { statusEl.textContent = 'League name is required.'; statusEl.style.color = 'var(--bad)'; return; }
+          const btn = $('#plCreateBtn');
+          btn.disabled = true; statusEl.textContent = 'Creating…'; statusEl.style.color = 'var(--muted)';
+          try {
+            // Only save formats that have at least one value changed from tournament defaults
+            let scoringRules = null;
+            if (plUseCustom) {
+              const changed = {};
+              ['T20', 'ODI', 'TEST'].forEach(f => {
+                const def = SCORING_RULES[f]; // current tournament rules = baseline
+                const pl  = plRules[f];
+                if (!def || !pl) return;
+                const diff = {};
+                Object.keys(pl).forEach(k => { if (Number(pl[k]) !== Number(def[k])) diff[k] = pl[k]; });
+                if (Object.keys(diff).length) changed[f] = { ...def, ...diff };
+              });
+              if (Object.keys(changed).length) scoringRules = changed;
+            }
+            // Collect enabled boosters from the new-league booster grid
+            const newLeagueBoosters = {};
+            wrap.querySelectorAll('.pl-new-boost-chk').forEach(chk => {
+              if (chk.checked) {
+                const key      = chk.dataset.booster;
+                const countInp = document.getElementById(`plBoost_${key}_count`);
+                const count    = parseInt(countInp?.value || '1', 10);
+                newLeagueBoosters[key] = Number.isFinite(count) && count >= 1 ? count : 1;
+              }
+            });
+
+            const league = await state.db.createPrivateLeague(state.activeTournamentId, {
+              name,
+              scoringRules,
+              maxMembers      : Number.isFinite(maxM) && maxM >= 2 ? maxM : null,
+              availableBoosters: Object.keys(newLeagueBoosters).length ? newLeagueBoosters : null,
+            });
+            statusEl.textContent = `✓ League created — invite code: ${league.invite_code}`;
+            statusEl.style.color = 'var(--good,#4ade80)';
+            $('#plName').value = '';
+            $('#plMaxMembers').value = '';
+            renderContestsAdmin(); // refresh list
+          } catch (e) {
+            statusEl.textContent = 'Failed: ' + e.message;
+            statusEl.style.color = 'var(--bad)';
+            btn.disabled = false;
+          }
+        });
+
+      } catch (e) {
+        wrap.innerHTML = `<div class="msg err">Failed to load contests: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    function nextPlayerId() {
+      // Pick smallest unused pNN. Must check against BOTH the currently-loaded
+      // A.PLAYERS (which can be tournament-scoped — see getPlayersForTournament)
+      // AND the global ALL_PLAYER_IDS cache, since players.id is a single global
+      // namespace shared by every tournament. Checking A.PLAYERS alone can suggest
+      // an id (e.g. 'p01') that's free in this tournament's subset but already
+      // taken globally, which fails the insert (or silently collides).
+      const used = new Set(A.PLAYERS.map(p => p.id));
+      ALL_PLAYER_IDS.forEach(id => used.add(id));
+      for (let i = 1; i < 1000; i++) {
+        const id = 'p' + String(i).padStart(2, '0');
+        if (!used.has(id)) return id;
+      }
+      return 'p' + Date.now();
+    }
+
+    function renderAdmin() {
+      const term = state.adminSearch.trim().toLowerCase();
+      const list = A.PLAYERS.filter(p =>
+        !term || p.name.toLowerCase().includes(term) || p.team.toLowerCase().includes(term)
+      );
+
+      // Context label — show which tournament's players are loaded
+      const activeTournament = state.tournaments.find(t => t.id === state.activeTournamentId);
+      const tableView = $('#adminTableView');
+      let labelEl = tableView?.querySelector('#playersContextLabel');
+      if (tableView && !labelEl) {
+        labelEl = document.createElement('div');
+        labelEl.id = 'playersContextLabel';
+        tableView.insertBefore(labelEl, tableView.firstChild);
+      }
+      if (labelEl && activeTournament) {
+        const isTournament = playersSource === 'tournament';
+        const isGlobal     = playersSource === 'global';
+        const badge = isTournament
+          ? `<span style="color:var(--accent); font-weight:600;">${escapeHtml(activeTournament.name)}</span>`
+          : `<span style="color:var(--muted);">all tournaments (no players imported for ${escapeHtml(activeTournament.name)} yet)</span>`;
+        labelEl.innerHTML = `
+          <div style="font-size:11px; color:var(--muted); padding:6px 12px 4px;
+                      font-weight:600; text-transform:uppercase; letter-spacing:0.5px;
+                      border-bottom:1px solid var(--border); margin-bottom:4px;">
+            Showing: ${badge}
+            — ${A.PLAYERS.length} player${A.PLAYERS.length !== 1 ? 's' : ''}
+            ${isGlobal ? '<span style="color:var(--accent); font-weight:400; text-transform:none; letter-spacing:0;">(import players via CSV to make this tournament-specific)</span>' : ''}
+          </div>`;
+      }
+
+      $('#adminCount').textContent = `${list.length} of ${A.PLAYERS.length}`;
+
+      const teamOpts = teamCodes().map(t => `<option value="${t}">${t}</option>`).join('');
+      const roleOpts = KNOWN_ROLES.map(([v,l]) => `<option value="${v}">${l}</option>`).join('');
+
+      // Add-row first
+      const addRow = `
+        <tr class="add-row" id="addPlayerRow">
+          <td class="col-id">${nextPlayerId()}</td>
+          <td><input data-f="name" type="text" placeholder="Player name" /></td>
+          <td class="col-team"><select data-f="team">${teamOpts}</select></td>
+          <td class="col-role"><select data-f="role">${roleOpts}</select></td>
+          <td class="col-credits"><input data-f="credits" type="number" step="0.5" value="8.5" /></td>
+          <td class="col-overseas"><input data-f="overseas" type="checkbox" /></td>
+          <td class="col-actions"><button class="row-add" id="addPlayerBtn" title="Add">+</button></td>
+        </tr>
+      `;
+      const rows = list.map(p => `
+        <tr data-id="${p.id}">
+          <td class="col-id">${p.id}</td>
+          <td><input data-f="name" type="text" value="${escapeHtml(p.name)}" /></td>
+          <td class="col-team"><select data-f="team">${teamCodes().map(t => `<option value="${t}" ${t===p.team?'selected':''}>${t}</option>`).join('')}</select></td>
+          <td class="col-role"><select data-f="role">${KNOWN_ROLES.map(([v,l]) => `<option value="${v}" ${v===p.role?'selected':''}>${l}</option>`).join('')}</select></td>
+          <td class="col-credits"><input data-f="credits" type="number" step="0.5" value="${p.credits}" /></td>
+          <td class="col-overseas"><input data-f="overseas" type="checkbox" ${p.overseas?'checked':''} /></td>
+          <td class="col-actions"><button class="row-del" data-act="del" title="Delete">×</button></td>
+        </tr>
+      `).join('');
+
+      $('#adminTableBody').innerHTML = addRow + rows;
+
+      // Wire add-row
+      $('#addPlayerBtn').addEventListener('click', addPlayerHandler);
+      // Wire edit-rows
+      $('#adminTableBody').querySelectorAll('tr[data-id]').forEach(tr => {
+        const id = tr.dataset.id;
+        tr.querySelectorAll('input, select').forEach(el => {
+          el.addEventListener('change', () => savePlayerEdit(id, tr));
+          // Live-mark dirty
+          el.addEventListener('input', () => el.classList.add('dirty'));
+        });
+        tr.querySelector('[data-act="del"]').addEventListener('click', () => deletePlayerHandler(id));
+      });
+    }
+
+    async function addPlayerHandler() {
+      const row = $('#addPlayerRow');
+      const name = row.querySelector('[data-f="name"]').value.trim();
+      const team = row.querySelector('[data-f="team"]').value;
+      const role = row.querySelector('[data-f="role"]').value;
+      const credits = parseFloat(row.querySelector('[data-f="credits"]').value);
+      const overseas = row.querySelector('[data-f="overseas"]').checked;
+      const id = row.querySelector('.col-id').textContent;
+
+      if (!name) { toast('Name is required.'); return; }
+      if (!Number.isFinite(credits) || credits < 0) { toast('Credits must be a non-negative number.'); return; }
+
+      try {
+        if (state.db) {
+          const inserted = await state.db.addPlayer({ id, name, team, role, credits, overseas }, state.activeTournamentId);
+          A.PLAYERS.push(inserted);
+        } else {
+          A.PLAYERS.push({ id, name, team, role, credits, overseas });
+        }
+        ALL_PLAYER_IDS.add(id); // keep the global uniqueness set in sync immediately, no need to wait for a refetch
+        toast(`Added ${name}.`);
+        renderAdmin(); renderPool(); render();
+      } catch (e) { toast('Add failed: ' + e.message, 4000); }
+    }
+
+    async function savePlayerEdit(id, tr) {
+      const patch = {
+        name:     tr.querySelector('[data-f="name"]').value.trim(),
+        team:     tr.querySelector('[data-f="team"]').value,
+        role:     tr.querySelector('[data-f="role"]').value,
+        credits:  parseFloat(tr.querySelector('[data-f="credits"]').value),
+        overseas: tr.querySelector('[data-f="overseas"]').checked,
+      };
+      if (!patch.name) { toast('Name is required.'); return; }
+      if (!Number.isFinite(patch.credits) || patch.credits < 0) { toast('Bad credits value.'); return; }
+
+      try {
+        if (state.db) {
+          const updated = await state.db.updatePlayer(id, patch);
+          const idx = A.PLAYERS.findIndex(p => p.id === id);
+          if (idx >= 0) A.PLAYERS[idx] = updated;
+        } else {
+          const idx = A.PLAYERS.findIndex(p => p.id === id);
+          if (idx >= 0) A.PLAYERS[idx] = { ...PLAYERS[idx], ...patch };
+        }
+        tr.querySelectorAll('.dirty').forEach(el => el.classList.remove('dirty'));
+        renderPool(); render();
+      } catch (e) { toast('Save failed: ' + e.message, 4000); }
+    }
+
+    async function deletePlayerHandler(id) {
+      const p = playerById(id);
+      if (!confirm(`Delete ${p?.name || id}? This cannot be undone.`)) return;
+      try {
+        if (state.db) await state.db.deletePlayer(id);
+        ALL_PLAYER_IDS.delete(id); // global row is actually gone (deletePlayer throws if still FK-referenced), so the id is free again
+        const idx = A.PLAYERS.findIndex(x => x.id === id);
+        if (idx >= 0) A.PLAYERS.splice(idx, 1);
+        // Also drop from current XI if selected
+        const selIdx = state.selected.indexOf(id);
+        if (selIdx >= 0) {
+          state.selected.splice(selIdx, 1);
+          if (state.captain === id)     state.captain = null;
+          if (state.viceCaptain === id) state.viceCaptain = null;
+        }
+        toast('Deleted.');
+        renderAdmin(); renderPool(); render();
+      } catch (e) { toast('Delete failed: ' + e.message, 5000); }
+    }
+
+    // ─── MATCHES ADMIN ───────────────────────────────────────────────────────
+    function nextMatchNumber() {
+      const used = new Set(state.matches.map(m => m.match_number).filter(Boolean));
+      for (let n = 1; n < 1000; n++) if (!used.has(n)) return n;
+      return state.matches.length + 1;
+    }
+
+    function renderMatchesAdmin() {
+      const matches = [...state.matches].sort((a,b) => (a.match_number||0) - (b.match_number||0));
+      const teamOpts = teamCodes().map(t => `<option value="${t}">${escapeHtml(t)}</option>`).join('');
+      // Include a placeholder when the field is unset (NULL home/away from sync).
+      const teamOptsFor = sel => {
+        const isNull = sel == null || sel === '';
+        const placeholder = `<option value="" ${isNull?'selected':''}>—</option>`;
+        return placeholder + teamCodes().map(t => `<option value="${t}" ${t===sel?'selected':''}>${escapeHtml(t)}</option>`).join('');
+      };
+
+      // Convert ISO/Z UTC string → datetime-local input value (YYYY-MM-DDTHH:MM in LOCAL tz)
+      const isoToLocalInput = iso => {
+        if (!iso) return '';
+        const d = new Date(iso);
+        if (isNaN(d)) return '';
+        const pad = n => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+      };
+      const nowDefault = isoToLocalInput(new Date().toISOString());
+
+      const addRow = `
+        <tr class="add-row" id="addMatchRow">
+          <td class="col-id"><input data-f="match_number" type="number" min="1" value="${nextMatchNumber()}" style="width:50px;" /></td>
+          <td class="col-team"><select data-f="home_team_id">${teamOpts}</select></td>
+          <td class="col-team"><select data-f="away_team_id">${teamOpts}</select></td>
+          <td class="col-role"><select data-f="format"><option value="T20">T20</option><option value="ODI">ODI</option><option value="TEST">Test</option></select></td>
+          <td><input data-f="start_time" type="datetime-local" value="${nowDefault}" /></td>
+          <td><select data-f="status">
+            <option value="scheduled">Scheduled</option>
+            <option value="delayed">🌧 Delayed</option>
+            <option value="live">🔴 Live</option>
+            <option value="in_progress">In progress</option>
+            <option value="completed">Completed</option>
+          </select></td>
+          <td><select data-f="match_type" style="font-size:11px;">
+            <option value="">League</option>
+            <option value="qualifier_1">Q1</option>
+            <option value="qualifier_2">Q2</option>
+            <option value="eliminator">Elim</option>
+            <option value="semi_final">SF</option>
+            <option value="final">Final</option>
+          </select></td>
+          <td><select data-f="data_source" style="font-size:11px;">
+            <option value="auto" selected>Auto</option>
+            <option value="cricapi">CricAPI</option>
+            <option value="scraper">Scraper</option>
+          </select></td>
+          <td><input data-f="lock_time" type="datetime-local" /></td>
+          <td class="col-actions"><button class="row-add" id="addMatchBtn" title="Add">+</button></td>
+        </tr>
+      `;
+      // Format the user's daily XI total for this match (if any).
+      // Only daily teams (squadId == null) — SL teams are scored separately.
+      const xiPtsCell = m => {
+        const arr = state.xiScoresByMatch?.[m.id] || [];
+        if (!arr.length) return '<span style="color:var(--muted);">—</span>';
+        // Filter to daily teams only (squad_id is null)
+        const dailyTeam = [...state.savedTeams]
+          .filter(t => t.matchId === m.id && !t.squadId)
+          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+        if (!dailyTeam) return '<span style="color:var(--muted);">—</span>';
+        const chosen = arr.find(s => s.userTeamId === dailyTeam.id);
+        if (!chosen) return '<span style="color:var(--muted);">—</span>';
+        return `<span style="color:var(--accent); font-weight:700;">${chosen.totalPoints.toFixed(1)}</span>`;
+      };
+
+      const rows = matches.map(m => `
+        <tr data-id="${m.id}">
+          <td class="col-id"><input data-f="match_number" type="number" min="1" value="${m.match_number||''}" style="width:50px;" /></td>
+          <td class="col-team"><select data-f="home_team_id">${teamOptsFor(m.home_team_id)}</select></td>
+          <td class="col-team"><select data-f="away_team_id">${teamOptsFor(m.away_team_id)}</select></td>
+          <td class="col-role"><select data-f="format">
+            <option value="T20"  ${m.format==='T20'?'selected':''}>T20</option>
+            <option value="ODI"  ${m.format==='ODI'?'selected':''}>ODI</option>
+            <option value="TEST" ${m.format==='TEST'?'selected':''}>Test</option>
+          </select></td>
+          <td><input data-f="start_time" type="datetime-local" value="${isoToLocalInput(m.start_time)}" /></td>
+          <td><select data-f="match_type" style="font-size:11px;">
+            <option value=""        ${!m.match_type?'selected':''}>League</option>
+            <option value="qualifier_1" ${m.match_type==='qualifier_1'?'selected':''}>Q1</option>
+            <option value="qualifier_2" ${m.match_type==='qualifier_2'?'selected':''}>Q2</option>
+            <option value="eliminator"  ${m.match_type==='eliminator'?'selected':''}>Elim</option>
+            <option value="semi_final"  ${m.match_type==='semi_final'?'selected':''}>SF</option>
+            <option value="final"       ${m.match_type==='final'?'selected':''}>Final</option>
+          </select></td>
+          <td><select data-f="data_source" style="font-size:11px;"
+              title="Force this match onto a specific data source, overriding the tournament's default. Auto = inherit the tournament's Scraper Enabled setting.">
+            <option value="auto"    ${(!m.data_source||m.data_source==='auto')?'selected':''}>Auto</option>
+            <option value="cricapi" ${m.data_source==='cricapi'?'selected':''}>CricAPI</option>
+            <option value="scraper" ${m.data_source==='scraper'?'selected':''}>Scraper</option>
+          </select></td>
+          <td style="white-space:nowrap;">
+            ${(() => {
+              const isDelayed = m.status === 'delayed';
+              const statusLabels = {
+                scheduled: '🕐 Scheduled', delayed: '🌧 Delayed',
+                live: '🔴 Live', in_progress: '▶ In Progress', completed: '✓ Completed',
+              };
+              const badge = statusLabels[m.status] ?? m.status ?? '—';
+              const badgeColor = isDelayed ? 'var(--accent-2)' : m.status === 'completed' ? 'var(--good)' : m.status === 'live' || m.status === 'in_progress' ? 'var(--bad)' : 'var(--muted)';
+              return `
+                <span style="font-size:11px;font-weight:600;color:${badgeColor};">${badge}</span>
+                <button class="delay-toggle-btn" data-id="${m.id}" data-delayed="${isDelayed}"
+                  style="margin-left:6px;font-size:10px;padding:2px 7px;border-radius:4px;
+                         background:${isDelayed ? 'rgba(166,124,0,0.12)' : 'transparent'};
+                         border:1px solid ${isDelayed ? 'var(--accent-2)' : 'var(--border)'};
+                         color:${isDelayed ? 'var(--accent-2)' : 'var(--muted)'};cursor:pointer;"
+                  title="${isDelayed ? 'Remove delay — CricAPI will re-sync status' : 'Mark match as delayed (rain/other)'}">
+                  ${isDelayed ? '✕ Delayed' : '🌧 Delay'}
+                </button>`;
+            })()}
+          </td>
+          <td><input data-f="lock_time" type="datetime-local" value="${isoToLocalInput(m.lock_time)}" /></td>
+          <td class="col-actions">
+            ${(() => {
+              // A match is "in play" when start_time has passed and it's not completed/delayed.
+              // Admin does NOT need to manually set status to live/in_progress.
+              const isPastStart = m.start_time && new Date(m.start_time) <= new Date();
+              const isInPlay    = isPastStart && m.status !== 'completed' && m.status !== 'delayed';
+              const isFinished  = m.status === 'completed';
+              const matchTournament = state.tournaments?.find(t => t.id === m.tournament_id);
+              // Mirrors the eligibility logic in poll-cricapi/index.ts: a per-match
+              // data_source override ('cricapi'/'scraper') wins over the tournament
+              // default; 'auto' (or unset) falls back to scraper_enabled.
+              const src = m.data_source || 'auto';
+              const isCricApiDriven = m.external_id && (src === 'cricapi' || (src !== 'scraper' && !matchTournament?.scraper_enabled));
+              return `
+                ${(isFinished || isInPlay) && m.external_id
+                  ? `<button class="row-finalize" data-act="finalize" title="Fetch scorecard &amp; save fantasy points">Finalize</button>
+                     <button class="row-recalc" data-act="recalc" title="Re-parse cached scorecard &amp; overwrite player stats">Recalc</button>`
+                  : ''}
+                ${isFinished
+                  ? `<button class="row-fielding" data-act="fielding"
+                       style="font-size:11px;padding:2px 7px;border-radius:4px;
+                              background:rgba(201,168,76,0.10);border:1px solid var(--accent);
+                              color:var(--accent);cursor:pointer;"
+                       title="Manually add catch/stumping/run-out/bowled/LBW credit for a player in this match">🥎 Fielding</button>`
+                  : ''}
+                ${isFinished
+                  ? `<button class="row-revert-live" data-act="revert-live"
+                       style="font-size:11px;padding:2px 7px;border-radius:4px;
+                              background:rgba(220,80,80,0.10);border:1px solid rgba(220,80,80,0.4);
+                              color:rgba(220,80,80,0.95);cursor:pointer;"
+                       title="Match got marked Completed but the scorecard isn't actually finished (bad/early signal from the data source). Set it back to In Progress so Poll/Scrape can run again.">↩ Revert to Live</button>`
+                  : ''}
+                ${m.status === 'delayed'
+                  ? `<button class="row-revert-lock" data-act="revert-lock"
+                       style="font-size:11px;padding:2px 7px;border-radius:4px;
+                              background:rgba(80,160,255,0.10);border:1px solid rgba(80,160,255,0.4);
+                              color:rgba(80,160,255,0.9);cursor:pointer;"
+                       title="Delete locked SL XIs so users can re-pick after the delay">🔓 Revert Lock</button>`
+                  : ''}
+                ${m.status === 'delayed'
+                  ? `<button class="row-revert-daily-lock" data-act="revert-daily-lock"
+                       style="font-size:11px;padding:2px 7px;border-radius:4px;
+                              background:rgba(80,160,255,0.10);border:1px solid rgba(80,160,255,0.4);
+                              color:rgba(80,160,255,0.9);cursor:pointer;"
+                       title="Clear the Locked badge on daily teams for this match (also push lock_time forward — RLS, not this flag, is what actually re-opens daily team edits)">🔓 Revert Daily Lock</button>`
+                  : ''}
+                ${isInPlay && isCricApiDriven
+                  ? `<button class="row-poll" data-act="poll"
+                       style="font-size:11px;padding:2px 7px;border-radius:4px;
+                              background:rgba(80,160,255,0.10);border:1px solid rgba(80,160,255,0.4);
+                              color:rgba(80,160,255,0.95);cursor:pointer;"
+                       title="Poll CricAPI now — fetch scorecard, score it, write to the database (same as the cron job)">📡 Poll</button>`
+                  : ''}
+                ${isInPlay
+                  ? `<button class="row-scrape" data-act="scrape"
+                       style="font-size:11px;padding:2px 7px;border-radius:4px;
+                              background:rgba(120,200,80,0.10);border:1px solid rgba(120,200,80,0.4);
+                              color:rgba(100,180,60,0.95);cursor:pointer;"
+                       title="Fetch scorecard now from scraper sources">🕷 Scrape</button>
+                     ${m.scorecard_url
+                       ? `<span style="font-size:9px;color:var(--muted);display:block;max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(m.scorecard_url ?? '')}">↳ ${escapeHtml((m.scorecard_url??'').replace('https://','').split('/')[0])}</span>`
+                       : '<span style="font-size:9px;color:var(--muted);">↳ URL pending</span>'}`
+                  : ''}
+              `;
+            })()}
+            <button class="row-del" data-act="del" title="Delete">×</button>
+          </td>
+        </tr>
+      `).join('');
+
+      $('#adminMatchesBody').innerHTML = addRow + rows;
+      $('#addMatchBtn').addEventListener('click', addMatchHandler);
+      $('#adminMatchesBody').querySelectorAll('tr[data-id]').forEach(tr => {
+        const id = tr.dataset.id;
+        tr.querySelectorAll('input, select').forEach(el => {
+          el.addEventListener('change', () => saveMatchEdit(id, tr));
+          el.addEventListener('input',  () => el.classList.add('dirty'));
+        });
+        tr.querySelector('[data-act="del"]').addEventListener('click', () => deleteMatchHandler(id));
+        tr.querySelector('[data-act="finalize"]')?.addEventListener('click', () => finalizeMatchById(id));
+        tr.querySelector('[data-act="recalc"]')?.addEventListener('click',  () => forceRefinalizeMatch(id));
+        tr.querySelector('[data-act="poll"]')?.addEventListener('click', async (e) => {
+          const btn = e.currentTarget;
+          btn.disabled = true; btn.textContent = '⏳';
+          try {
+            const supabaseUrl = state.db._supabaseUrl?.() ?? '';
+            const anonKey     = state.db._anonKey?.() ?? '';
+            const edgeFnUrl   = supabaseUrl.replace('.supabase.co', '.supabase.co/functions/v1') + '/poll-cricapi';
+            const res = await fetch(edgeFnUrl, {
+              method : 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${anonKey}` },
+              body   : JSON.stringify({ matchId: id }),
+            });
+            const json = await res.json();
+            if (!json.ok) throw new Error(json.error ?? 'Poll failed');
+            const r = json.results?.[0];
+            if (r?.status === 'ok') {
+              toast(`📡 Polled CricAPI — ${r.matched} player${r.matched===1?'':'s'} scored. ` +
+                `Unmatched: ${r.unmatched?.length ?? 0}.` +
+                (r.matchCompleted ? ' Match completed — finalized.' : ''), 5000);
+              renderMatchesAdmin();
+              // Refresh whatever's currently on screen for this match
+              if (state.activeMatchId === id || $('#matchId')?.value === state.matches.find(x => x.id===id)?.external_id) {
+                connectLive().catch(() => {});
+              }
+            } else {
+              toast(`Poll: ${r?.status ?? json.message ?? 'no live matches'} — ${r?.error ?? ''}`, 6000);
+            }
+          } catch (err) {
+            toast('Poll failed: ' + err.message, 5000);
+          } finally { btn.disabled = false; btn.textContent = '📡 Poll'; }
+        });
+        tr.querySelector('[data-act="scrape"]')?.addEventListener('click', async (e) => {
+          const btn = e.currentTarget;
+          btn.disabled = true; btn.textContent = '⏳';
+          try {
+            // Call the Edge Function for this specific match
+            const supabaseUrl = state.db._supabaseUrl?.() ?? '';
+            const anonKey     = state.db._anonKey?.() ?? '';
+            const edgeFnUrl   = supabaseUrl.replace('.supabase.co', '.supabase.co/functions/v1') + '/scrape-scorecard';
+            const res = await fetch(edgeFnUrl, {
+              method : 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${anonKey}` },
+              body   : JSON.stringify({ matchId: id }),
+            });
+            const json = await res.json();
+            if (!json.ok) throw new Error(json.error ?? 'Scrape failed');
+            const r = json.results?.[0];
+            if (r?.status === 'ok') {
+              // Update cached scorecard_url in state
+              const m = state.matches.find(x => x.id === id);
+              if (m && r.url) m.scorecard_url = r.url;
+              if (r.completionMarked && m) m.status = 'completed';
+              const bits = [`🕷 Scraped ${r.matched} players from ${r.source}`];
+              if (r.unmatched?.length) bits.push(`${r.unmatched.length} unmatched`);
+              if (r.fieldingCredited) bits.push(`${r.fieldingCredited} fielding credit${r.fieldingCredited===1?'':'s'} auto-derived`);
+              if (r.fieldingIssues)   bits.push(`${r.fieldingIssues} fielding issue${r.fieldingIssues===1?'':'s'} need review (see ⚠️ Fielding Issues below)`);
+              if (r.completionMarked) bits.push(`match marked completed`);
+              toast(bits.join(' — ') + '.', r.fieldingIssues || r.completionMarked ? 6000 : 4000);
+              renderMatchesAdmin();
+              // Pull the fresh player_match_stats this scrape just wrote and
+              // rebuild the Live/Fantasy scorecard panel right away — otherwise
+              // it stays on whatever was last cached (stale until the next poll
+              // tick, a Connect/reconnect, or Fetch now), which is exactly the
+              // mismatch between "points just scraped" and "what admin sees".
+              if (m) {
+                try {
+                  const [statRows, rawScorecard] = await Promise.all([
+                    state.db.getPlayerStatsForMatchFull(id),
+                    state.db.getMatchScorecard(id), // raw scrape this run just cached — every name, matched or not
+                  ]);
+                  console.info(`[Scrape Now] player_match_stats rows for match ${id}:`, statRows.length, statRows);
+                  // The squad-only reconstruction needs both teams assigned to this
+                  // match; the raw scraped scorecard doesn't (it's built straight
+                  // from the scraped team names, no team_id lookup involved) — so
+                  // only skip `built` (and its diagnostics) when teams are missing,
+                  // not the whole render.
+                  let built = null;
+                  if (!m.home_team_id || !m.away_team_id) {
+                    if (!rawScorecard) toast(`Saved ${statRows.length} player rows, but this match has no home_team_id/away_team_id set — can't build the scorecard table without both teams assigned.`, 6000);
+                  } else {
+                    built = buildLiveScorecardFromStats(m, statRows);
+                    if (!built) {
+                      const resolvedCount = statRows.filter(s => A.PLAYERS.some(p => p.id === s.player_id)).length;
+                      const rosterCount   = A.PLAYERS.filter(p => (p.team_id || p.team) === m.home_team_id || (p.team_id || p.team) === m.away_team_id).length;
+                      const matchedTeamIds = [...new Set(
+                        statRows.map(s => { const pl = A.PLAYERS.find(p => p.id === s.player_id); return pl && (pl.team_id || pl.team); }).filter(Boolean)
+                      )];
+                      console.info('[Scrape Now] diagnostic:', {
+                        statRowCount: statRows.length, resolvedCount, rosterCount,
+                        playersInPool: A.PLAYERS.length, playersSource,
+                        matchedTeamIds, expects: [m.home_team_id, m.away_team_id],
+                      });
+                      if (!rawScorecard) {
+                        if (resolvedCount === 0) {
+                          toast(`Saved ${statRows.length} player rows, but NONE of those player_ids exist in the currently loaded ` +
+                            `pool (${A.PLAYERS.length} players, source: ${playersSource}). Your player pool for ${m.home_team_id}/${m.away_team_id} ` +
+                            `has ${rosterCount} players — if that's 0, this tournament's roster was never set up. If it's >0, the scraper resolved ` +
+                            `to different player records than your roster (re-check Player Linking).`, 9000);
+                        } else {
+                          toast(`Saved ${statRows.length} player rows (${resolvedCount} resolved to a player), but their team_id didn't match ` +
+                            `${m.home_team_id}/${m.away_team_id}: ${matchedTeamIds.join(', ') || 'none'} — fix the mismatch in Teams/Players.`, 8000);
+                        }
+                      }
+                    }
+                  }
+                  // Prefer the raw scraped scorecard this run just cached in
+                  // match_scorecards (every name as scraped, matched or not,
+                  // with dismissal text) over the squad-only reconstruction —
+                  // same rich view CricAPI matches get.
+                  if (rawScorecard || built) {
+                    state.lastScorecard = rawScorecard || built;
+                    render();
+                    renderScorecard();
+                    renderFantasyScorecard();
+                    $('#scorecardSection')?.setAttribute('open', '');
+                  }
+                } catch (err2) {
+                  console.warn('Scrape Now: scorecard refresh failed:', err2.message);
+                  toast('Scorecard refresh failed: ' + err2.message, 5000);
+                }
+              }
+            } else {
+              const detail = r?.error ?? r?.fallback ?? r?.url ?? '';
+              console.warn('Scrape Now failed:', r);
+              toast(`Scrape: ${r?.status ?? 'unknown'} — ${detail}`, 6000);
+            }
+          } catch (err) {
+            toast('Scrape failed: ' + err.message, 5000);
+          } finally { btn.disabled = false; btn.textContent = '🕷 Scrape'; }
+        });
+        tr.querySelector('[data-act="revert-lock"]')?.addEventListener('click', async (e) => {
+          const btn = e.currentTarget;
+          const match = state.matches.find(x => x.id === id);
+          const label = match
+            ? `Match ${match.match_number ?? ''} (${match.home_team_id ?? ''} vs ${match.away_team_id ?? ''})`
+            : `match ${id}`;
+          if (!confirm(
+            `Revert lock for ${label}?\n\n` +
+            `This will DELETE all locked XIs for this match so users can re-pick ` +
+            `before the rescheduled start time.\n\n` +
+            `Proceed?`
+          )) return;
+          btn.disabled = true;
+          try {
+            const count = await state.db.revertMatchLock(id);
+            toast(`🔓 Lock reverted — ${count} XI${count !== 1 ? 's' : ''} unlocked. Users can now re-pick.`, 4000);
+          } catch (err) {
+            toast('Revert failed: ' + err.message, 5000);
+            btn.disabled = false;
+          }
+        });
+        tr.querySelector('[data-act="revert-daily-lock"]')?.addEventListener('click', async (e) => {
+          const btn = e.currentTarget;
+          const match = state.matches.find(x => x.id === id);
+          const label = match
+            ? `Match ${match.match_number ?? ''} (${match.home_team_id ?? ''} vs ${match.away_team_id ?? ''})`
+            : `match ${id}`;
+          if (!confirm(
+            `Revert daily team lock badge for ${label}?\n\n` +
+            `This only clears the "Locked" badge shown to users — it does NOT ` +
+            `re-open editing by itself. Daily team edits are actually blocked by ` +
+            `RLS against lock_time/start_time, so also push this match's lock_time ` +
+            `forward (e.g. via the delay toggle) or daily edits will still be ` +
+            `rejected on save.\n\nProceed?`
+          )) return;
+          btn.disabled = true;
+          try {
+            const count = await state.db.revertDailyTeamLock(id);
+            toast(`🔓 Daily lock badge cleared on ${count} team${count !== 1 ? 's' : ''}. Remember to push lock_time forward too.`, 5000);
+          } catch (err) {
+            toast('Revert failed: ' + err.message, 5000);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+        tr.querySelector('[data-act="revert-live"]')?.addEventListener('click', async (e) => {
+          const btn = e.currentTarget;
+          const match = state.matches.find(x => x.id === id);
+          const label = match
+            ? `Match ${match.match_number ?? ''} (${match.home_team_id ?? ''} vs ${match.away_team_id ?? ''})`
+            : `match ${id}`;
+          if (!confirm(
+            `Revert ${label} from Completed back to In Progress?\n\n` +
+            `Use this when the data source (CricAPI/scraper) marked the match ` +
+            `completed but the scorecard shows it's still actually live — this ` +
+            `re-enables Poll/Scrape for it and resets the stored progress ` +
+            `watermark so the next read isn't rejected as "stale".\n\n` +
+            `It does NOT delete the player_match_stats already saved — those get ` +
+            `overwritten by the next Poll/Scrape/Recalc once real data comes in.\n\n` +
+            `Proceed?`
+          )) return;
+          btn.disabled = true; btn.textContent = '…';
+          try {
+            const upd = await state.db.updateMatch(id, {
+              status: 'in_progress', progressInnings: 0, progressBalls: 0,
+            });
+            const idx = state.matches.findIndex(x => x.id === id);
+            if (idx >= 0) state.matches[idx] = upd;
+            renderMatchesAdmin();
+            toast('↩ Reverted to In Progress — Poll/Scrape are available again.', 4500);
+          } catch (err) {
+            toast('Revert failed: ' + err.message, 5000);
+            btn.disabled = false; btn.textContent = '↩ Revert to Live';
+          }
+        });
+        tr.querySelector('[data-act="fielding"]')?.addEventListener('click', () => toggleFieldingCreditRow(id, tr));
+        tr.querySelector('.delay-toggle-btn')?.addEventListener('click', async (e) => {
+          const btn       = e.currentTarget;
+          const isDelayed = btn.dataset.delayed === 'true';
+          // Toggle: if currently delayed → revert to scheduled (CricAPI will correct on next sync)
+          //         if not delayed → mark as delayed
+          const newStatus = isDelayed ? 'scheduled' : 'delayed';
+          btn.disabled = true;
+          try {
+            await state.db.updateMatch(id, { status: newStatus });
+            const m = state.matches.find(x => x.id === id);
+            if (m) m.status = newStatus;
+            renderMatchesAdmin(); // re-render so badge + button reflect new state
+            toast(isDelayed ? 'Delay removed — CricAPI will re-sync status on next poll.' : '🌧 Match marked as delayed.');
+          } catch (err) {
+            toast('Failed: ' + err.message);
+            btn.disabled = false;
+          }
+        });
+      });
+      $('#adminCount').textContent = `${matches.length} matches`;
+    }
+
+    // Manual fielding/wicket-bonus credit — fully free-form entry, independent of
+    // any parsed dismissal. Covers all 6 categories the admin can credit for a
+    // completed match: catch, stumping, run-out (direct/assist), bowled bonus,
+    // LBW bonus. Always writes source='scraper_manual', which both the scraper's
+    // regression guard and any future re-scrape treat as permanently protected.
+    const MANUAL_FIELDING_RULE_KEY = {
+      catches: 'catch', stumpings: 'stumping',
+      runOutDirect: 'run_out_direct', runOutIndirect: 'run_out_indirect',
+      bowled: 'lbw_bowled_bonus', lbw: 'lbw_bowled_bonus',
+    };
+    const MANUAL_FIELDING_LABELS = {
+      catches: 'Catch', stumpings: 'Stumping',
+      runOutDirect: 'Run-out (direct)', runOutIndirect: 'Run-out (assist)',
+      bowled: 'Bowled (bonus)', lbw: 'LBW (bonus)',
+    };
+
+    async function toggleFieldingCreditRow(matchId, tr) {
+      const existing = tr.parentElement?.querySelector(`.fielding-credit-row[data-matchid="${matchId}"]`);
+      if (existing) { existing.remove(); return; }
+      // Only one inline credit form open at a time.
+      $('#adminMatchesBody')?.querySelectorAll('.fielding-credit-row').forEach(r => r.remove());
+
+      const m = state.matches.find(x => x.id === matchId);
+      if (!m) return;
+
+      const formRow = document.createElement('tr');
+      formRow.className = 'fielding-credit-row';
+      formRow.dataset.matchid = matchId;
+      formRow.innerHTML = `
+        <td colspan="10" style="padding:8px 10px; background:rgba(201,168,76,0.06); border-top:1px dashed var(--accent);">
+          <div style="font-size:11px; color:var(--muted); margin-bottom:6px;">Loading players…</div>
+        </td>`;
+      tr.after(formRow);
+
+      try {
+        const tPlayers = m.tournament_id ? await state.db.getPlayersForTournament(m.tournament_id) : [];
+        const rosterPlayers = tPlayers.filter(p => p.team === m.home_team_id || p.team === m.away_team_id);
+        const pool = rosterPlayers.length ? rosterPlayers : tPlayers;
+        const playerOpts = pool.map(p =>
+          `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${p.role}${p.overseas ? ', ✈️' : ''})</option>`
+        ).join('');
+        const fieldOpts = Object.entries(MANUAL_FIELDING_LABELS).map(
+          ([k, label]) => `<option value="${k}">${label}</option>`
+        ).join('');
+
+        formRow.querySelector('td').innerHTML = `
+          <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; font-size:11px;">
+            <span style="font-weight:600; color:var(--accent);">🥎 Manual credit:</span>
+            <select class="mfc-player" style="font-size:11px; max-width:200px;">
+              <option value="">— select player —</option>
+              ${playerOpts}
+            </select>
+            <select class="mfc-field" style="font-size:11px;">${fieldOpts}</select>
+            <input class="mfc-count" type="number" min="1" step="1" value="1" style="width:48px; font-size:11px;" />
+            <button class="mfc-save"
+              style="font-size:10px; padding:2px 8px; border-radius:4px; background:rgba(201,168,76,0.15);
+                     border:1px solid var(--accent); color:var(--accent); cursor:pointer;">Save</button>
+            <button class="mfc-cancel"
+              style="font-size:10px; padding:2px 8px; border-radius:4px; background:transparent;
+                     border:1px solid var(--border); color:var(--muted); cursor:pointer;">Cancel</button>
+            <span class="mfc-status" style="font-size:10px; color:var(--muted);"></span>
+          </div>`;
+
+        formRow.querySelector('.mfc-cancel').addEventListener('click', () => formRow.remove());
+        formRow.querySelector('.mfc-save').addEventListener('click', async (e) => {
+          const btn       = e.currentTarget;
+          const playerId  = formRow.querySelector('.mfc-player').value;
+          const field     = formRow.querySelector('.mfc-field').value;
+          const count     = Math.max(1, parseInt(formRow.querySelector('.mfc-count').value, 10) || 1);
+          const statusEl  = formRow.querySelector('.mfc-status');
+          if (!playerId) { statusEl.textContent = 'Select a player first.'; return; }
+
+          btn.disabled = true; statusEl.textContent = 'Saving…';
+          try {
+            const overrides = await state.db.getScoringRules(m.tournament_id).catch(() => ({}));
+            const fmt   = m.format || 'T20';
+            const rules = { ...DEFAULT_SCORING_RULES[fmt], ...(overrides?.[fmt] || {}) };
+            const ruleKey = MANUAL_FIELDING_RULE_KEY[field];
+            const points  = count * (rules[ruleKey] || 0);
+
+            await state.db.applyManualFieldingCredit(matchId, playerId, field, count, points);
+            await computeAndSaveXIScoresForMatch(matchId);
+            await computeAndSaveSLScoresForMatch(matchId);
+
+            const playerName = pool.find(p => p.id === playerId)?.name || playerId;
+            toast(`🥎 Credited ${playerName}: ${count}× ${MANUAL_FIELDING_LABELS[field]} (+${points} pts). Propagated to XI/SL totals.`, 5000);
+            formRow.remove();
+          } catch (err) {
+            statusEl.textContent = 'Failed: ' + err.message;
+            btn.disabled = false;
+          }
+        });
+      } catch (err) {
+        formRow.querySelector('td').innerHTML =
+          `<span style="font-size:11px; color:var(--bad);">Failed to load players: ${escapeHtml(err.message)}</span>`;
+      }
+    }
+
+    // datetime-local input → ISO UTC string (Postgres timestamptz-friendly)
+    function localInputToIso(v) {
+      if (!v) return null;
+      // new Date('2026-05-12T19:30') treats it as local — toISOString → UTC
+      const d = new Date(v);
+      return isNaN(d) ? null : d.toISOString();
+    }
+
+    async function addMatchHandler() {
+      const row = $('#addMatchRow');
+      const matchNumber = parseInt(row.querySelector('[data-f="match_number"]').value, 10);
+      const home    = row.querySelector('[data-f="home_team_id"]').value;
+      const away    = row.querySelector('[data-f="away_team_id"]').value;
+      const format  = row.querySelector('[data-f="format"]').value;
+      const startTime = localInputToIso(row.querySelector('[data-f="start_time"]').value);
+      const playedOn = startTime ? startTime.slice(0, 10) : null;
+      const status    = row.querySelector('[data-f="status"]').value;
+      const matchType = row.querySelector('[data-f="match_type"]')?.value || null;
+      const dataSource = row.querySelector('[data-f="data_source"]')?.value || 'auto';
+      const lockTime  = localInputToIso(row.querySelector('[data-f="lock_time"]').value) || null;
+      if (home === away) { toast('Home and away teams must differ.'); return; }
+      try {
+        if (state.db) {
+          const m = await state.db.addMatch({
+            tournamentId: state.activeTournamentId,
+            matchNumber, format, homeTeamId: home, awayTeamId: away,
+            playedOn, startTime, lockTime, status, matchType, dataSource,
+          });
+          state.matches.push(m);
+        } else {
+          state.matches.push({
+            id: 'local-' + Date.now(),
+            tournament_id: state.activeTournamentId,
+            match_number: matchNumber, format, home_team_id: home, away_team_id: away,
+            played_on: playedOn, start_time: startTime, lock_time: lockTime, status,
+          });
+        }
+        toast(`Added Match ${matchNumber}.`);
+        renderMatchesAdmin(); renderMatchSelector();
+      } catch (e) { toast('Add failed: ' + e.message, 4000); }
+    }
+
+    async function saveMatchEdit(id, tr) {
+      const startTime = localInputToIso(tr.querySelector('[data-f="start_time"]').value);
+      const lockTime  = localInputToIso(tr.querySelector('[data-f="lock_time"]').value) || null;
+      // Existing rows show a read-only badge; status is managed via the delay toggle button.
+      // Fall back to the current status stored in state to avoid overwriting it.
+      const statusEl      = tr.querySelector('[data-f="status"]');
+      const matchTypeEl   = tr.querySelector('[data-f="match_type"]');
+      const dataSourceEl  = tr.querySelector('[data-f="data_source"]');
+      const currentStatus = state.matches.find(m => m.id === id)?.status ?? 'scheduled';
+      const patch = {
+        matchNumber: parseInt(tr.querySelector('[data-f="match_number"]').value, 10),
+        homeTeamId : tr.querySelector('[data-f="home_team_id"]').value || null,
+        awayTeamId : tr.querySelector('[data-f="away_team_id"]').value || null,
+        format     : tr.querySelector('[data-f="format"]').value,
+        matchType  : matchTypeEl ? (matchTypeEl.value || null) : undefined,
+        dataSource : dataSourceEl ? (dataSourceEl.value || 'auto') : undefined,
+        startTime  : startTime,
+        playedOn   : startTime ? startTime.slice(0, 10) : null,
+        lockTime   : lockTime,
+        status     : statusEl ? statusEl.value : currentStatus,
+      };
+      if (patch.homeTeamId && patch.awayTeamId && patch.homeTeamId === patch.awayTeamId) {
+        toast('Home and away teams must differ.'); return;
+      }
+      try {
+        if (state.db) {
+          const upd = await state.db.updateMatch(id, patch);
+          const idx = state.matches.findIndex(m => m.id === id);
+          if (idx >= 0) state.matches[idx] = upd;
+        } else {
+          const idx = state.matches.findIndex(m => m.id === id);
+          if (idx >= 0) state.matches[idx] = {
+            ...state.matches[idx],
+            match_number: patch.matchNumber, home_team_id: patch.homeTeamId, away_team_id: patch.awayTeamId,
+            format: patch.format, played_on: patch.playedOn, start_time: patch.startTime, lock_time: patch.lockTime, status: patch.status,
+          };
+        }
+        tr.querySelectorAll('.dirty').forEach(el => el.classList.remove('dirty'));
+        renderMatchSelector();
+      } catch (e) { toast('Save failed: ' + e.message, 4000); }
+    }
+
+
+    // ─── CRICAPI MATCH SYNC ──────────────────────────────────────────────────
+    // Maps CricAPI's response shape to our matches table.
+
+    const CRIC_FORMAT_MAP = { t20:'T20', odi:'ODI', test:'TEST', 't20i':'T20' };
+
+    // CricAPI uses its own internal shortcodes that don't always match what we
+    // store in the teams table. Translate them to our codes here. Add more as
+    // CricAPI surfaces them.
+    const CRIC_TEAM_CODE_MAP = {
+      'RCBW': 'RCB',   // Royal Challengers Bengaluru (men's franchise)
+    };
+    // Load any aliases previously saved via "Fix Match Teams" or the alias editor.
+    // This ensures future CricAPI syncs translate codes correctly at ingest time.
+    const CRIC_ALIAS_LS = 'cricTeamAliases';
+    try {
+      const saved = JSON.parse(localStorage.getItem(CRIC_ALIAS_LS) || '{}');
+      Object.assign(CRIC_TEAM_CODE_MAP, saved);
+    } catch (e) {}
+
+    function aliasCricTeamCode(code) {
+      return code ? (CRIC_TEAM_CODE_MAP[code] ?? code) : code;
+    }
+
+    /** Persist one or more aliases and apply them to the live map immediately. */
+    function saveAliases(newEntries) {
+      Object.assign(CRIC_TEAM_CODE_MAP, newEntries);
+      try {
+        const existing = JSON.parse(localStorage.getItem(CRIC_ALIAS_LS) || '{}');
+        localStorage.setItem(CRIC_ALIAS_LS, JSON.stringify({ ...existing, ...newEntries }));
+      } catch (e) {}
+    }
+
+    /** Remove an alias from the live map and from localStorage. */
+    function removeAlias(key) {
+      delete CRIC_TEAM_CODE_MAP[key];
+      try {
+        const existing = JSON.parse(localStorage.getItem(CRIC_ALIAS_LS) || '{}');
+        delete existing[key];
+        localStorage.setItem(CRIC_ALIAS_LS, JSON.stringify(existing));
+      } catch (e) {}
+    }
+
+    function cricStatusToOurs(item) {
+      // /currentMatches uses `ms`: 'result' / 'live' / 'fixture'
+      if (item.ms === 'result')  return 'completed';
+      if (item.ms === 'live')    return 'in_progress';
+      if (item.ms === 'fixture') return 'scheduled';
+      // /series_info doesn't have `ms` — fall back to status string
+      const s = String(item.status || '').toLowerCase();
+      if (/won by|tied|no result|abandoned|drawn|match completed/i.test(s)) return 'completed';
+      if (/in progress|live|innings break|stumps|tea|lunch|drinks/i.test(s)) return 'in_progress';
+      return 'scheduled';
+    }
+
+    function cricTeamCode(teamName) {
+      // /currentMatches returns names like "Gujarat Titans [GT]" — extract the bracketed code.
+      const m = String(teamName || '').match(/\[([A-Z0-9]+)\]/);
+      return m ? m[1] : null;
+    }
+
+    function parseMatchNumberFromName(name) {
+      // "MI vs CSK, 14th Match, Indian Premier League, 2026" → 14
+      const m = String(name || '').match(/\b(\d+)\s*(?:st|nd|rd|th)?\s*Match\b/i);
+      return m ? parseInt(m[1], 10) : null;
+    }
+
+    const MONTH_ABBR = { jan:0, feb:1, mar:2, apr:3, may:4, jun:5, jul:6, aug:7, sep:8, oct:9, nov:10, dec:11 };
+
+    // CricAPI's series_info feed sometimes truncates dateTimeGMT to midnight
+    // (e.g. "2026-06-18T00:00:00") and drops the real kickoff time entirely —
+    // seen on the MLC 2026 series. The actual time survives in the human-readable
+    // `status` string instead, e.g. "Match starts at Jun 19, 00:30 GMT". When we
+    // spot the midnight-truncation pattern, parse the real time out of `status`
+    // and use that instead. Falls through untouched for every other tournament
+    // where dateTimeGMT is already correct (the regex just won't match).
+    function fixMidnightGmtFromStatus(rawDt, item) {
+      if (!rawDt || !/T00:00:00(\.000)?Z?$/.test(rawDt)) return rawDt;
+      const m = String(item.status || '').match(/Match starts at\s+([A-Za-z]{3})[A-Za-z]*\s+(\d{1,2}),?\s*(\d{1,2}):(\d{2})\s*GMT/i);
+      if (!m) return rawDt;
+      const monthIdx = MONTH_ABBR[m[1].toLowerCase()];
+      if (monthIdx == null) return rawDt;
+      const day = parseInt(m[2], 10), hour = parseInt(m[3], 10), min = parseInt(m[4], 10);
+      const base = new Date(rawDt.slice(0, 10) + 'T00:00:00Z');
+      if (isNaN(base)) return rawDt;
+      let year = base.getUTCFullYear();
+      if (monthIdx === 0 && base.getUTCMonth() === 11) year += 1; // Dec → Jan year rollover
+      const corrected = new Date(Date.UTC(year, monthIdx, day, hour, min, 0));
+      return isNaN(corrected) ? rawDt : corrected.toISOString();
+    }
+
+    function cricItemToMatch(item, tournamentId) {
+      // Team code source: /series_info gives `teamInfo` with shortname; /currentMatches gives bracketed names.
+      let home = null, away = null;
+      if (Array.isArray(item.teamInfo) && item.teamInfo.length >= 2) {
+        home = aliasCricTeamCode(item.teamInfo[0]?.shortname || null);
+        away = aliasCricTeamCode(item.teamInfo[1]?.shortname || null);
+      }
+      if (!home) home = aliasCricTeamCode(cricTeamCode(item.t1));
+      if (!away) away = aliasCricTeamCode(cricTeamCode(item.t2));
+
+      const fmt = CRIC_FORMAT_MAP[String(item.matchType || '').toLowerCase()] || 'T20';
+      // CricAPI dateTimeGMT is already an ISO UTC string — Postgres timestamptz parses it directly.
+      const rawDt = fixMidnightGmtFromStatus(item.dateTimeGMT || item.date || '', item);
+      return {
+        tournamentId,
+        externalId : item.id,
+        matchNumber: parseMatchNumberFromName(item.name),
+        format     : fmt,
+        homeTeamId : home,
+        awayTeamId : away,
+        playedOn   : rawDt.slice(0, 10) || null,
+        startTime  : rawDt || null,
+        status     : cricStatusToOurs(item),
+        notes      : item.name || null,
+      };
+    }
+
+    const SERIES_ID_LS = 'ss_cricapi_series_id';
+    const API_DAILY_LIMIT = 20;   // 2 accounts × 10 calls each
+    const API_COUNT_LS    = 'ss_cricapi_count';   // { date, count }
+
+    function getApiCallCount() {
+      try {
+        const stored = JSON.parse(localStorage.getItem(API_COUNT_LS) || '{}');
+        const today  = new Date().toISOString().slice(0, 10);
+        if (stored.date !== today) return 0;   // new day — reset
+        return stored.count || 0;
+      } catch { return 0; }
+    }
+
+    function incrementApiCallCount() {
+      const today = new Date().toISOString().slice(0, 10);
+      const count = getApiCallCount() + 1;
+      localStorage.setItem(API_COUNT_LS, JSON.stringify({ date: today, count }));
+      renderApiPill(count);
+      return count;
+    }
+
+    function renderApiPill(count = getApiCallCount()) {
+      const pill = $('#apiPill');
+      if (!pill) return;
+      pill.textContent = `API ${count} / ${API_DAILY_LIMIT}`;
+      pill.className = 'api-pill';
+      if (count >= API_DAILY_LIMIT)       pill.classList.add('danger');
+      else if (count >= API_DAILY_LIMIT * 0.8) pill.classList.add('warn');
+      pill.title = `CricAPI calls today: ${count} of ${API_DAILY_LIMIT} daily limit`;
+    }
+
+    async function fetchJsonFromProxy(path) {
+      incrementApiCallCount();
+      const res = await fetch('https://api.cricapi.com/v1/' + path);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const json = await res.json();
+      if (json.status === 'failure') throw new Error(json.reason || 'CricAPI failure');
+      return json;
+    }
+
+    // ─── API key fallback helpers ─────────────────────────────────────────────
+
+    /** Returns all known API keys with the currently active one first. */
+    function getApiKeys() {
+      const current = $('#apiKey').value.trim();
+      const stored = [...$('#apiKeyPicker').options]
+        .map(o => o.value)
+        .filter(v => v && v !== 'custom');
+      const others = stored.filter(k => k !== current);
+      return current ? [current, ...others] : stored;
+    }
+
+    /** Switches the active API key in the input + localStorage + picker. */
+    function setActiveApiKey(key) {
+      $('#apiKey').value = key;
+      localStorage.setItem(API_KEY_LS, key);
+      const opt = [...$('#apiKeyPicker').options].find(o => o.value === key);
+      $('#apiKeyPicker').value = opt ? key : 'custom';
+      toast(`API key exhausted — switched to …${key.slice(-4)}.`, 4000);
+    }
+
+    /** Returns true for errors that mean the key is spent / invalid (not network / match-not-found). */
+    function isKeyExhaustedError(msg) {
+      return /blocked|daily.limit|quota|too.many|429|invalid.*key|unauthori[sz]/i.test(String(msg));
+    }
+
+    /**
+     * Like fetchJsonFromProxy but automatically retries with the next stored
+     * key when the active one is exhausted or returns an auth error.
+     *
+     * @param {function} pathFn  Called with each candidate key — returns the
+     *                           proxy path string, e.g.:
+     *                           key => `match_scorecard?apikey=${key}&id=…`
+     */
+    async function fetchJsonWithFallback(pathFn) {
+      const keys = getApiKeys();
+      let lastErr;
+      for (const key of keys) {
+        try {
+          const result = await fetchJsonFromProxy(pathFn(key));
+          // Succeeded — if we used a different key, make it the active one
+          if (key !== $('#apiKey').value.trim()) setActiveApiKey(key);
+          return result;
+        } catch (err) {
+          lastErr = err;
+          if (!isKeyExhaustedError(err.message)) throw err; // not a quota/auth issue — bail immediately
+        }
+      }
+      throw lastErr; // all keys exhausted
+    }
+
+    async function fetchSeriesInfo(apiKey, seriesId) {
+      const json = await fetchJsonWithFallback(k => `series_info?apikey=${encodeURIComponent(k)}&id=${encodeURIComponent(seriesId)}`);
+      return Array.isArray(json.data?.matchList) ? json.data.matchList : [];
+    }
+
+    async function fetchCurrentMatchesPaginated(apiKey) {
+      let all = [], offset = 0;
+      for (let page = 0; page < 5; page++) {
+        const json = await fetchJsonWithFallback(k => `currentMatches?apikey=${encodeURIComponent(k)}&offset=${offset}`);
+        const batch = Array.isArray(json.data) ? json.data : [];
+        if (!batch.length) break;
+        all = all.concat(batch);
+        offset += batch.length;
+        if (batch.length < 25) break;
+      }
+      return all;
+    }
+
+    // Categorise an error message so the user can scan reasons at a glance.
+    function classifyFinalizeError(msg) {
+      const s = String(msg || '').toLowerCase();
+      if (/blocked|daily limit|quota|too many/i.test(s)) return 'quota';
+      if (/scorecard .*not found|404|no .*scorecard/i.test(s)) return 'no scorecard';
+      if (/invalid .*key|unauthor/i.test(s)) return 'auth';
+      if (/cors|failed to fetch|network|enotfound|getaddrinfo/i.test(s)) return 'network';
+      if (/no.* players|0 players|empty/i.test(s)) return 'empty';
+      return 'other';
+    }
+
+    /**
+     * Finalize a single match — fetch (or load from cache) its scorecard,
+     * compute fantasy points, and persist to player_match_stats.
+     * Returns { match, players, unmatched } on success, throws on failure.
+     */
+    async function finalizeOneMatch(m, apiKey) {
+      const matchLabel = `M${m.match_number ?? '?'} ${m.home_team_id || '—'} vs ${m.away_team_id || '—'}`;
+      // Always fetch fresh from CricAPI — a cached version may be mid-match
+      // (e.g. from the live poller stopping early). Overwrite with final result.
+      let json;
+      json = await fetchJsonWithFallback(k => `match_scorecard?apikey=${encodeURIComponent(k)}&id=${encodeURIComponent(m.external_id)}`);
+      await state.db.saveMatchScorecard(m.id, json);
+      const players = fromCricAPI(json, A.PLAYERS, m.format);
+      if (!players.length) throw new Error('CricAPI returned no player rows');
+      // Use a Map to deduplicate by local player ID — two CricAPI names can resolve
+      // to the same local player via findLocalByName, which would cause a PostgreSQL
+      // "ON CONFLICT DO UPDATE command cannot affect row a second time" error.
+      const rowMap = new Map(); const unmatchedNames = [];
+      for (const pl of players) {
+        const local = findLocalByName(pl.name);
+        if (!local) { unmatchedNames.push(pl.name); continue; }
+        if (rowMap.has(local.id)) {
+          console.warn('[finalizeOneMatch] duplicate local player skipped:', pl.name, '→', local.id);
+          continue;
+        }
+        // Use the local DB role, not the API-derived role.  fromCricAPI promotes any player
+        // who both bats AND bowls to 'ar', which incorrectly triggers the duck penalty for
+        // specialist bowlers who bat lower-order.  The DB role is the authoritative designation.
+        const s = calculateScore({ ...pl, role: local.role, captaincy: 'normal' }, m.format);
+        rowMap.set(local.id, {
+          playerId: local.id,
+          batting : pl.batting  ?? null,
+          bowling : pl.bowling  ?? null,
+          fielding: pl.fielding ?? null,
+          rawPoints: s.rawPoints,
+        });
+      }
+      const rows = Array.from(rowMap.values());
+      if (!rows.length) throw new Error(`No player name from API matched local pool (${players.length} API players, all unmatched)`);
+      await state.db.bulkUpsertPlayerMatchStats(m.id, rows);
+      await computeAndSaveXIScoresForMatch(m.id);
+      await computeAndSaveSLScoresForMatch(m.id);
+      // Only mark the match row 'completed' if the scorecard we just fetched
+      // actually says the match has ended. Previously this unconditionally set
+      // status='completed' just because Finalize was clicked — if Finalize ran
+      // while the match was still live (e.g. clicked too early, or an automated
+      // sync fired mid-chase), the match got permanently mislabeled 'completed'
+      // even though the scorecard status (e.g. "X need N runs in M balls") showed
+      // it was still in progress. Once mislabeled, every status!=='completed'
+      // filter elsewhere in the app (live polling, "needs finalization" lists,
+      // etc.) would skip it forever, freezing it on a partial snapshot.
+      const lifecycle = matchLifecycle(json, m.format);
+      const looksFinished = lifecycle === 'completed';
+      if (looksFinished && m.status !== 'completed') {
+        const upd = await state.db.updateMatch(m.id, { status: 'completed' });
+        const idx = state.matches.findIndex(x => x.id === m.id);
+        if (idx >= 0) state.matches[idx] = upd;
+      }
+      return {
+        match: matchLabel,
+        players: rows.length,
+        unmatched: unmatchedNames.length,
+        unmatchedNames,
+        fieldingIssues: players.fieldingIssues || [],
+        scorecard: json,
+        matchLooksFinished: looksFinished,
+        liveStatusText: json?.data?.status ?? json?.status ?? '',
+      };
+    }
+
+    /**
+     * Per-row finalize: called when the user clicks the Finalize button on a
+     * specific match row in the Matches admin table.
+     */
+    async function finalizeMatchById(matchId) {
+      const apiKey = $('#apiKey').value.trim();
+      if (!apiKey) { toast('Enter your CricAPI key in Settings first.', 4000); return; }
+      if (!state.db)  { toast('Connect to the database first.', 4000); return; }
+
+      const statusEl = $('#syncStatus');
+      const btn = document.querySelector(`#adminMatchesBody tr[data-id="${matchId}"] .row-finalize`);
+      if (btn) { btn.disabled = true; btn.textContent = '…'; }
+
+      try {
+        // Fetch the match with its cachedScorecard flag (scoped to active tournament)
+        const pending = await state.db.listMatchesNeedingFinalization(state.activeTournamentId);
+        let m = pending.find(x => x.id === matchId);
+        if (!m) {
+          // Already finalized — just recompute XI scores in case they're stale
+          const base = state.matches.find(x => x.id === matchId);
+          if (base) { await computeAndSaveXIScoresForMatch(matchId); await computeAndSaveSLScoresForMatch(matchId); }
+          toast('Match already finalized.'); return;
+        }
+        const result = await finalizeOneMatch(m, apiKey);
+        renderMatchesAdmin();
+        renderHistory();
+        // The Fantasy Scorecard panel only ever populated from the live poller's
+        // state.lastScorecard — for a match finalized after the fact (no live
+        // session ever ran), it stayed empty/"No data yet." even though we now
+        // have a freshly fetched scorecard right here. Feed it in so the panel
+        // (and its fielding-issue banner) actually shows something.
+        state.lastScorecard = result.scorecard;
+        renderFantasyScorecard();
+        const fIssues = result.fieldingIssues || [];
+        const hasUnmatched = result.unmatchedNames?.length > 0;
+        const hasFieldingIssues = fIssues.length > 0;
+        const notActuallyFinished = result.matchLooksFinished === false;
+        if (hasUnmatched || hasFieldingIssues || notActuallyFinished) {
+          let warn = '';
+          if (notActuallyFinished) {
+            warn += `⚠ Scorecard doesn't look finished yet (status: "${escapeHtml(result.liveStatusText || 'unknown')}") — match NOT marked completed, stats saved as a snapshot. Re-finalize once it actually ends. `;
+          }
+          if (hasUnmatched) {
+            const list = result.unmatchedNames.map(n => `"${n}"`).join(', ');
+            warn += `⚠ ${result.unmatchedNames.length} unmatched: ${escapeHtml(list)}. `;
+          }
+          if (hasFieldingIssues) {
+            warn += `⚠ ${fIssues.length} fielding event${fIssues.length>1?'s':''} not credited: ${escapeHtml(summarizeFieldingIssues(fIssues))}. `;
+          }
+          statusEl.innerHTML = `✓ ${result.match} — ${result.players} players saved. `
+            + `<span style="color:var(--bad);">${warn}`
+            + `Open <strong>Fantasy Scorecard ↓</strong>${hasUnmatched ? ', click Link on the red rows,' : ''} then re-finalize.</span>`;
+          const toastBits = [];
+          if (notActuallyFinished) toastBits.push(`match still in progress — not marked completed`);
+          if (hasUnmatched) toastBits.push(`${result.unmatchedNames.length} player(s) unmatched`);
+          if (hasFieldingIssues) toastBits.push(`${fIssues.length} fielding event(s) not credited`);
+          toast(`Finalized — but ${toastBits.join(' and ')}. Check scorecard.`, 6500);
+          // Auto-open the fantasy scorecard so the admin sees the red rows / warning immediately
+          $('#fantasyScorecardSection')?.setAttribute('open', '');
+          $('#fantasyScorecardSection')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } else {
+          statusEl.textContent = `✓ ${result.match} — ${result.players} players saved.`;
+          toast(`Finalized ${result.match}.`);
+        }
+      } catch (e) {
+        const kind = classifyFinalizeError(e.message);
+        statusEl.textContent = `✗ CricAPI finalize failed [${kind}]: ${e.message}`;
+
+        // ── Scraper fallback ─────────────────────────────────────────────────
+        // If the scraper has already written player_match_stats for this match,
+        // offer the admin the option to finalise using that data instead.
+        try {
+          const existingStats = await state.db.getPlayerStatsForMatch(matchId);
+          if (existingStats?.length) {
+            const scraperRows = existingStats.filter(s => s.source === 'scraper');
+            const anyRows     = existingStats.length;
+            const label       = scraperRows.length
+              ? `${scraperRows.length} player${scraperRows.length !== 1 ? 's' : ''} from scraper (CricketAddictor)`
+              : `${anyRows} player${anyRows !== 1 ? 's' : ''} from a previous partial run`;
+            const confirmed = window.confirm(
+              `CricAPI scorecard not available.\n\n` +
+              `Scraper data found: ${label}.\n\n` +
+              `Note: scraper data does NOT include fielding points (catches, run-outs, stumpings).\n\n` +
+              `Use this data to finalise M${state.matches.find(x => x.id === matchId)?.match_number ?? '?'}?`
+            );
+            if (confirmed) {
+              statusEl.textContent = `Using scraper data (${anyRows} players)…`;
+              // Mark completed first so the scoring pipeline treats it correctly
+              const matchObj = state.matches.find(x => x.id === matchId);
+              if (matchObj && matchObj.status !== 'completed') {
+                const upd = await state.db.updateMatch(matchId, { status: 'completed' });
+                const idx = state.matches.findIndex(x => x.id === matchId);
+                if (idx >= 0) state.matches[idx] = upd;
+              }
+              const xiSaved = await computeAndSaveXIScoresForMatch(matchId);
+              await computeAndSaveSLScoresForMatch(matchId);
+              renderMatchesAdmin();
+              renderHistory();
+              statusEl.textContent = `✓ Finalised from scraper data — ${anyRows} players, ${xiSaved} XI totals updated. Fielding points not included.`;
+              toast(`Finalised M${matchObj?.match_number ?? ''} from scraper data.`, 4000);
+              if (btn) { btn.disabled = false; btn.textContent = 'Finalize'; }
+              return;
+            }
+          }
+        } catch (fallbackErr) {
+          console.warn('[finalizeMatchById] scraper fallback check failed:', fallbackErr);
+        }
+
+        toast('Finalize failed: ' + e.message, 5000);
+        if (btn) { btn.disabled = false; btn.textContent = 'Finalize'; }
+      }
+    }
+
+    /**
+     * Force-recalculate a match that is already finalized.
+     * Re-parses the cached scorecard with the current fromCricAPI + calcFielding
+     * logic and overwrites player_match_stats (upsert — no delete needed).
+     * Also exposed as window.__recalcMatch(matchId) for console use.
+     */
+    async function forceRefinalizeMatch(matchId) {
+      const apiKey = $('#apiKey').value.trim();
+      if (!apiKey) { toast('Enter your CricAPI key in Settings first.', 4000); return; }
+      if (!state.db)  { toast('Connect to the database first.', 4000); return; }
+
+      const statusEl = $('#syncStatus');
+      const btn = document.querySelector(`#adminMatchesBody tr[data-id="${matchId}"] .row-recalc`);
+      if (btn) { btn.disabled = true; btn.textContent = '…'; }
+
+      try {
+        // Build the match descriptor — try state.matches first, then listMatchesNeedingFinalization
+        let m = state.matches?.find(x => x.id === matchId);
+        if (!m) throw new Error('Match not found in state — reload the page and try again.');
+
+        // Prefer the cached scorecard ONLY if it already looks finished — a cache
+        // taken mid-match (e.g. the live poller's last snapshot before a chase
+        // wrapped up) would otherwise get reused forever, since Recalculate would
+        // keep "succeeding" without ever fetching the actual final data. If the
+        // cached payload doesn't look done yet, always go fetch fresh from CricAPI.
+        let json;
+        let cached = null;
+        try { cached = await state.db.getMatchScorecard(matchId); } catch (_) {}
+        const cachedLooksFinished = cached && matchLifecycle(cached, m.format) === 'completed';
+
+        if (cachedLooksFinished) {
+          json = cached;
+        } else if (m.external_id) {
+          statusEl.textContent = `Fetching latest scorecard for M${m.match_number} from CricAPI…`;
+          json = await fetchJsonWithFallback(k =>
+            `match_scorecard?apikey=${encodeURIComponent(k)}&id=${encodeURIComponent(m.external_id)}`
+          );
+          await state.db.saveMatchScorecard(matchId, json);
+        } else if (cached) {
+          // No external_id to refetch with — fall back to the stale cache, but
+          // the status banner below will flag it as not-yet-finished.
+          json = cached;
+        } else {
+          throw new Error('No external_id on this match and no cached scorecard — cannot recalc.');
+        }
+
+        const players = fromCricAPI(json, A.PLAYERS, m.format || 'T20');
+        if (!players.length) throw new Error('Scorecard parsed 0 players — check payload.');
+
+        // Log fielding summary to console for easy verification
+        const fieldingPlayers = players.filter(p => p.fielding &&
+          (p.fielding.catches + p.fielding.stumpings + p.fielding.runOutDirect + p.fielding.runOutIndirect) > 0);
+        console.group(`[Recalc] M${m.match_number} — ${players.length} players, ${fieldingPlayers.length} with fielding`);
+        console.table(fieldingPlayers.map(p => ({
+          name: p.name,
+          catches: p.fielding.catches,
+          stumpings: p.fielding.stumpings,
+          runOutDirect: p.fielding.runOutDirect,
+          runOutIndirect: p.fielding.runOutIndirect,
+          fieldingPts: calcFielding(p.fielding, m.format || 'T20').total,
+        })));
+        console.groupEnd();
+
+        const rowMap2 = new Map(); let unmatched = 0;
+        for (const pl of players) {
+          const local = findLocalByName(pl.name);
+          if (!local) { unmatched++; continue; }
+          if (rowMap2.has(local.id)) {
+            console.warn('[forceRefinalizeMatch] duplicate local player skipped:', pl.name, '→', local.id);
+            continue;
+          }
+          // Use local DB role — fromCricAPI promotes any player with both batting + bowling data
+          // to 'ar', which wrongly applies the duck penalty to specialist bowlers.
+          const s = calculateScore({ ...pl, role: local.role, captaincy: 'normal' }, m.format || 'T20');
+          rowMap2.set(local.id, {
+            playerId: local.id,
+            batting:  pl.batting  ?? null,
+            bowling:  pl.bowling  ?? null,
+            fielding: pl.fielding ?? null,
+            rawPoints: s.rawPoints,
+          });
+        }
+        const rows = Array.from(rowMap2.values());
+        if (!rows.length) throw new Error(`No API player names matched local pool (${players.length} players, all unmatched).`);
+
+        await state.db.bulkUpsertPlayerMatchStats(matchId, rows);
+        await computeAndSaveXIScoresForMatch(matchId);
+        await computeAndSaveSLScoresForMatch(matchId);
+
+        const fIssues2 = players.fieldingIssues || [];
+        const notFinished = matchLifecycle(json, m.format) !== 'completed';
+        const liveStatusText = json?.data?.status ?? json?.status ?? '';
+        let issueText = '';
+        if (notFinished) issueText += ` ⚠ Scorecard doesn't look finished yet (status: "${liveStatusText || 'unknown'}") — recalculate again once the match actually ends.`;
+        if (fIssues2.length) issueText += ` ⚠ ${fIssues2.length} fielding event(s) not credited: ${summarizeFieldingIssues(fIssues2)}.`;
+        statusEl.innerHTML = `✓ Recalculated M${m.match_number} — ${rows.length} players updated, ${unmatched} unmatched. Fielding: ${fieldingPlayers.length} players credited.`
+          + (issueText ? `<span style="color:var(--bad);">${escapeHtml(issueText)}</span>` : '');
+        // Feed the Fantasy Scorecard panel so the fielding-issue banner is visible
+        // there too, not just in this status line (same gap as finalize had).
+        state.lastScorecard = json;
+        renderFantasyScorecard();
+        if (fIssues2.length || notFinished) {
+          $('#fantasyScorecardSection')?.setAttribute('open', '');
+          $('#fantasyScorecardSection')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+        renderMatchesAdmin();
+        renderHistory();
+        // If the Leaderboard modal is already open, it doesn't auto-refresh on
+        // its own — re-render now so a Recalc'd score shows up immediately
+        // instead of looking "stuck" until the modal is closed and reopened.
+        if ($('#lbModal')?.classList.contains('open')) {
+          await renderLeaderboard();
+          maybeStartLbPolling();
+        }
+        if (fIssues2.length || notFinished) {
+          const bits = [];
+          if (notFinished) bits.push('match not finished yet');
+          if (fIssues2.length) bits.push(`${fIssues2.length} fielding event(s) not credited`);
+          toast(`Recalculated M${m.match_number} — but ${bits.join(' and ')}. Check status above.`, 6500);
+        } else {
+          toast(`Recalculated M${m.match_number} — ${fieldingPlayers.length} players with fielding points.`);
+        }
+      } catch (e) {
+        statusEl.textContent = `✗ Recalc failed: ${e.message}`;
+        toast('Recalc failed: ' + e.message, 5000);
+        console.error('[forceRefinalizeMatch]', e);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Recalc'; }
+      }
+    }
+    // Console shortcut: window.__recalcMatch('match-uuid-here')
+    window.__recalcMatch = forceRefinalizeMatch;
+
+    /**
+     * Bulk finalize — processes every completed match that still needs stats.
+     * Each match costs one CricAPI call (or zero if the scorecard is cached).
+     */
+    async function finalizeCompletedMatches() {
+      const apiKey = $('#apiKey').value.trim();
+      if (!apiKey) { toast('Enter your CricAPI key in Settings first.', 4000); return; }
+      if (!state.db) { toast('Connect to the database first.', 4000); return; }
+
+      const btn = $('#finalizeMatchesBtn');
+      const statusEl = $('#syncStatus');
+      btn.disabled = true;
+
+      try {
+        const pending = await state.db.listMatchesNeedingFinalization(state.activeTournamentId);
+        if (!pending.length) {
+          statusEl.textContent = 'Nothing to finalize — every completed match already has player_match_stats.';
+          toast('Nothing to finalize.');
+          return;
+        }
+        const apiNeeded = pending.filter(m => !m.cachedScorecard).length;
+        statusEl.textContent = `Finalizing ${pending.length} match${pending.length===1?'':'es'}`
+          + (apiNeeded < pending.length ? ` (${pending.length - apiNeeded} from cache, ${apiNeeded} from CricAPI)` : '') + '…';
+
+        const ok = [], failures = [];
+        let playersTotal = 0, unmatchedTotal = 0;
+
+        for (let i = 0; i < pending.length; i++) {
+          const m = pending[i];
+          btn.textContent = `Finalizing ${i+1} / ${pending.length}`;
+          try {
+            const result = await finalizeOneMatch(m, apiKey);
+            ok.push(result);
+            playersTotal += result.players; unmatchedTotal += result.unmatched;
+          } catch (err) {
+            const reason = err?.message || String(err);
+            failures.push({ match: `M${m.match_number ?? '?'} ${m.home_team_id || '—'} vs ${m.away_team_id || '—'}`, externalId: m.external_id, reason, kind: classifyFinalizeError(reason) });
+          }
+        }
+
+        const grouped = failures.reduce((acc, f) => { (acc[f.kind] = acc[f.kind] || []).push(f); return acc; }, {});
+        const summary = Object.entries(grouped).map(([kind, list]) => `${list.length} ${kind}`).join(' · ');
+
+        console.group(`Finalize results — ${ok.length} ok / ${failures.length} failed`);
+        if (failures.length) {
+          console.table(failures);
+          console.log('Grouped:', Object.fromEntries(Object.entries(grouped).map(([k, v]) => [k, v.map(f => f.match)])));
+        }
+        console.groupEnd();
+        window.__lastFinalize = { ok, failures, grouped };
+
+        statusEl.innerHTML = `
+          <strong>${ok.length}</strong> finalized · <strong>${playersTotal}</strong> player rows · <strong>${unmatchedTotal}</strong> unmatched
+          ${failures.length ? `<br><span style="color:var(--bad);">${failures.length} failed</span> (${escapeHtml(summary)}) — see dev console (<code>window.__lastFinalize</code>) for the full list.` : ''}
+        `;
+
+        if (failures.length) {
+          let panel = $('#finalizeErrorPanel');
+          if (!panel) {
+            panel = document.createElement('details');
+            panel.id = 'finalizeErrorPanel';
+            panel.style.cssText = 'padding:8px 12px;background:rgba(248,113,113,0.06);border-radius:6px;margin-top:6px;';
+            statusEl.after(panel);
+          }
+          panel.innerHTML = `
+            <summary style="cursor:pointer;font-size:12px;color:var(--bad);font-weight:600;">${failures.length} failed — click to inspect</summary>
+            <div style="margin-top:8px;font-size:11px;max-height:240px;overflow-y:auto;">
+              ${failures.map(f => `
+                <div style="padding:4px 0;border-bottom:1px dashed rgba(214,207,168,0.7);">
+                  <strong>${escapeHtml(f.match)}</strong>
+                  <span style="color:var(--accent-2);margin-left:6px;">[${f.kind}]</span>
+                  <div style="color:var(--muted);margin-top:2px;">${escapeHtml(f.reason)}</div>
+                </div>`).join('')}
+            </div>`;
+          panel.open = true;
+        } else {
+          $('#finalizeErrorPanel')?.remove();
+        }
+
+        renderMatchesAdmin();
+        renderHistory();
+        toast(`Finalized ${ok.length} — ${failures.length} failed.`);
+      } catch (e) {
+        statusEl.textContent = 'Finalize failed: ' + e.message;
+        toast('Finalize failed: ' + e.message, 5000);
+      } finally {
+        btn.disabled = false; btn.textContent = 'Finalize completed';
+      }
+    }
+
+    async function syncMatchesFromCricAPI() {
+      const apiKey   = $('#apiKey').value.trim();
+      const seriesId = $('#syncSeriesId').value.trim();
+      if (!apiKey) { toast('Enter your CricAPI key in Settings first.', 4000); return; }
+      if (!state.db) { toast('Connect to the database first (Settings).', 4000); return; }
+
+      const onlyRemaining = $('#syncFilter').value === 'remaining';
+      const btn = $('#syncMatchesBtn');
+      const statusEl = $('#syncStatus');
+      btn.disabled = true; btn.textContent = 'Syncing…';
+
+      try {
+        let target = [];
+        if (seriesId) {
+          statusEl.textContent = 'Fetching series schedule from CricAPI…';
+          localStorage.setItem(SERIES_ID_LS, seriesId);
+          // Persist to DB so this tournament always auto-fills in future
+          try {
+            const activeTournament = state.tournaments.find(t => t.id === state.activeTournamentId);
+            if (activeTournament && activeTournament.cricapi_series_id !== seriesId) {
+              await state.db.updateTournamentSeriesId(state.activeTournamentId, seriesId);
+              activeTournament.cricapi_series_id = seriesId;
+            }
+          } catch (e) { console.warn('Could not persist series ID to DB:', e); }
+          target = await fetchSeriesInfo(apiKey, seriesId);
+          console.log('[sync] series_info returned', target.length, 'matches');
+        } else {
+          statusEl.textContent = 'Scanning /currentMatches (no series ID provided)…';
+          const all = await fetchCurrentMatchesPaginated(apiKey);
+          const isIPL = s => /indian premier league|\bipl\b|tata ipl/i.test(s || '');
+          target = all.filter(m => isIPL(m.name) || isIPL(m.series));
+          const allSeries = [...new Set(all.map(m => m.name || m.series).filter(Boolean))];
+          console.log(`[sync] /currentMatches fetched ${all.length}, IPL ${target.length}; series seen:`, allSeries);
+        }
+
+        // ── Extract unique teams from teamInfo ─────────────────────────────
+        // CricAPI's /series_info gives teamInfo[{shortname, name}] per match.
+        // Collect all unique codes+names and upsert into the teams table so
+        // the Teams tab is filled automatically.
+        const teamMap = new Map(); // code → full name
+        for (const item of target) {
+          if (Array.isArray(item.teamInfo)) {
+            for (const ti of item.teamInfo) {
+              const code = aliasCricTeamCode(ti.shortname || null);
+              if (code && ti.name) teamMap.set(code, ti.name);
+            }
+          }
+        }
+        let teamsUpserted = 0;
+        if (teamMap.size) {
+          statusEl.textContent = `Upserting ${teamMap.size} teams…`;
+          try {
+            const teamRows = [...teamMap.entries()].map(([id, name]) => ({ id, name }));
+            teamsUpserted = await state.db.bulkUpsertTeams(teamRows);
+            // Refresh local teams cache
+            const freshTeams = await state.db.getTeams();
+            TEAMS_DATA = freshTeams.map(t => ({ id: t.id, name: t.name, color: t.color, color2: t.color2 ?? null }));
+          } catch (e) {
+            console.warn('Team upsert failed (non-fatal):', e);
+          }
+        }
+
+        // Map then optionally drop completed
+        const rows = target.map(item => cricItemToMatch(item, state.activeTournamentId));
+        const filtered = onlyRemaining ? rows.filter(r => r.status !== 'completed') : rows;
+
+        if (!filtered.length) {
+          statusEl.textContent = `No matches matched (${rows.length} fetched, ${rows.length - filtered.length} dropped).`;
+          toast('No matches matched the filter.', 3000);
+          return;
+        }
+
+        // All teams were just upserted — no more missing-team nulling needed.
+        const knownTeams = new Set(teamCodes());
+        const missingTeams = new Set();
+        const sanitized = filtered.map(r => {
+          const homeOk = !r.homeTeamId || knownTeams.has(r.homeTeamId);
+          const awayOk = !r.awayTeamId || knownTeams.has(r.awayTeamId);
+          if (!homeOk) missingTeams.add(r.homeTeamId);
+          if (!awayOk) missingTeams.add(r.awayTeamId);
+          return { ...r, homeTeamId: homeOk ? r.homeTeamId : null, awayTeamId: awayOk ? r.awayTeamId : null };
+        });
+
+        const { written, skipped } = await state.db.bulkUpsertMatches(sanitized);
+
+        // Refresh UI
+        state.matches = await state.db.listMatches(state.activeTournamentId);
+        renderMatchesAdmin(); renderMatchSelector(); renderTeamsAdmin();
+
+        const teamMsg = teamsUpserted ? ` · ${teamsUpserted} team${teamsUpserted !== 1 ? 's' : ''} saved` : '';
+        const warn = missingTeams.size
+          ? `. Still unknown codes (saved with NULL): ${[...missingTeams].join(', ')}` : '';
+        statusEl.textContent = `Synced ${written}, skipped ${skipped}${teamMsg}${warn}`;
+        toast(`Synced ${written} matches${teamMsg}${missingTeams.size ? ` — ${missingTeams.size} unknown code(s)` : ''}.`, 5000);
+      } catch (e) {
+        statusEl.textContent = 'Sync failed: ' + e.message;
+        toast('Sync failed: ' + e.message, 5000);
+      } finally {
+        btn.disabled = false; btn.textContent = 'Sync from CricAPI';
+      }
+    }
+
+    async function deleteMatchHandler(id) {
+      const m = state.matches.find(x => x.id === id);
+      const label = m ? `Match ${m.match_number} (${m.home_team_id} vs ${m.away_team_id})` : id;
+      if (!confirm(`Delete ${label}? Match results saved against it will also be removed.`)) return;
+      try {
+        if (state.db) await state.db.deleteMatch(id);
+        const idx = state.matches.findIndex(x => x.id === id);
+        if (idx >= 0) state.matches.splice(idx, 1);
+        if (state.activeMatchId === id) state.activeMatchId = null;
+        toast('Deleted.');
+        renderMatchesAdmin(); renderMatchSelector(); renderPool();
+      } catch (e) { toast('Delete failed: ' + e.message, 5000); }
+    }
+
+    // Compute & save per-XI total points for a match by applying captain/VC
+    // multipliers to raw_points already in player_match_stats. Idempotent.
+    const XI_MULTIPLIERS = { captain: 2, vice_captain: 1.5, normal: 1 };
+    async function computeAndSaveXIScoresForMatch(matchId) {
+      if (!state.db || !matchId) return 0;
+      // Fetch ALL daily teams for this match across all users (not just state.savedTeams
+      // which is scoped to the current user). This ensures every participant's team
+      // gets scored when an admin runs finalize/recalculate.
+      let xis;
+      try { xis = await state.db.getAllDailyTeamsForMatch(matchId); } catch (e) {
+        console.error('[XI scores] getAllDailyTeamsForMatch failed:', e.message, e); return 0;
+      }
+      console.log(`[XI scores] match ${matchId} — found ${xis.length} team(s):`, xis.map(x => ({ id: x.id, name: x.name, players: x.playerIds.length, captain: x.captainId })));
+      if (!xis.length) return 0;
+      // Pull raw points per player for this match
+      const stats = await state.db.getPlayerStatsForMatch(matchId);
+      console.log(`[XI scores] player stats rows: ${stats.length}`, stats.slice(0,3));
+      const rawByPlayer = Object.fromEntries(stats.map(s => [s.player_id, Number(s.raw_points)]));
+      // Compute each XI's total, applying captain/VC multipliers
+      const scores = xis.map(xi => {
+        let total = 0;
+        for (const pid of xi.playerIds) {
+          const raw = rawByPlayer[pid] ?? 0;
+          const mult = pid === xi.captainId      ? XI_MULTIPLIERS.captain
+                     : pid === xi.viceCaptainId  ? XI_MULTIPLIERS.vice_captain
+                     : 1;
+          total += raw * mult;
+        }
+        const result = { userTeamId: xi.id, totalPoints: Math.round(total * 10) / 10 };
+        console.log(`[XI scores] ${xi.name}: ${result.totalPoints} pts (${xi.playerIds.length} players, captain=${xi.captainId})`);
+        return result;
+      });
+      console.log('[XI scores] upserting scores:', scores);
+      let n;
+      try { n = await state.db.upsertUserTeamMatchScores(matchId, scores); }
+      catch (e) { console.error('[XI scores] upsertUserTeamMatchScores failed:', e.message, e); return 0; }
+      console.log(`[XI scores] upserted ${n} score row(s)`);
+      // Refresh local cache for rendering
+      try {
+        const all = await state.db.getAllUserTeamMatchScores();
+        state.xiScoresByMatch = {};
+        all.forEach(r => {
+          state.xiScoresByMatch[r.match_id] = state.xiScoresByMatch[r.match_id] || [];
+          state.xiScoresByMatch[r.match_id].push({ userTeamId: r.user_team_id, totalPoints: Number(r.total_points) });
+        });
+      } catch (e) { console.warn('refresh xiScoresByMatch failed', e); }
+      return n;
+    }
+
+    /**
+     * SL counterpart to computeAndSaveXIScoresForMatch.
+     * Pulls every squad's locked XI for the match, applies captain/VC multipliers,
+     * and upserts to user_match_xi_scores.
+     *
+     * For squads in a private league with custom scoring rules the base points are
+     * recomputed from raw batting/bowling/fielding stats using those rules.
+     * All other squads use the pre-computed raw_points from player_match_stats.
+     * Idempotent — safe to call multiple times.
+     */
+    async function computeAndSaveSLScoresForMatch(matchId) {
+      if (!state.db || !matchId) return 0;
+
+      // Find the match to get its format
+      const match = state.matches?.find(m => m.id === matchId);
+      const fmt   = match?.format || 'T20';
+
+      let squadXIs;
+      try { squadXIs = await state.db.getAllSquadXIsForMatch(matchId); } catch (e) {
+        console.warn('[SL scores] getAllSquadXIsForMatch failed:', e.message); return 0;
+      }
+      if (!Object.keys(squadXIs).length) return 0;
+
+      // Full stats (batting/bowling/fielding + pre-computed raw_points) for custom-rules re-scoring
+      let fullStats;
+      try { fullStats = await state.db.getPlayerStatsForMatchFull(matchId); } catch (e) {
+        console.warn('[SL scores] getPlayerStatsForMatchFull failed:', e.message); return 0;
+      }
+      const statsByPlayer = Object.fromEntries((fullStats || []).map(s => [s.player_id, s]));
+
+      // Build a squad→contest map so we can look up per-league rules.
+      // Fetched lazily per-squad and cached for the duration of this call.
+      const squadContestMap = {};   // squadId → contest row (or null)
+      async function getContestForSquad(squadId) {
+        if (squadId in squadContestMap) return squadContestMap[squadId];
+        try {
+          const contestId = await state.db.getContestIdForSquad(squadId);
+          const found = contestId
+            ? (state.sl.contests?.find(c => c.id === contestId) ?? null)
+            : null;
+          squadContestMap[squadId] = found;
+          return found;
+        } catch { squadContestMap[squadId] = null; return null; }
+      }
+
+      // Resolve effective scoring rules for a contest (contest → tournament → defaults)
+      const matchTournament = (state.tournaments || []).find(t => t.id === match?.tournament_id);
+      async function rulesForContest(contest) {
+        if (contest?.scoring_rules?.[fmt]) {
+          const merged = { ...DEFAULT_SCORING_RULES[fmt], ...contest.scoring_rules[fmt] };
+          // Same dot_ball_enabled gate as everywhere else — a contest's own
+          // custom rules can't bypass the tournament's toggle.
+          if (!matchTournament?.dot_ball_enabled) merged.dot_ball = 0;
+          return merged;
+        }
+        // Tournament-level rules (already loaded into SCORING_RULES at boot,
+        // and already gated by applyDotBallGate()).
+        return SCORING_RULES[fmt];
+      }
+
+      // Batch-fetch all booster activations for this match in one query.
+      // Per-squad queries hit RLS when scoring other users' squads — the batch
+      // approach requires only a single read with the permissive read policy.
+      let squadBoosterMap = {};   // squadId → booster key or null
+      try {
+        squadBoosterMap = await state.db.getAllBoostersForMatch(matchId);
+      } catch (e) {
+        console.warn('[SL scores] getAllBoostersForMatch failed, falling back to per-squad lookup:', e.message);
+      }
+      async function getBoosterForSquad(squadId) {
+        // Use batch result if present; fall back to individual query as safety net
+        if (squadId in squadBoosterMap) return squadBoosterMap[squadId] ?? null;
+        try {
+          const b = await state.db.getActiveBoosterForMatch(squadId, matchId);
+          squadBoosterMap[squadId] = b;
+          return b;
+        } catch { squadBoosterMap[squadId] = null; return null; }
+      }
+
+      let totalSaved = 0;
+      for (const [squadId, rows] of Object.entries(squadXIs)) {
+        const contest        = await getContestForSquad(squadId);
+        const hasCustom      = !!(contest?.scoring_rules?.[fmt]);
+        const effectiveRules = hasCustom ? await rulesForContest(contest) : null;
+        const booster        = await getBoosterForSquad(squadId);
+
+        const scores = rows.map(r => {
+          const s = statsByPlayer[r.player_id];
+          const p = A.PLAYERS.find(x => x.id === r.player_id);
+
+          // Captaincy key — booster can promote captain or VC slot
+          const captaincy = r.is_captain
+            ? (booster === 'triple_captain' ? 'triple_captain' : 'captain')
+            : r.is_vc
+              ? (booster === 'dual_captain' ? 'captain' : 'vice_captain')
+              : 'normal';
+
+          let raw;
+          if (hasCustom && s !== undefined && effectiveRules) {
+            // Re-score from raw stats using the league's custom rules
+            const result = calculateScore({
+              name      : p?.name       ?? '',
+              role      : p?.role       ?? 'bat',
+              is_overseas: p?.is_overseas ?? false,
+              captaincy : 'normal',   // apply captaincy multiplier below
+              batting   : s.batting   ?? null,
+              bowling   : s.bowling   ?? null,
+              fielding  : s.fielding  ?? null,
+            }, fmt, effectiveRules);
+            raw = result.rawPoints;
+          } else {
+            raw = Number(s?.raw_points ?? 0);
+          }
+
+          // Apply captaincy + booster multipliers
+          const captMult = MULTIPLIERS[captaincy] || 1;
+          let boosterMult = 1;
+          if (booster === 'team_double')                                        boosterMult = 2;
+          else if (booster === 'os_double'     &&  (p?.is_overseas ?? false))  boosterMult = 2;
+          else if (booster === 'indian_double' && !(p?.is_overseas ?? false))  boosterMult = 2;
+          const mult = captMult * boosterMult;
+
+          return {
+            playerId   : r.player_id,
+            basePoints : raw,
+            multiplier : mult,
+            totalPoints: Math.round(raw * mult * 10) / 10,
+          };
+        });
+        try {
+          const n = await state.db.upsertSquadMatchScores(squadId, matchId, scores);
+          totalSaved += n;
+        } catch (e) {
+          console.warn(`[SL scores] upsert failed for squad ${squadId}:`, e.message);
+        }
+      }
+      return totalSaved;
+    }
+
+
+    // ─── FANTASY SCORECARD ───────────────────────────────────────────────────
+    // Engine-calculated fantasy points for every player in the live match.
+    // Independent of the user's XI — shows what each player WOULD score
+    // (no captain/VC multiplier; that's per-team).
+    function renderFantasyScorecard() {
+      const view = $('#fantasyScorecardView');
+      const meta = $('#fantasyScorecardMeta');
+      const count = $('#fantasyScorecardCount');
+      const payload = state.lastScorecard;
+      if (!payload) {
+        view.className = 'fsc-empty';
+        view.innerHTML = 'No data yet.';
+        meta.textContent = 'Connect to a live match to see fantasy points for every player.';
+        count.textContent = '';
+        return;
+      }
+
+      // Pass A.PLAYERS as the squad so fielders who didn't bat/bowl are still found via
+      // the squad fallback. Captaincy multipliers are overridden below with 'normal'.
+      const players = fromCricAPI(payload, A.PLAYERS, state.format);
+      const xiIds = new Set(state.selected);
+      const scored = players.map(pl => {
+        const local = findLocalByName(pl.name);
+        const s = calculateScore({ ...pl, captaincy: 'normal' }, state.format);
+        return {
+          apiName: pl.name,
+          role: pl.role,
+          localPlayer: local,
+          inXi: !!(local && xiIds.has(local.id)),
+          points: s.rawPoints,
+          breakdown: s.breakdown,
+        };
+      }).sort((a, b) => b.points - a.points);
+
+      count.textContent = scored.length ? `(${scored.length})` : '';
+      meta.textContent = `Match: ${payload.data?.matchInfo?.name || payload.data?.status || ''}`;
+
+      if (!scored.length) {
+        view.className = 'fsc-empty';
+        view.innerHTML = 'Scorecard arrived but contains no player rows yet.';
+        return;
+      }
+
+      const unmatchedCount = scored.filter(r => !r.localPlayer).length;
+      const fieldingIssues = players.fieldingIssues || [];
+
+      view.className = 'fsc-wrap';
+      view.innerHTML = `
+        ${unmatchedCount ? `<div style="padding:6px 10px;font-size:11px;background:rgba(248,113,113,0.08);border-bottom:1px solid var(--border);color:var(--bad);">
+          ${unmatchedCount} player${unmatchedCount>1?'s':''} not matched to your pool — click <strong>Link</strong> on the red rows to fix names &amp; recalculate points.
+        </div>` : ''}
+        ${fieldingIssues.length ? `<div style="padding:6px 10px;font-size:11px;background:rgba(248,113,113,0.08);border-bottom:1px solid var(--border);color:var(--bad);">
+          <div style="margin-bottom:4px;">⚠ ${fieldingIssues.length} fielding event${fieldingIssues.length>1?'s':''} not credited to anyone:</div>
+          ${fieldingIssues.map(fieldingIssueRowHtml).join('')}
+        </div>` : ''}
+        <table class="fsc-table">
+          <thead>
+            <tr>
+              <th class="name">Player</th>
+              <th>Team</th>
+              <th>Role</th>
+              <th>Pts</th>
+              ${unmatchedCount ? '<th></th>' : ''}
+            </tr>
+          </thead>
+          <tbody>
+            ${scored.map((r, i) => {
+              const colSpan = unmatchedCount ? 5 : 4;
+              const bdText = Object.entries(r.breakdown).map(([cat, vals]) => {
+                const items = Object.entries(vals).filter(([,v]) => v !== 0).map(([k,v]) => `${k}: ${v>0?'+':''}${v}`).join(', ');
+                return items ? `<span class="b-cat">${cat}</span>${items}` : '';
+              }).filter(Boolean).join(' &nbsp;|&nbsp; ') || '<em style="color:var(--muted)">no events scored</em>';
+              if (r.localPlayer) return `
+              <tr class="fsc-player-row ${r.inXi?'mine':''}" style="cursor:pointer;" data-fsc-idx="${i}">
+                <td class="name">${escapeHtml(r.apiName)}</td>
+                <td class="team-tag">${r.localPlayer.team_id || r.localPlayer.team || '—'}</td>
+                <td>${roleLabel[r.role] || r.role}</td>
+                <td class="pts">${r.points.toFixed(1)}</td>
+                ${unmatchedCount ? '<td></td>' : ''}
+              </tr>
+              <tr class="fsc-breakdown-row" data-fsc-for="${i}" style="display:none;">
+                <td colspan="${colSpan}" style="padding:4px 12px 8px;font-size:11px;color:var(--fg);background:var(--panel-2);border-bottom:1px solid var(--border);">${bdText}</td>
+              </tr>`;
+              return `
+              <tr class="unmatched" data-api-name="${escapeHtml(r.apiName)}" data-idx="${i}">
+                <td class="name">${escapeHtml(r.apiName)}</td>
+                <td class="team-tag">—</td>
+                <td>${roleLabel[r.role] || r.role}</td>
+                <td class="pts" style="color:var(--muted);">${r.points.toFixed(1)}</td>
+                <td class="link-cell">
+                  <button class="link-btn">Link</button>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      `;
+
+      // Wire Link buttons via addEventListener — onclick attributes don't work in module scripts
+      view.querySelectorAll('.link-btn').forEach(btn => {
+        btn.addEventListener('click', () => expandLinkRow(btn));
+      });
+
+      // Fielding-issue action controls: one-click "Credit to X" for ambiguous
+      // same-name matches, and an expandable Link picker for fielding events that
+      // matched no one at all. Both write into NAME_ALIASES (same store as the
+      // top-level Link buttons) and rescore, so the fix sticks on the next recalc.
+      view.querySelectorAll('.fielding-credit-btn').forEach(btn => {
+        btn.addEventListener('click', () => linkPlayerAndRescore(btn.dataset.rawName, btn.dataset.playerId));
+      });
+      view.querySelectorAll('.fielding-link-btn').forEach(btn => {
+        btn.addEventListener('click', () => expandFieldingLinkRow(btn));
+      });
+
+      // Click a player row → toggle breakdown detail row
+      view.querySelectorAll('.fsc-player-row').forEach(tr => {
+        tr.addEventListener('click', () => {
+          const idx = tr.dataset.fscIdx;
+          const detail = view.querySelector(`.fsc-breakdown-row[data-fsc-for="${idx}"]`);
+          if (!detail) return;
+          const open = detail.style.display !== 'none';
+          detail.style.display = open ? 'none' : '';
+          tr.style.background = open ? '' : 'rgba(201,168,76,0.05)';
+        });
+      });
+    }
+
+    /**
+     * Renders one fielding-issue row with whatever action control fits its stage:
+     *  - 'parse': no raw name was even extracted — nothing to link, text only.
+     *  - 'ambiguous': raw name matched 2+ players — one button per candidate so
+     *     the admin can credit it to the right one in a single click.
+     *  - 'match' (default): raw name matched nobody — same Link-and-pick pattern
+     *     as the top-level unmatched-name rows.
+     * All actions ultimately call linkPlayerAndRescore, which stores the mapping
+     * in NAME_ALIASES (now also consulted by resolveFielder, see fromCricAPI) and
+     * re-runs scoring so the credit actually lands on the next render.
+     */
+    function fieldingIssueRowHtml(it) {
+      const text = `<span style="color:var(--fg)">${escapeHtml(summarizeFieldingIssues([it]))}</span>`;
+      if (it.stage === 'ambiguous') {
+        const btns = it.candidates.map(name => {
+          const p = A.PLAYERS.find(pp => pp.name === name);
+          return p ? `<button class="fielding-credit-btn" data-raw-name="${escapeHtml(it.rawName)}" data-player-id="${escapeHtml(String(p.id))}">Credit to ${escapeHtml(name)}</button>` : '';
+        }).join(' ');
+        return `<div style="margin:3px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${text} ${btns}</div>`;
+      }
+      if (it.stage === 'match') {
+        return `<div class="fielding-link-row" data-raw-name="${escapeHtml(it.rawName)}" style="margin:3px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+          ${text}
+          <button class="fielding-link-btn">Link</button>
+        </div>`;
+      }
+      return `<div style="margin:3px 0;">${text}</div>`;
+    }
+
+    /**
+     * Expands a fielding-issue "Link" button into an inline player-picker,
+     * mirroring expandLinkRow below but for a fielder raw-name row instead of
+     * an unmatched top-level player row.
+     */
+    function expandFieldingLinkRow(btn) {
+      const row = btn.closest('.fielding-link-row');
+      const rawName = row?.dataset.rawName;
+      if (!rawName) return;
+
+      const playerOpts = A.PLAYERS
+        .slice().sort((a, b) => a.name.localeCompare(b.name))
+        .map(p => `<option value="${p.id}">${escapeHtml(p.name)} (${escapeHtml(p.team_id || p.team || '')})</option>`)
+        .join('');
+
+      row.innerHTML = `
+        <span style="color:var(--fg)">"${escapeHtml(rawName)}" —</span>
+        <select class="fielding-link-sel">${playerOpts}</select>
+        <button class="fielding-link-save-btn">Credit &amp; rescore</button>
+        <button class="fielding-link-cancel-btn" style="background:transparent;border-color:var(--muted);color:var(--muted);">✕</button>
+      `;
+      row.querySelector('.fielding-link-save-btn').addEventListener('click', () => {
+        const playerId = row.querySelector('.fielding-link-sel').value;
+        linkPlayerAndRescore(rawName, playerId);
+      });
+      row.querySelector('.fielding-link-cancel-btn').addEventListener('click', () => renderFantasyScorecard());
+    }
+
+    /**
+     * Expands the "Link" button into an inline player-picker.
+     * Reads the API name from the row's data-api-name attribute — no fragile
+     * string arguments, so names with apostrophes / special chars work fine.
+     */
+    function expandLinkRow(btn) {
+      const tr  = btn.closest('tr');
+      const td  = btn.closest('td');
+      const apiName = tr.dataset.apiName;   // set as a proper data attribute, safe from escaping issues
+      if (!apiName) return;
+
+      const playerOpts = A.PLAYERS
+        .slice().sort((a, b) => a.name.localeCompare(b.name))
+        .map(p => `<option value="${p.id}">${escapeHtml(p.name)} (${escapeHtml(p.team_id || p.team || '')})</option>`)
+        .join('');
+
+      td.innerHTML = `
+        <div class="link-inline">
+          <select class="link-sel">${playerOpts}</select>
+          <button class="link-save-btn">Save &amp; rescore</button>
+          <button class="link-cancel-btn" style="background:transparent;border-color:var(--muted);color:var(--muted);">✕</button>
+        </div>`;
+
+      // Wire buttons via JS — no inline onclick strings needed
+      td.querySelector('.link-save-btn').addEventListener('click', () => {
+        const playerId = td.querySelector('.link-sel').value;
+        linkPlayerAndRescore(apiName, playerId);
+      });
+      td.querySelector('.link-cancel-btn').addEventListener('click', () => renderFantasyScorecard());
+    }
+
+    /**
+     * Links an unmatched API player name to a local player. Stores the alias in
+     * two places: (1) localStorage + in-memory NAME_ALIASES, for an instant effect
+     * in this browser tab, and (2) the DB-backed player_name_aliases table
+     * (source='cricapi'), so the server-side poll-cricapi cron also picks it up on
+     * its next run — this is the one piece of CricAPI name-matching that still
+     * needs a human, so it has to actually reach the database, not just this tab.
+     */
+    async function linkPlayerAndRescore(apiName, playerId) {
+      if (!playerId) { toast('Pick a player first.'); return; }
+
+      const localPlayer = A.PLAYERS.find(p => p.id === playerId);
+      if (!localPlayer) { toast('Player not found.'); return; }
+
+      // CricAPI's own generic "couldn't identify this player" placeholder
+      // (e.g. "Player Not Found") can't be linked to one real player — the
+      // same literal string recurs for different actual players across
+      // matches, so a static alias here would silently mis-credit stats to
+      // whoever was picked. (This is exactly how "Player Not Found" ended up
+      // permanently aliased to Abayanga Khaka.)
+      if (state.db?.isPlaceholderName?.(apiName)) {
+        toast(`"${apiName}" is a generic placeholder from the API, not a real name — it can't be linked to one player.`, 4000);
+        return;
+      }
+
+      try {
+        // 1. Store alias: apiName (lowercase) → local player name
+        const key = apiName.toLowerCase().trim();
+        NAME_ALIASES[key] = localPlayer.name;
+        const saved = JSON.parse(localStorage.getItem('cricapi_name_aliases') || '{}');
+        saved[key] = localPlayer.name;
+        localStorage.setItem('cricapi_name_aliases', JSON.stringify(saved));
+
+        // 2. Persist server-side so poll-cricapi's cron resolves it too, not just this tab.
+        const externalId = $('#matchId')?.value?.trim();
+        const localMatch = state.matches.find(m => m.external_id === externalId);
+        if (state.db && localMatch?.tournament_id) {
+          try {
+            await state.db.upsertNameAlias(playerId, localMatch.tournament_id, apiName, 'cricapi');
+          } catch (aliasErr) {
+            console.warn('[linkPlayerAndRescore] DB alias upsert failed (browser-local alias still applied):', aliasErr.message);
+          }
+        }
+
+        toast(`Linked "${apiName}" → "${localPlayer.name}". Rescoring…`, 3000);
+
+        // 3. Rescore the current match with the updated alias in effect
+        if (state.db) await rescoreCurrentMatch();
+        else renderFantasyScorecard(); // local mode: just re-render
+
+      } catch (e) {
+        toast('Link failed: ' + e.message, 5000);
+      }
+    }
+
+    /**
+     * Re-runs fantasy scoring for the currently connected match using
+     * state.lastScorecard. Saves player_match_stats + recomputes XI totals.
+     */
+    async function rescoreCurrentMatch() {
+      if (!state.lastScorecard) { toast('No scorecard loaded.'); return; }
+      if (!state.db)            { toast('Connect a database first.'); return; }
+
+      const externalId = $('#matchId')?.value?.trim();
+      const localMatch = state.matches.find(m => m.external_id === externalId);
+      if (!localMatch) { toast('Match not found in DB — sync first.'); return; }
+
+      const apiPlayers = fromCricAPI(state.lastScorecard, A.PLAYERS, state.format);
+      const rows = []; const unmatchedNames = [];
+      for (const pl of apiPlayers) {
+        const local = findLocalByName(pl.name);
+        if (!local) { unmatchedNames.push(pl.name); continue; }
+        const s = calculateScore({ ...pl, captaincy: 'normal' }, state.format);
+        rows.push({
+          playerId : local.id,
+          batting  : pl.batting  ?? null,
+          bowling  : pl.bowling  ?? null,
+          fielding : pl.fielding ?? null,
+          rawPoints: s.rawPoints,
+        });
+      }
+
+      if (!rows.length) {
+        toast(`Still no matching players (${unmatchedNames.length} unmatched). Check player names.`, 4000);
+        return;
+      }
+      if (unmatchedNames.length) {
+        const list = unmatchedNames.map(n => `"${n}"`).join(', ');
+        toast(`Rescored — but ${unmatchedNames.length} still unmatched: ${list}. Link them and rescore again.`, 6000);
+      }
+
+      const n = await state.db.bulkUpsertPlayerMatchStats(localMatch.id, rows);
+      const xiSaved = await computeAndSaveXIScoresForMatch(localMatch.id);
+      await computeAndSaveSLScoresForMatch(localMatch.id);
+
+      // Refresh live stats in state.stats so both daily and SL panels update
+      apiPlayers.forEach(pl => {
+        const local = findLocalByName(pl.name);
+        if (!local) return;
+        state.stats[local.id] = { batting: pl.batting, bowling: pl.bowling, fielding: pl.fielding };
+      });
+
+      // Also persist live SL scores from updated state.stats
+      if (state.mode === 'season_long') persistLiveSlScores(localMatch.id).catch(() => {});
+
+      renderFantasyScorecard();
+      renderScorecard();
+      render();
+      if (state.mode === 'season_long') { renderSlXiTab(); renderSlLiveTab(); }
+      renderMatchesAdmin();
+      toast(`Rescored: ${n} player rows saved, ${unmatchedNames.length} still unmatched${xiSaved ? `, ${xiSaved} XI total${xiSaved===1?'':'s'} updated` : ''}.`);
+    }
+
+    async function saveFantasyScorecard() {
+      if (!state.db) { toast('Connect a database first (Settings).'); return; }
+      if (!state.lastScorecard) { toast('Connect to a live match first.'); return; }
+
+      // Find the local match row by the CricAPI external_id we connected with
+      const matchSel = $('#matchId');
+      const externalId = matchSel?.value?.trim();
+      if (!externalId) { toast('No match selected.'); return; }
+      const localMatch = state.matches.find(m => m.external_id === externalId);
+      if (!localMatch) { toast('Selected match isn\'t in your DB. Run sync first.'); return; }
+
+      try {
+        const players = fromCricAPI(state.lastScorecard, A.PLAYERS, state.format);
+        // Only persist rows whose API name maps to a local player (FK requirement)
+        const rows = [];
+        let unmatched = 0;
+        for (const pl of players) {
+          const local = findLocalByName(pl.name);
+          if (!local) { unmatched++; continue; }
+          const s = calculateScore({ ...pl, captaincy: 'normal' }, state.format);
+          rows.push({
+            playerId  : local.id,
+            batting   : pl.batting   ?? null,
+            bowling   : pl.bowling   ?? null,
+            fielding  : pl.fielding  ?? null,
+            rawPoints : s.rawPoints,
+          });
+        }
+        if (!rows.length) {
+          toast(`Nothing to save — ${unmatched} player(s) couldn\'t be matched to your DB.`, 4000);
+          return;
+        }
+        const n = await state.db.bulkUpsertPlayerMatchStats(localMatch.id, rows);
+        // Cascade: compute per-XI totals so daily + SL scores stay in sync.
+        const xiSaved = await computeAndSaveXIScoresForMatch(localMatch.id);
+        await computeAndSaveSLScoresForMatch(localMatch.id);
+        renderMatchesAdmin();
+        toast(`Saved ${n} player score${n===1?'':'s'}${unmatched?` (${unmatched} unmatched)`:''}${xiSaved?`, ${xiSaved} XI total${xiSaved===1?'':'s'} updated`:''}.`);
+      } catch (e) { toast('Save failed: ' + e.message, 5000); }
+    }
+
+
+    // ─── TEAMS ADMIN ─────────────────────────────────────────────────────────
+    function nextTeamCode() {
+      // Suggest a 2–4 letter free code. Default to "T" + index.
+      const used = new Set(teamCodes());
+      for (let i = 1; i < 1000; i++) {
+        const c = 'T' + i;
+        if (!used.has(c)) return c;
+      }
+      return 'TEAM';
+    }
+
+    function renderTeamsAdmin() {
+      // Derive which teams belong to the active tournament from its match list.
+      // Falls back to all teams if no matches are loaded yet.
+      const tournamentTeamIds = new Set();
+      state.matches.forEach(m => {
+        if (m.home_team_id) tournamentTeamIds.add(m.home_team_id);
+        if (m.away_team_id) tournamentTeamIds.add(m.away_team_id);
+      });
+      const allTeams = [...TEAMS_DATA].sort((a, b) => a.id.localeCompare(b.id));
+      const teams    = tournamentTeamIds.size > 0
+        ? allTeams.filter(t => tournamentTeamIds.has(t.id))
+        : allTeams;
+
+      const playerCounts = {};
+      A.PLAYERS.forEach(p => { playerCounts[p.team] = (playerCounts[p.team]||0)+1; });
+
+      // Context label
+      const activeTournament = state.tournaments.find(t => t.id === state.activeTournamentId);
+      const contextLabel = activeTournament
+        ? `<div style="font-size:11px; color:var(--muted); padding:6px 12px 0;
+                       font-weight:600; text-transform:uppercase; letter-spacing:0.5px;">
+             ${escapeHtml(activeTournament.name)} — ${teams.length} team${teams.length !== 1 ? 's' : ''}
+             ${tournamentTeamIds.size === 0 ? '<span style="color:var(--accent); font-weight:400;">(no matches synced yet — showing all)</span>' : ''}
+           </div>`
+        : '';
+
+      const addRow = `
+        <tr class="add-row" id="addTeamRow">
+          <td class="col-id"><input data-f="id" type="text" value="${nextTeamCode()}" maxlength="6" style="text-transform:uppercase;" /></td>
+          <td><input data-f="name" type="text" placeholder="Team name" /></td>
+          <td class="col-color"><input data-f="color" type="color" value="#22d3ee" /></td>
+          <td class="col-color2"><input data-f="color2" type="color" value="#ffffff" /></td>
+          <td class="col-actions"><button class="row-add" id="addTeamBtn" title="Add">+</button></td>
+        </tr>
+      `;
+      const rows = teams.map(t => `
+        <tr data-id="${t.id}">
+          <td class="col-id"><span class="team-swatch" style="background:${t.color || '#666'}"></span>${t.id}</td>
+          <td><input data-f="name" type="text" value="${escapeHtml(t.name)}" /></td>
+          <td class="col-color"><input data-f="color" type="color" value="${t.color || '#666666'}" /></td>
+          <td class="col-color2"><input data-f="color2" type="color" value="${t.color2 || '#ffffff'}" title="Secondary color (sleeves/collar)" /></td>
+          <td class="col-actions"><button class="row-del" data-act="del" title="Delete">×</button><span style="font-size:10px; color:var(--muted); margin-left:6px;">${playerCounts[t.id] || 0} pl</span></td>
+        </tr>
+      `).join('');
+
+      // Inject context label above the table
+      const teamsView = $('#adminTeamsView');
+      let labelEl = teamsView.querySelector('#teamsContextLabel');
+      if (!labelEl) {
+        labelEl = document.createElement('div');
+        labelEl.id = 'teamsContextLabel';
+        teamsView.insertBefore(labelEl, teamsView.firstChild);
+      }
+      labelEl.innerHTML = contextLabel;
+
+      $('#adminTeamsBody').innerHTML = addRow + rows;
+      $('#addTeamBtn').addEventListener('click', addTeamHandler);
+      $('#adminTeamsBody').querySelectorAll('tr[data-id]').forEach(tr => {
+        const id = tr.dataset.id;
+        tr.querySelectorAll('input').forEach(el => {
+          el.addEventListener('change', () => saveTeamEdit(id, tr));
+          el.addEventListener('input', () => el.classList.add('dirty'));
+        });
+        tr.querySelector('[data-act="del"]').addEventListener('click', () => deleteTeamHandler(id));
+      });
+      $('#adminCount').textContent = `${teams.length} team${teams.length !== 1 ? 's' : ''} · ${activeTournament?.name ?? 'all'}`;
+
+      // ── Alias panel ──────────────────────────────────────────────────────
+      renderAliasPanel();
+
+      // ── Mismatch detection ────────────────────────────────────────────────
+      // Teams that appear in match schedule but have 0 players are likely
+      // freshly synced from CricAPI with a different code format (e.g. "IND-W"
+      // when players were imported as "INDW"). Show a fix banner.
+      const playerTeamIds = Object.keys(playerCounts);
+      const orphanTeams = [...tournamentTeamIds].filter(id => !(playerCounts[id] > 0));
+      const suggested = orphanTeams.map(orphanId => {
+        const guess = suggestTeamRemap(orphanId, playerTeamIds);
+        return { from: orphanId, to: guess };
+      }).filter(r => r.to !== null && r.from !== r.to);
+
+      const banner = $('#teamsMismatchBanner');
+      if (suggested.length > 0 && tournamentTeamIds.size > 0) {
+        banner.style.display = 'block';
+        const details = $('#teamsMismatchDetails');
+        details.innerHTML = suggested.map(r =>
+          `Match schedule uses <strong>${escapeHtml(r.from)}</strong> → players use <strong>${escapeHtml(r.to)}</strong>`
+        ).join('<br>');
+        const fixBtn = $('#fixMatchTeamsBtn');
+        // Rebuild listener to avoid duplicate binds on re-render
+        const newBtn = fixBtn.cloneNode(true);
+        fixBtn.parentNode.replaceChild(newBtn, fixBtn);
+        newBtn.addEventListener('click', () => fixMatchTeamsHandler(suggested));
+      } else {
+        banner.style.display = 'none';
+      }
+    }
+
+    function renderAliasPanel() {
+      // Read current aliases from the live map (minus the hardcoded default key)
+      const savedRaw = {};
+      try { Object.assign(savedRaw, JSON.parse(localStorage.getItem(CRIC_ALIAS_LS) || '{}')); } catch (e) {}
+      // Also include hardcoded defaults that aren't in localStorage
+      const allAliases = { ...CRIC_TEAM_CODE_MAP };
+
+      const listEl = $('#aliasList');
+      if (!listEl) return;
+      listEl.innerHTML = Object.keys(allAliases).length === 0
+        ? `<span style="color:var(--muted); font-size:11px;">No aliases saved yet.</span>`
+        : Object.entries(allAliases).map(([from, to]) =>
+            `<span style="display:inline-flex; align-items:center; gap:4px; background:var(--panel); border:1px solid var(--border); border-radius:20px; padding:3px 8px; font-size:11px;">
+              <span style="color:var(--muted);">${escapeHtml(from)}</span>
+              <span style="color:var(--accent);">→</span>
+              <span style="color:var(--text); font-weight:600;">${escapeHtml(to)}</span>
+              <button data-alias-del="${escapeHtml(from)}" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:13px;padding:0 0 0 2px;line-height:1;" title="Remove alias">×</button>
+            </span>`
+          ).join('');
+
+      // Wire delete buttons (clone to avoid duplicate listeners)
+      listEl.querySelectorAll('[data-alias-del]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          removeAlias(btn.dataset.aliasDel);
+          renderAliasPanel();
+          toast(`Alias "${btn.dataset.aliasDel}" removed.`, 2500);
+        });
+      });
+
+      // Toggle show/hide
+      const toggleBtn = $('#toggleAliasPanel');
+      const body = $('#aliasPanelBody');
+      if (toggleBtn && body) {
+        const newToggle = toggleBtn.cloneNode(true);
+        toggleBtn.parentNode.replaceChild(newToggle, toggleBtn);
+        newToggle.addEventListener('click', () => {
+          const open = body.style.display !== 'none';
+          body.style.display = open ? 'none' : 'block';
+          newToggle.textContent = open ? '▾ show' : '▴ hide';
+        });
+      }
+
+      // Add alias button
+      const addBtn = $('#addAliasBtn');
+      if (addBtn) {
+        const newAdd = addBtn.cloneNode(true);
+        addBtn.parentNode.replaceChild(newAdd, addBtn);
+        newAdd.addEventListener('click', () => {
+          const fromVal = ($('#aliasFrom').value || '').trim().toUpperCase();
+          const toVal   = ($('#aliasTo').value || '').trim().toUpperCase();
+          if (!fromVal || !toVal) { toast('Both codes are required.'); return; }
+          saveAliases({ [fromVal]: toVal });
+          $('#aliasFrom').value = ''; $('#aliasTo').value = '';
+          renderAliasPanel();
+          toast(`Alias ${fromVal} → ${toVal} saved.`, 2500);
+        });
+      }
+
+      // Fix existing matches button — applies all current aliases to DB matches now
+      const applyBtn = $('#applyAliasesToMatchesBtn');
+      if (applyBtn) {
+        const newApply = applyBtn.cloneNode(true);
+        applyBtn.parentNode.replaceChild(newApply, applyBtn);
+        newApply.addEventListener('click', async () => {
+          if (!state.db) { toast('Connect to the database first.', 4000); return; }
+          if (!state.activeTournamentId) { toast('Select a tournament first.', 4000); return; }
+          const mapping = Object.entries(CRIC_TEAM_CODE_MAP)
+            .filter(([from, to]) => from !== to)
+            .map(([from, to]) => ({ from, to }));
+          if (!mapping.length) { toast('No aliases defined — add some first.', 3000); return; }
+          const statusEl = $('#applyAliasStatus');
+          newApply.disabled = true; newApply.textContent = 'Fixing…'; if (statusEl) statusEl.textContent = '';
+          try {
+            await state.db.remapMatchTeams(state.activeTournamentId, mapping);
+            state.matches = await state.db.listMatches(state.activeTournamentId);
+            toast(`Applied ${mapping.length} alias${mapping.length !== 1 ? 'es' : ''} to existing matches.`, 4000);
+            if (statusEl) statusEl.textContent = `✓ Done ${new Date().toLocaleTimeString()}`;
+            await afterTeamCodeFix();
+          } catch (e) {
+            toast('Failed: ' + e.message, 6000);
+            if (statusEl) statusEl.textContent = '✗ ' + e.message;
+            newApply.disabled = false; newApply.textContent = '⚡ Fix existing matches';
+          }
+        });
+      }
+    }
+
+    /** Fuzzy match an orphan match team code to the nearest player team code.
+     *  Strategy: normalise both sides by stripping optional hyphen/underscore
+     *  followed by a W or M gender suffix (handles both "IND-W" and "INDW"),
+     *  then look for an exact or prefix match.
+     */
+    function suggestTeamRemap(orphanId, playerTeamIds) {
+      // Strip optional separator + W/M gender suffix, then strip all non-alphanumeric
+      const norm = s => s.replace(/[-_]?(w|m)$/i, '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+      const normO = norm(orphanId);
+      // 1) Exact match after normalisation (e.g. "INDW" and "IND-W" both → "ind")
+      for (const pid of playerTeamIds) {
+        if (norm(pid) === normO) return pid;
+      }
+      // 2) One is a prefix of the other
+      for (const pid of playerTeamIds) {
+        const normP = norm(pid);
+        if (normO.startsWith(normP) || normP.startsWith(normO)) return pid;
+      }
+      return null;
+    }
+
+    async function fixMatchTeamsHandler(mapping) {
+      const btn = $('#fixMatchTeamsBtn');
+      const statusEl = $('#teamsMismatchStatus');
+      if (!state.db) { toast('Connect to the database first.', 4000); return; }
+      if (!state.activeTournamentId) { toast('Select a tournament first.', 4000); return; }
+      btn.disabled = true; btn.textContent = 'Fixing…'; statusEl.textContent = '';
+      try {
+        await state.db.remapMatchTeams(state.activeTournamentId, mapping);
+        // Persist aliases so future CricAPI syncs translate codes correctly at ingest time
+        const newEntries = Object.fromEntries(mapping.map(r => [r.from, r.to]));
+        saveAliases(newEntries);
+        // Refresh local match data so home/away IDs are updated
+        state.matches = await state.db.listMatches(state.activeTournamentId);
+        toast(`Fixed ${mapping.length} team code${mapping.length !== 1 ? 's' : ''}. Aliases saved for future syncs.`, 5000);
+        statusEl.textContent = `✓ Applied ${new Date().toLocaleTimeString()}`;
+        await afterTeamCodeFix();
+      } catch (e) {
+        toast('Fix failed: ' + e.message, 6000);
+        statusEl.textContent = '✗ ' + e.message;
+        btn.disabled = false; btn.textContent = '✓ Apply Fix';
+      }
+    }
+
+    async function addTeamHandler() {
+      const row = $('#addTeamRow');
+      const id     = row.querySelector('[data-f="id"]').value.trim().toUpperCase();
+      const name   = row.querySelector('[data-f="name"]').value.trim();
+      const color  = row.querySelector('[data-f="color"]').value;
+      const color2 = row.querySelector('[data-f="color2"]').value || null;
+      if (!id || !name) { toast('Code and name are required.'); return; }
+      if (teamByCode(id)) { toast(`Code "${id}" already exists.`); return; }
+      try {
+        if (state.db) {
+          const inserted = await state.db.addTeam({ id, name, color, color2 });
+          TEAMS_DATA.push({ id: inserted.id, name: inserted.name, color: inserted.color, color2: inserted.color2 });
+        } else {
+          TEAMS_DATA.push({ id, name, color, color2 });
+        }
+        toast(`Added ${id}.`);
+        renderTeamsAdmin(); renderPool(); renderTeamFilter();
+      } catch (e) { toast('Add failed: ' + e.message, 4000); }
+    }
+
+    async function saveTeamEdit(id, tr) {
+      const patch = {
+        name:   tr.querySelector('[data-f="name"]').value.trim(),
+        color:  tr.querySelector('[data-f="color"]').value,
+        color2: tr.querySelector('[data-f="color2"]').value || null,
+      };
+      if (!patch.name) { toast('Name is required.'); return; }
+      try {
+        if (state.db) {
+          const upd = await state.db.updateTeam(id, patch);
+          const idx = TEAMS_DATA.findIndex(t => t.id === id);
+          if (idx >= 0) TEAMS_DATA[idx] = { id: upd.id, name: upd.name, color: upd.color, color2: upd.color2 };
+        } else {
+          const idx = TEAMS_DATA.findIndex(t => t.id === id);
+          if (idx >= 0) TEAMS_DATA[idx] = { ...TEAMS_DATA[idx], ...patch };
+        }
+        tr.querySelectorAll('.dirty').forEach(el => el.classList.remove('dirty'));
+        renderPool(); renderTeamFilter();
+      } catch (e) { toast('Save failed: ' + e.message, 4000); }
+    }
+
+    async function deleteTeamHandler(id) {
+      const t = teamByCode(id);
+      if (!confirm(`Delete team "${t?.name || id}"? Players in this team must be reassigned or deleted first.`)) return;
+      try {
+        if (state.db) await state.db.deleteTeam(id);
+        const idx = TEAMS_DATA.findIndex(x => x.id === id);
+        if (idx >= 0) TEAMS_DATA.splice(idx, 1);
+        if (state.filterTeam === id) state.filterTeam = 'ALL';
+        toast('Deleted.');
+        renderTeamsAdmin(); renderPool(); renderTeamFilter();
+      } catch (e) { toast('Delete failed: ' + e.message, 5000); }
+    }
+
+
+    // ─── CSV IMPORT ──────────────────────────────────────────────────────────
+    // Bare-bones RFC 4180-ish CSV parser. Handles quoted fields, escaped quotes ("")
+    // and trims surrounding whitespace on unquoted fields.
+    function parseCSV(text) {
+      const rows = [];
+      let cur = []; let field = ''; let inQuote = false;
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i];
+        if (inQuote) {
+          if (ch === '"' && text[i+1] === '"') { field += '"'; i++; }
+          else if (ch === '"') { inQuote = false; }
+          else { field += ch; }
+        } else {
+          if (ch === '"') { inQuote = true; }
+          else if (ch === ',') { cur.push(field.trim()); field = ''; }
+          else if (ch === '\n' || ch === '\r') {
+            if (ch === '\r' && text[i+1] === '\n') i++;
+            cur.push(field.trim()); field = '';
+            // Skip blank lines
+            if (cur.length > 1 || (cur[0] && cur[0].length)) rows.push(cur);
+            cur = [];
+          }
+          else { field += ch; }
+        }
+      }
+      if (field.length || cur.length) {
+        cur.push(field.trim());
+        if (cur.length > 1 || (cur[0] && cur[0].length)) rows.push(cur);
+      }
+      return rows;
+    }
+
+    function csvTemplate() {
+      return [
+        'id,name,team,role,credits,overseas',
+        'p31,Example Indian Batter,MI,bat,9.0,false',
+        'p32,Example Overseas Bowler,GT,bowl,9.5,true',
+        ',Auto ID Wicketkeeper,RR,wk,8.5,false',
+      ].join('\n');
+    }
+
+    function downloadCSVTemplate() {
+      const blob = new Blob([csvTemplate()], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'players_template.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    // Map a parsed CSV (array of arrays, first row = header) to validated row objects.
+    function buildCsvRows(rawRows) {
+      if (!rawRows.length) return { rows: [], errors: ['Empty CSV — paste some data first.'] };
+      const header = rawRows[0].map(s => s.toLowerCase());
+      const required = ['name','team','role','credits'];
+      const missing = required.filter(c => !header.includes(c));
+      if (missing.length) return { rows: [], errors: [`CSV header is missing: ${missing.join(', ')}`] };
+
+      const idx = {
+        id:       header.indexOf('id'),
+        name:     header.indexOf('name'),
+        team:     header.indexOf('team'),
+        role:     header.indexOf('role'),
+        credits:  header.indexOf('credits'),
+        overseas: header.indexOf('overseas'),
+      };
+
+      const existingIds  = new Set(A.PLAYERS.map(p => p.id));
+      const existingById = Object.fromEntries(A.PLAYERS.map(p => [p.id, p]));
+      const usedNewIds   = new Set();
+      const rolePresets = { wicketkeeper:'wk', wk:'wk', keeper:'wk',
+                            batter:'bat', batsman:'bat', bat:'bat',
+                            'all-rounder':'ar', allrounder:'ar', ar:'ar',
+                            bowler:'bowl', bowl:'bowl' };
+
+      const out = [];
+      for (let i = 1; i < rawRows.length; i++) {
+        const r = rawRows[i];
+        const get = k => idx[k] >= 0 ? (r[idx[k]] ?? '') : '';
+        const row = {
+          line: i + 1,
+          id:       get('id').trim(),
+          name:     get('name').trim(),
+          team:     get('team').trim().toUpperCase(),
+          role:     rolePresets[get('role').trim().toLowerCase()] || get('role').trim().toLowerCase(),
+          credits:  parseFloat(get('credits')),
+          overseas: /^(true|yes|1|y)$/i.test(get('overseas').trim()),
+          errors: [],
+        };
+        if (!row.name) row.errors.push('name is required');
+        if (!KNOWN_TEAMS.includes(row.team)) row.errors.push(`unknown team "${row.team}"`);
+        if (!['wk','bat','ar','bowl'].includes(row.role)) row.errors.push(`bad role "${row.role}"`);
+        if (!Number.isFinite(row.credits) || row.credits < 0) row.errors.push('credits must be a non-negative number');
+        if (!row.id) {
+          // Auto-assign smallest free pNN, accounting for IDs already chosen earlier in this batch
+          const used = new Set([...existingIds, ...usedNewIds]);
+          for (let n = 1; n < 1000; n++) {
+            const candidate = 'p' + String(n).padStart(2, '0');
+            if (!used.has(candidate)) { row.id = candidate; usedNewIds.add(candidate); break; }
+          }
+        } else {
+          if (usedNewIds.has(row.id)) {
+            row.errors.push(`duplicate id "${row.id}" in this CSV`);
+          } else if (existingById[row.id] && existingById[row.id].name !== row.name) {
+            // ID already belongs to a different player in the DB — would silently overwrite them
+            row.errors.push(`id "${row.id}" already used by "${existingById[row.id].name}" — choose a different id or leave blank to auto-assign`);
+          }
+          usedNewIds.add(row.id);
+        }
+        out.push(row);
+      }
+      return { rows: out, errors: [] };
+    }
+
+    function renderCsvPreview(rows, errors) {
+      const preview = $('#csvPreview');
+      const summary = $('#csvSummary');
+      const importBtn = $('#csvImportBtn');
+      if (errors.length) {
+        preview.style.display = 'block';
+        preview.innerHTML = `<table><tbody>${errors.map(e => `<tr class="row-err"><td>!</td><td class="err-msg">${escapeHtml(e)}</td></tr>`).join('')}</tbody></table>`;
+        summary.textContent = '';
+        importBtn.disabled = true; importBtn.textContent = 'Import';
+        return;
+      }
+      const ok  = rows.filter(r => r.errors.length === 0);
+      const bad = rows.filter(r => r.errors.length  >  0);
+
+      const rowsHtml = rows.map(r => {
+        const status = r.errors.length ? '✗' : '✓';
+        const cls    = r.errors.length ? 'row-err' : 'row-ok';
+        const errs   = r.errors.length ? `<div class="err-msg">${escapeHtml(r.errors.join('; '))}</div>` : '';
+        return `<tr class="${cls}">
+          <td>${status}</td>
+          <td>${r.id || '—'}</td>
+          <td>${escapeHtml(r.name)}${errs}</td>
+          <td>${escapeHtml(r.team)}</td>
+          <td>${escapeHtml(r.role)}</td>
+          <td>${Number.isFinite(r.credits) ? r.credits : ''}</td>
+          <td>${r.overseas ? '✈️' : ''}</td>
+        </tr>`;
+      }).join('');
+
+      preview.style.display = 'block';
+      preview.innerHTML = `
+        <table>
+          <thead><tr><th></th><th>ID</th><th>Name</th><th>Team</th><th>Role</th><th>Credits</th><th>✈️</th></tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      `;
+      summary.textContent = `${ok.length} ok · ${bad.length} with errors · ${rows.length} total`;
+      importBtn.disabled = ok.length === 0;
+      importBtn.textContent = `Import ${ok.length} row${ok.length===1?'':'s'}`;
+      // Store the parsed rows on the button for the import handler to read
+      importBtn._rows = ok;
+    }
+
+    function openCsvView() {
+      $('#adminTableView').style.display = 'none';
+      $('#adminCsvView').style.display = 'block';
+    }
+    function closeCsvView() {
+      $('#adminCsvView').style.display = 'none';
+      $('#adminTableView').style.display = 'block';
+      $('#csvText').value = '';
+      $('#csvFile').value = '';
+      $('#csvPreview').style.display = 'none';
+      $('#csvPreview').innerHTML = '';
+      $('#csvSummary').textContent = '';
+      $('#csvImportBtn').disabled = true;
+      $('#csvImportBtn').textContent = 'Import';
+      $('#csvImportBtn')._rows = null;
+    }
+
+    async function csvPreviewHandler() {
+      const text = $('#csvText').value;
+      if (!text.trim()) { toast('Paste CSV or upload a file first.'); return; }
+      const raw = parseCSV(text);
+      const { rows, errors } = buildCsvRows(raw);
+      renderCsvPreview(rows, errors);
+    }
+
+    async function csvFileHandler(e) {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      $('#csvText').value = text;
+      csvPreviewHandler();
+    }
+
+    async function csvImportHandler() {
+      const rows = $('#csvImportBtn')._rows;
+      if (!rows || rows.length === 0) { toast('Nothing valid to import.'); return; }
+      try {
+        if (state.db) {
+          const n = await state.db.bulkUpsertPlayers(rows);
+          // Also update tournament-specific team + credits when a tournament is active.
+          // Silently skipped if the v2 migration hasn't been run yet (table won't exist).
+          if (state.activeTournamentId) {
+            try {
+              await state.db.bulkUpsertTournamentPlayers(
+                state.activeTournamentId,
+                rows.map(r => ({ playerId: r.id, teamId: r.team, creditValue: r.credits, isActive: true }))
+              );
+              A.PLAYERS = await state.db.getPlayersForTournament(state.activeTournamentId);
+              if (!A.PLAYERS.length) A.PLAYERS = await state.db.getPlayers();
+            } catch (e) {
+              // tournament_players table not yet created (run migration_v2 to enable this)
+              console.info('tournament_players not available, using global players.', e.message);
+              A.PLAYERS = await state.db.getPlayers();
+            }
+          } else {
+            A.PLAYERS = await state.db.getPlayers();
+          }
+          toast(`Imported ${n} player${n===1?'':'s'}.`);
+        } else {
+          // Local-mode: upsert into in-memory A.PLAYERS
+          rows.forEach(r => {
+            const idx = A.PLAYERS.findIndex(p => p.id === r.id);
+            const next = { id:r.id, name:r.name, team:r.team, role:r.role, credits:r.credits, overseas:!!r.overseas };
+            if (idx >= 0) A.PLAYERS[idx] = next; else A.PLAYERS.push(next);
+          });
+          toast(`Imported ${rows.length} (local mode — not persisted).`);
+        }
+        refreshAllPlayerIds(); // CSV import can add new global player ids via bulkUpsertPlayers
+        closeCsvView();
+        renderAdmin(); renderPool(); render();
+      } catch (e) { toast('Import failed: ' + e.message, 5000); }
+    }
+
+
+    // ─── RULES EDITOR ────────────────────────────────────────────────────────
+
+    /**
+     * Build the rule-grid HTML for a given format.
+     * readOnly=true → plain text values (no inputs).
+     */
+    function buildRulesGrid(fmt, readOnly) {
+      const cur = SCORING_RULES[fmt];
+      const def = DEFAULT_SCORING_RULES[fmt];
+      if (!cur) return '';
+      const activeTournament = (state.tournaments || []).find(t => t.id === state.activeTournamentId);
+      const dotBallEnabled   = !!activeTournament?.dot_ball_enabled;
+      const grouped = {};
+      Object.keys(cur).forEach(key => {
+        // dot_ball is only shown in the editor once the tournament's
+        // "Dot ball scoring" toggle is turned ON (migration_v30) — most feeds
+        // don't reliably report a per-bowler dot-ball count, so this weight
+        // is hidden by default rather than silently controlling a score the
+        // admin can't see or edit.
+        if (key === 'dot_ball' && !dotBallEnabled) return;
+        const meta = RULE_META[key];
+        if (!meta) return;
+        (grouped[meta.group] ||= []).push(key);
+      });
+      return RULE_GROUP_ORDER.filter(g => grouped[g]?.length).map(group => {
+        const rows = grouped[group].map(key => {
+          const v = cur[key];
+          const dv = def?.[key];
+          const changed = dv !== undefined && Number(v) !== Number(dv);
+          const cell = readOnly
+            ? `<span class="rule-input ${changed ? 'changed' : ''}" style="display:inline-block;min-width:48px;text-align:right;padding:4px 6px;background:var(--panel);border-radius:4px;font-size:12px;">${v}</span>`
+            : `<input type="number" step="0.5" class="rule-input ${changed ? 'changed' : ''}" data-key="${key}" value="${v}" />`;
+          return `
+            <label class="lbl" title="default: ${dv ?? '—'}">${RULE_META[key].label}</label>
+            ${cell}
+          `;
+        }).join('');
+        return `<div class="rule-group-title">${group}</div><div class="rule-grid">${rows}</div>`;
+      }).join('');
+    }
+
+    /**
+     * Tournament tab — scoring rules section.
+     * Editable when tournament hasn't started; locked + read-only once it has.
+     */
+    function renderTournamentScoringRules() {
+      const section = $('#tournamentScoringSection');
+      if (!section) return;
+      if (!state.activeTournamentId) { section.style.display = 'none'; return; }
+      section.style.display = 'block';
+
+      const nameEl = $('#tournamentScoringName');
+      if (nameEl) {
+        const activeTournament = (state.tournaments || []).find(t => t.id === state.activeTournamentId);
+        nameEl.textContent = activeTournament?.name ? `Editing rules for: ${activeTournament.name}` : '';
+      }
+
+      const locked   = isTournamentStarted();
+      const fmt      = state.rulesEditing || 'T20';
+      const statusEl = $('#tournamentScoringStatus');
+      const actions  = $('#tournamentScoringActions');
+      const dirtyPill = $('#tournamentRulesDirty');
+
+      statusEl.innerHTML = locked
+        ? '<span style="color:var(--accent-2);">🔒 Locked — tournament in progress. Rules are final.</span>'
+        : 'Customise points for each format before the first match starts.';
+
+      if (actions) actions.style.display = locked ? 'none' : 'flex';
+      if (dirtyPill) dirtyPill.classList.toggle('on', !locked && state.rulesDirty);
+
+      // Sync format tab pills
+      document.querySelectorAll('#tournamentRulesTabs .tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.tfmt === fmt);
+        t.style.pointerEvents = locked ? 'none' : '';
+        t.style.opacity       = locked ? '0.7' : '';
+      });
+
+      const editor = $('#tournamentRulesEditor');
+      if (!editor) return;
+      editor.innerHTML = buildRulesGrid(fmt, locked);
+
+      if (!locked) {
+        editor.querySelectorAll('input.rule-input').forEach(inp => {
+          inp.addEventListener('input', e => {
+            const key = e.target.dataset.key;
+            const num = parseFloat(e.target.value);
+            if (Number.isFinite(num)) {
+              SCORING_RULES[fmt][key] = num;
+              state.rulesDirty = true;
+              if (dirtyPill) dirtyPill.classList.add('on');
+              const dv = DEFAULT_SCORING_RULES[fmt]?.[key];
+              e.target.classList.toggle('changed', Number(num) !== Number(dv));
+              render();
+            }
+          });
+        });
+      }
+    }
+
+    /**
+     * Scoring tab — always read-only display of the current rules.
+     */
+    function renderRulesEditor() {
+      const fmt = state.rulesEditing;
+      $('#rulesFormatLabel').textContent = `(${fmt})`;
+      document.querySelectorAll('.rules-tabs .tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.fmt === fmt);
+      });
+      // Update hint based on tournament state
+      const hint = $('#scoringTabHint');
+      if (hint) {
+        hint.innerHTML = isTournamentStarted()
+          ? '<span style="color:var(--accent-2);">🔒 Locked — tournament in progress</span>'
+          : 'set rules in the <strong style="color:var(--accent); cursor:pointer;" id="scoringTabTournamentLink">Tournament tab</strong> before the first match';
+      }
+      const editor = $('#rulesEditor');
+      editor.innerHTML = buildRulesGrid(fmt, /* readOnly */ true);
+    }
+
+    async function saveRules() {
+      if (!state.db) { toast('Connect a database first to persist rules.'); return; }
+      if (!state.activeTournamentId) { toast('No active tournament — create one first.'); return; }
+      if (isTournamentStarted()) { toast('Rules are locked — tournament is already in progress.', 4000); return; }
+      try {
+        const fmt = state.rulesEditing;
+        await state.db.saveScoringRules(state.activeTournamentId, fmt, SCORING_RULES[fmt]);
+        state.rulesDirty = false;
+        $('#tournamentRulesDirty')?.classList.remove('on');
+        toast(`Saved ${fmt} scoring rules.`);
+      } catch (e) { toast('Save failed: ' + e.message, 4000); }
+    }
+
+    async function resetRules() {
+      if (isTournamentStarted()) { toast('Rules are locked — tournament is already in progress.', 4000); return; }
+      const fmt = state.rulesEditing;
+      if (!confirm(`Reset ${fmt} rules to the built-in defaults?`)) return;
+      SCORING_RULES[fmt] = JSON.parse(JSON.stringify(DEFAULT_SCORING_RULES[fmt]));
+      state.rulesDirty = false;
+      if (state.db && state.activeTournamentId) {
+        try { await state.db.resetScoringRules(state.activeTournamentId, fmt); }
+        catch (e) { toast('DB reset failed: ' + e.message); }
+      }
+      renderTournamentScoringRules(); renderRulesEditor(); render();
+      toast(`${fmt} rules reset to defaults.`);
+    }
+
+
+  // ─── REGISTER ADMIN API ──────────────────────────────────────────────────
+  // Functions needed from index.html are accessed via window.__admin?.fn?.()
+  window.__admin = {
+    openAdmin,
+    closeAdmin,
+    setAdminTab,
+    renderAdmin,
+    renderMatchesAdmin,
+    renderContestsAdmin,
+    renderTeamsAdmin,
+    renderRulesEditor,
+    renderTournamentScoringRules,
+    renderFantasyScorecard,
+    saveFantasyScorecard,
+    rescoreCurrentMatch,
+    nextPlayerId,
+    computeAndSaveXIScoresForMatch,
+    computeAndSaveSLScoresForMatch,
+    incrementApiCallCount,
+    renderApiPill,
+    getApiKeys,
+    setActiveApiKey,
+    isKeyExhaustedError,
+    get CRIC_TEAM_CODE_MAP() { return CRIC_TEAM_CODE_MAP; },
+    syncMatchesFromCricAPI,
+    finalizeCompletedMatches,
+    saveRules,
+    resetRules,
+    openCsvView,
+    closeCsvView,
+    csvPreviewHandler,
+    csvFileHandler,
+    csvImportHandler,
+    downloadCSVTemplate,
+    forcePollNow: A.forcePollNow,
+  };
+
+})();
