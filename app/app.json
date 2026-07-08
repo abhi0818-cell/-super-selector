@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Super Selector",
+    "name": "Maestro",
     "slug": "super-selector",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -22,6 +22,7 @@
       },
       "package": "com.superselector.app"
     },
+    "newArchEnabled": false,
     "web": {
       "favicon": "./assets/favicon.png",
       "bundler": "metro"
@@ -32,7 +33,11 @@
     "scheme": "superselector",
     "extra": {
       "supabaseUrl": "https://gepltclaeczgtruvekci.supabase.co",
-      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdlcGx0Y2xhZWN6Z3RydXZla2NpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1MTc5NTUsImV4cCI6MjA5NDA5Mzk1NX0.DW2Fzfw-gaabIbns_CUydbvOwuoko-ACEAH_g1_5Sm8"
-    }
+      "supabaseAnonKey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdlcGx0Y2xhZWN6Z3RydXZla2NpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1MTc5NTUsImV4cCI6MjA5NDA5Mzk1NX0.DW2Fzfw-gaabIbns_CUydbvOwuoko-ACEAH_g1_5Sm8",
+      "eas": {
+        "projectId": "883c1db1-efcd-4599-a48f-f67685af86e1"
+      }
+    },
+    "owner": "abhi0818"
   }
 }

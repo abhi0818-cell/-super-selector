@@ -115,8 +115,7 @@ export default function AuthScreen() {
                 <View style={styles.dotInner} />
               </LinearGradient>
               <View style={styles.brandWords}>
-                <Text style={styles.brandSuper}>Super</Text>
-                <Text style={styles.brandSelector}>Selector</Text>
+                <Text style={styles.brandSuper}>Maestro</Text>
               </View>
             </View>
             <Text style={styles.tagline}>Fantasy Cricket · IPL 2026</Text>
@@ -339,13 +338,7 @@ const styles = StyleSheet.create({
   brandSuper: {
     color:       '#1C1F26',
     fontSize:    fontSize.xxl + 2,
-    fontWeight:  '800',
-    letterSpacing: 0.2,
-  },
-  brandSelector: {
-    color:       '#C9A84C',
-    fontSize:    fontSize.xxl + 2,
-    fontWeight:  '800',
+    fontFamily:  'PlayfairDisplay_700Bold',
     letterSpacing: 0.2,
   },
   tagline: {

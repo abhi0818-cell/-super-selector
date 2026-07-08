@@ -1,5 +1,5 @@
 /**
- * admin.js — Super Selector admin panel
+ * admin.js — Maestro admin panel
  *
  * Loaded lazily only for admin users. See loadAdminModule() in index.html.
  *
