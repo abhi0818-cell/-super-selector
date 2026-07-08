@@ -933,8 +933,7 @@
       position:relative; z-index:2; gap:2px;
     }
     .pitch-role-lbl {
-      font-size:8px; font-weight:800; letter-spacing:2px;
-      color:rgba(255,255,255,0.38); text-transform:uppercase; margin-bottom:1px;
+      display:none;
     }
     .pitch-row-players { display:flex; justify-content:center; gap:calc(var(--tsz,34px)*0.18); flex-wrap:nowrap; }
     .pitch-player { display:flex; flex-direction:column; align-items:center; gap:2px; position:relative; cursor:default; }
@@ -5788,7 +5787,34 @@ p31,Sample Player,MI,bat,9.0,false
       }
       const pendingForNext = state.sl.pendingBooster;
 
-      return { contest, available, nextMatch, activations, activeForNext, pendingForNext };
+      // Which OTHER matches' activations count as truly "spent" — only once
+      // that match has actually locked (coalesce(lock_time,start_time) <=
+      // now()). Save XI commits a booster to user_booster_activations the
+      // instant it's saved, well before the match's real lock gate, so a
+      // committed-but-not-yet-locked pick for another match is still
+      // reversible — the user can go back and remove/swap it right up until
+      // lock. Treating it as spent here made a booster show permanently
+      // "used" (✗, undeselectable) everywhere else even right after the user
+      // removed it, since nothing about that removal changes until it's
+      // re-saved — this is the fix for that.
+      const otherMatchIds = [...new Set(
+        activations.filter(a => a.match_id !== nextMatch?.id).map(a => a.match_id),
+      )];
+      let lockedMatchIds = state.sl.boosterLockedMatchIds;
+      if (!lockedMatchIds || state.sl.boosterLockedMatchIdsFor !== JSON.stringify(otherMatchIds)) {
+        lockedMatchIds = new Set();
+        if (otherMatchIds.length) {
+          const rows = await state.db.getMatchesByIds(otherMatchIds);
+          rows.forEach(m => {
+            const lockAt = m.lock_time ?? m.start_time ?? null;
+            if (lockAt && new Date(lockAt).getTime() <= Date.now()) lockedMatchIds.add(m.id);
+          });
+        }
+        state.sl.boosterLockedMatchIds = lockedMatchIds;
+        state.sl.boosterLockedMatchIdsFor = JSON.stringify(otherMatchIds);
+      }
+
+      return { contest, available, nextMatch, activations, activeForNext, pendingForNext, lockedMatchIds };
     }
 
     /**
@@ -5921,7 +5947,7 @@ p31,Sample Player,MI,bat,9.0,false
         return;
       }
 
-      const { contest, available, nextMatch, activations, activeForNext, pendingForNext } = ctx;
+      const { contest, available, nextMatch, activations, activeForNext, pendingForNext, lockedMatchIds } = ctx;
 
       // Is the next match the first of the season or the first of playoffs?
       // On those matches transfers are already unlimited, so wildcard/free_hit are pointless.
@@ -5944,9 +5970,13 @@ p31,Sample Player,MI,bat,9.0,false
         // committed to the DB yet — that only happens on Save XI.
         const isActive   = pendingForNext === key;
         const isUnsaved  = isActive && pendingForNext !== activeForNext;
-        // Exclude the current match's activation from "spent" count —
-        // an active booster is always deactivatable before the match starts.
-        const usedInOther = activations.filter(a => a.booster === key && a.match_id !== nextMatch?.id).length;
+        // Exclude the current match's activation from "spent" count — an
+        // active booster is always deactivatable before the match starts.
+        // Also exclude other matches that haven't locked yet — a commit made
+        // there via Save XI is still reversible until its own lock gate
+        // passes, so it must not count as a spent season-use in the meantime
+        // (see lockedMatchIds in getSlBoosterContext).
+        const usedInOther = activations.filter(a => a.booster === key && a.match_id !== nextMatch?.id && lockedMatchIds.has(a.match_id)).length;
         const remaining   = totalUses - usedInOther;
         const isSpent     = remaining <= 0;  // all uses consumed in OTHER matches
 
@@ -14500,9 +14530,10 @@ p31,Sample Player,MI,bat,9.0,false
     //   - dual_captain swaps BOTH Captain and Vice-Captain badges to 👥
     //   - os_double / indian_double (US Double) / team_double mark every tile
     //     they apply to with a gold jersey outline (see pitchJerseyHtml)
-    //   - indian_double additionally shows 🇺🇸 bottom-left (top-left stays the
-    //     fixed OS ✈️ badge; team_double's icon moves to the row label instead
-    //     of repeating on every tile — see histPitchHtml/renderSlPitchView)
+    //   - indian_double additionally shows 🇺🇸 bottom-left; team_double shows
+    //     🚀 bottom-left on every tile (top-left stays the fixed OS ✈️ badge).
+    //     Previously team_double's icon showed once on the role-row label
+    //     instead of per tile — the row label is hidden now, so it moved here.
     function pitchBoosterDecor(overseas, isCap, isVc, boosterKey) {
       var capIcon = boosterKey === 'triple_captain' ? '⚡'
                   : boosterKey === 'dual_captain'   ? '👥' : null;
@@ -14510,8 +14541,10 @@ p31,Sample Player,MI,bat,9.0,false
         isCap ? '<span class="pitch-cbadge c">' + (capIcon || 'C') + '</span>'
         : isVc ? '<span class="pitch-cbadge vc">' + ((boosterKey === 'dual_captain' ? capIcon : null) || 'V') + '</span>'
         : '';
-      var bottomLeftBadge = (boosterKey === 'indian_double' && !overseas)
-        ? '<span class="pitch-usd-badge" title="US Double">🇺🇸</span>' : '';
+      var bottomLeftBadge =
+        boosterKey === 'team_double' ? '<span class="pitch-usd-badge" title="Team Double">🚀</span>'
+        : (boosterKey === 'indian_double' && !overseas) ? '<span class="pitch-usd-badge" title="US Double">🇺🇸</span>'
+        : '';
       var boosted =
         (boosterKey === 'triple_captain' && isCap) ||
         (boosterKey === 'dual_captain'   && (isCap || isVc)) ||
@@ -14622,17 +14655,15 @@ p31,Sample Player,MI,bat,9.0,false
         + '</svg>';
       // t.booster (set by callers that know the active booster for this match —
       // SL only; Daily never sets it) drives the corner badges/gold outline on
-      // each token. Team Double applies to every player, so rather than repeat
-      // its icon on all 11 tiles, it shows once next to the row label instead.
+      // each token — see pitchBoosterDecor for the per-tile Team Double badge.
       var boosterKey = t.booster || null;
       var rowsHtml = ROLES_ORDER.map(function(role) {
         var tokens = groups[role].map(function(p) {
           return histPitchToken(p, t.captain_id, t.vice_captain_id, boosterKey);
         });
         if (!tokens.length) tokens.push(pitchEmptySlot(role));
-        var roleLbl = RLBL[role] + (boosterKey === 'team_double' ? ' 🚀' : '');
         return '<div class="pitch-row">'
-          + '<div class="pitch-role-lbl">' + roleLbl + '</div>'
+          + '<div class="pitch-role-lbl">' + RLBL[role] + '</div>'
           + '<div class="pitch-row-players">' + tokens.join('') + '</div>'
           + '</div>';
       }).join('');
@@ -14877,9 +14908,8 @@ p31,Sample Player,MI,bat,9.0,false
           return pitchPlayerToken(item.p, item.id, state.sl.xiCaptain===item.id, state.sl.xiVc===item.id, boosterKey);
         });
         while (tokens.length < MIN[role]) tokens.push(pitchEmptySlot(role));
-        var roleLbl = RLBL[role] + (boosterKey === 'team_double' ? ' 🚀' : '');
         return '<div class="pitch-row">'
-          + '<div class="pitch-role-lbl">' + roleLbl + '</div>'
+          + '<div class="pitch-role-lbl">' + RLBL[role] + '</div>'
           + '<div class="pitch-row-players">' + tokens.join('') + '</div>'
           + '</div>';
       }).join('');

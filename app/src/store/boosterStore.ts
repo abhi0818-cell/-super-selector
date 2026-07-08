@@ -29,6 +29,7 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { CaptaincyRole } from '../types';
+import { isMatchLocked } from '../lib/matchLock';
 import {
   fetchContestTransferConfig,
   fetchTournamentMatches,
@@ -193,7 +194,13 @@ export function getTileBoosterDecor(
     boosterKey === 'team_double'
   );
 
-  const bottomLeftIcon = (boosterKey === 'indian_double' && !overseas) ? '🇺🇸' : null;
+  // Team Double applies to every tile — previously shown once on the
+  // role-row label instead of repeating per tile; the row label is hidden
+  // now (see CricketPitch.tsx), so it shows here on every tile like web does.
+  const bottomLeftIcon =
+    boosterKey === 'team_double' ? '🚀'
+    : (boosterKey === 'indian_double' && !overseas) ? '🇺🇸'
+    : null;
 
   return { badgeIcon, boosted, bottomLeftIcon };
 }
@@ -381,7 +388,15 @@ export const useBoosterStore = create<BoosterState>((set, get) => ({
         // Defensive fallback for contests with no start_match_number configured.
         (startMN === null && playoffMN === null && isFirstMatchFallback);
 
-      // 3. Activations for this squad (all matches)
+      // 3. Activations for this squad (all matches). A booster committed to
+      // a DIFFERENT match only permanently spends its season use once THAT
+      // match has locked — mirrors leaderboardStore's lockedMatchIds gating.
+      // Mobile's "save is the lock" model commits to user_booster_activations
+      // immediately on Save XI, well before the match's actual lock_time, so
+      // the user can still go back and remove/swap it right up until lock.
+      // Counting an other-match commitment as spent before that point made
+      // a booster show 'used' (and un-selectable everywhere else) even
+      // though the user could still free it up — this is the fix for that.
       let committedId = null as string | null;
       const usedCounts: Record<string, number> = {};
       if (squadId) {
@@ -390,10 +405,27 @@ export const useBoosterStore = create<BoosterState>((set, get) => ({
           .select('booster, match_id')
           .eq('squad_id', squadId);
 
+        const otherMatchIds = [...new Set(
+          (activations ?? [])
+            .filter((row: any) => row.match_id !== matchId)
+            .map((row: any) => row.match_id),
+        )];
+
+        const lockedOtherMatchIds = new Set<string>();
+        if (otherMatchIds.length) {
+          const { data: matchRows } = await supabase
+            .from('matches')
+            .select('id, lock_time, start_time, status')
+            .in('id', otherMatchIds);
+          (matchRows ?? []).forEach((m: any) => {
+            if (isMatchLocked(m)) lockedOtherMatchIds.add(m.id);
+          });
+        }
+
         (activations ?? []).forEach((row: any) => {
           if (row.match_id === matchId) {
             committedId = row.booster;
-          } else {
+          } else if (lockedOtherMatchIds.has(row.match_id)) {
             usedCounts[row.booster] = (usedCounts[row.booster] ?? 0) + 1;
           }
         });

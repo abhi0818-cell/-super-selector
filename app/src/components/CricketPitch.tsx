@@ -9,11 +9,23 @@
 import React from 'react';
 import {
   Alert,
+  Image,
   Pressable,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import Svg, {
+  Defs,
+  RadialGradient,
+  LinearGradient,
+  Stop,
+  ClipPath,
+  Ellipse,
+  Rect,
+  Line,
+  G,
+} from 'react-native-svg';
 import { CaptaincyRole, MatchFormat, PlayerRole, SelectedPlayer } from '../types';
 import { useBoosterStore, getTileBoosterDecor } from '../store/boosterStore';
 import { useTeamStore, RULES } from '../store/teamStore';
@@ -27,30 +39,26 @@ function osCapApplies(format: MatchFormat): boolean {
   return cap > 0 && cap < 11;
 }
 
+// ─── Per-tile role icon — mirrors web's ROLE_ICON_P / .pitch-role-icon ────────
+// Same PNGs web embeds as base64 (WK_IMG_P/BAT_IMG_P/AR_IMG_P/BALL_IMG_P in
+// index.html), decoded to real files so mobile shows the identical artwork.
+
+const ROLE_ICON: Record<PlayerRole, number> = {
+  wk:   require('../../assets/role-icons/wk.png'),
+  bat:  require('../../assets/role-icons/bat.png'),
+  ar:   require('../../assets/role-icons/ar.png'),
+  bowl: require('../../assets/role-icons/bowl.png'),
+};
+
 // ─── Field palette ────────────────────────────────────────────────────────────
+// Mirrors web's #pitchXiWrap / .pitch-oval exactly: a flat dark-turf backdrop
+// behind an SVG-drawn elliptical field (radial-gradient green, repeating
+// mowing-stripe overlay, dashed outline, sandy pitch strip, creases) — see
+// <FieldBackground> below. CSS radial/repeating gradients and clip-path
+// ellipses have no Views-only equivalent in React Native, hence react-native-svg.
 
-const FIELD_BG     = '#1A3B1E';   // dark forest green (field stays green for realism)
-const FIELD_OVAL   = '#2D6A35';   // medium green oval
-const PITCH_SANDY  = '#B8935A';   // warmer sandy/clay pitch
-const CREASE_LINE  = 'rgba(255,255,255,0.45)';
+const WRAP_BG      = '#1a5c1a';   // outer turf backdrop, mirrors #pitchXiWrap/#slPitchXiWrap
 const DIVIDER      = 'rgba(0,0,0,0.08)';
-
-// ─── Role chip colours — must be legible on the dark green field ──────────────
-// Bright/light tones that stand out against FIELD_BG (#1A3B1E) and FIELD_OVAL (#2D6A35).
-
-const ROLE_CHIP_COLOR: Record<PlayerRole, string> = {
-  wk:   '#FDE68A',   // bright amber
-  bat:  '#93C5FD',   // sky blue
-  ar:   '#6EE7B7',   // mint — distinct from the green field
-  bowl: '#FCA5A5',   // coral / soft red
-};
-
-const ROLE_LABEL: Record<PlayerRole, string> = {
-  wk:   'WK',
-  bat:  'BAT',
-  ar:   'AR',
-  bowl: 'BOWL',
-};
 
 // ─── Player tile ─────────────────────────────────────────────────────────────
 
@@ -60,8 +68,7 @@ interface TileProps {
   onRemove:       () => void;
   readOnly?:      boolean;
   /** Effective (pending-or-committed) booster for this match, or null — lifted
-   *  up to CricketPitch so both the tiles AND the role-chip label (team_double's
-   *  🚀 — see RoleZone) read the same single value. */
+   *  up to CricketPitch so every tile in the XI reads the same single value. */
   boosterKey:     string | null;
 }
 
@@ -134,10 +141,15 @@ function PlayerTile({ player, onSetCaptaincy, onRemove, readOnly, boosterKey }: 
           variant="pitch"
           boosted={decor.boosted}
         />
+
+        {/* Role icon — bottom-right of the jersey, mirrors web's .pitch-role-icon
+            (WK/BAT/AR/BOWL artwork). Team-code text used to sit below the name
+            here instead; it's redundant once the jersey already carries the
+            team label, so it's gone and this takes its corner instead. */}
+        <Image source={ROLE_ICON[player.role]} style={styles.roleIcon} resizeMode="contain" />
       </View>
 
       <Text style={styles.tileName} numberOfLines={1}>{shortName}</Text>
-      <Text style={styles.tileTeam} numberOfLines={1}>{player.team}</Text>
     </Pressable>
   );
 }
@@ -162,18 +174,10 @@ function RoleZone({ role, flex, players, onSetCaptaincy, onRemove, isCenter, rea
       { flex },
       isCenter && styles.zoneCenter,
     ]}>
-      {/* Role chip — Team Double's 🚀 shows once here per row instead of
-          repeating on every tile in it, mirroring web's renderSlPitchView
-          (RLBL[role] + (boosterKey === 'team_double' ? ' 🚀' : '')). */}
-      <View style={styles.chipRow}>
-        <View style={styles.chipLine} />
-        <View style={[styles.chip, { borderColor: ROLE_CHIP_COLOR[role] + '66', backgroundColor: ROLE_CHIP_COLOR[role] + '22' }]}>
-          <Text style={[styles.chipText, { color: ROLE_CHIP_COLOR[role] }]}>
-            {ROLE_LABEL[role]}{boosterKey === 'team_double' ? ' 🚀' : ''}
-          </Text>
-        </View>
-        <View style={styles.chipLine} />
-      </View>
+      {/* Role-row label (WK/BAT/AR/BOWL chip) is hidden here — mirrors web's
+          .pitch-role-lbl { display:none }. Team Double's 🚀 used to show once
+          per row on this label instead of repeating per tile; it now renders
+          on every tile via getTileBoosterDecor's bottomLeftIcon instead. */}
 
       {/* Tiles — flex-1 each so they fill the row regardless of count */}
       {players.length > 0 && (
@@ -194,6 +198,81 @@ function RoleZone({ role, flex, players, onSetCaptaincy, onRemove, isCenter, rea
   );
 }
 
+// ─── Field background (SVG) ───────────────────────────────────────────────────
+// Single SVG standing in for web's two-layer field (.pitch-oval's CSS
+// radial-gradient + repeating-linear-gradient background, plus the overlaid
+// viewBox="0 0 304 460" accent SVG with the dashed outline / sandy pitch
+// strip / crease lines / stump marks) — React Native has no CSS gradient or
+// clip-path equivalent for Views, so both layers are merged into vector shapes
+// here. preserveAspectRatio="none" matches web exactly: the 304x460 coordinate
+// space stretches non-uniformly to fill whatever the tile's real aspect ratio is.
+
+const MOW_STRIPE_Y: number[] = [];
+for (let y = 0; y < 460; y += 48) MOW_STRIPE_Y.push(y);
+
+function FieldBackground() {
+  return (
+    <Svg
+      viewBox="0 0 304 460"
+      preserveAspectRatio="none"
+      style={StyleSheet.absoluteFill}
+      pointerEvents="none"
+    >
+      <Defs>
+        {/* Approximates web's radial-gradient(ellipse 80% 88% at 50% 50%, ...):
+            true per-axis elliptical gradients aren't expressible in SVG/RNSVG
+            without a gradientTransform, so this uses a single radius sized to
+            the ellipse's longer (vertical) axis — the sides fade a shade
+            lighter than web's exact edge tone, which is a minor, low-stakes
+            difference given both ends are already near-black green. */}
+        <RadialGradient id="fieldGrad" cx="152" cy="230" r="220" gradientUnits="userSpaceOnUse">
+          <Stop offset="0%"   stopColor="#4ec94e" />
+          <Stop offset="22%"  stopColor="#3aad3a" />
+          <Stop offset="45%"  stopColor="#2b8f2b" />
+          <Stop offset="65%"  stopColor="#1d6e1d" />
+          <Stop offset="85%"  stopColor="#0f470f" />
+          <Stop offset="100%" stopColor="#09300d" />
+        </RadialGradient>
+        <LinearGradient id="pitchGrad" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0%"   stopColor="#b8893a" />
+          <Stop offset="40%"  stopColor="#d4a85a" />
+          <Stop offset="60%"  stopColor="#d4a85a" />
+          <Stop offset="100%" stopColor="#b8893a" />
+        </LinearGradient>
+        <ClipPath id="fieldClip">
+          <Ellipse cx="152" cy="230" rx="148" ry="226" />
+        </ClipPath>
+      </Defs>
+
+      {/* Green field ellipse — mirrors .pitch-oval's radial-gradient fill,
+          inscribed edge-to-edge like clip-path:ellipse(50% 50% at 50% 50%). */}
+      <Ellipse cx="152" cy="230" rx="148" ry="226" fill="url(#fieldGrad)" />
+
+      {/* Mowing stripes — mirrors .pitch-oval::before's repeating-linear-gradient,
+          clipped to the same ellipse. */}
+      <G clipPath="url(#fieldClip)">
+        {MOW_STRIPE_Y.map(y => (
+          <Rect key={y} x="0" y={y + 24} width="304" height="24" fill="rgba(255,255,255,0.035)" />
+        ))}
+      </G>
+
+      {/* Dashed ellipse outline, sandy pitch strip + crease + stump marks —
+          mirrors the accent SVG overlay used identically across web's Daily,
+          SL, and history pitch views. */}
+      <Ellipse cx="152" cy="230" rx="145" ry="220" fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth={2} strokeDasharray="7 5" />
+      <Rect x="134" y="140" width="36" height="180" rx="5" fill="url(#pitchGrad)" opacity={0.72} />
+      <Line x1="120" y1="165" x2="184" y2="165" stroke="rgba(255,255,255,0.6)" strokeWidth={2} />
+      <Line x1="120" y1="295" x2="184" y2="295" stroke="rgba(255,255,255,0.6)" strokeWidth={2} />
+      <Line x1="147" y1="155" x2="147" y2="167" stroke="rgba(255,255,255,0.5)" strokeWidth={1.5} />
+      <Line x1="152" y1="155" x2="152" y2="167" stroke="rgba(255,255,255,0.5)" strokeWidth={1.5} />
+      <Line x1="157" y1="155" x2="157" y2="167" stroke="rgba(255,255,255,0.5)" strokeWidth={1.5} />
+      <Line x1="147" y1="293" x2="147" y2="305" stroke="rgba(255,255,255,0.5)" strokeWidth={1.5} />
+      <Line x1="152" y1="293" x2="152" y2="305" stroke="rgba(255,255,255,0.5)" strokeWidth={1.5} />
+      <Line x1="157" y1="293" x2="157" y2="305" stroke="rgba(255,255,255,0.5)" strokeWidth={1.5} />
+    </Svg>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 interface Props {
@@ -210,21 +289,13 @@ export default function CricketPitch({ players, onSetCaptaincy, onRemove, readOn
   const bowl = players.filter(p => p.role === 'bowl');
 
   // Single source of truth for "the booster in effect right now" — shared by
-  // every tile AND the role-chip label, so they can never disagree.
+  // every tile so they can never disagree.
   const boosters = useBoosterStore(s => s.boosters);
   const boosterKey = boosters.find(b => b.status === 'active' || b.status === 'pending')?.id ?? null;
 
   return (
     <View style={styles.field}>
-      {/* Oval grass field */}
-      <View style={styles.fieldOval} pointerEvents="none" />
-
-      {/* Vertical sandy pitch strip (center) */}
-      <View style={styles.pitchStrip} pointerEvents="none" />
-
-      {/* Crease lines */}
-      <View style={styles.creaseTop}    pointerEvents="none" />
-      <View style={styles.creaseBottom} pointerEvents="none" />
+      <FieldBackground />
 
       <RoleZone role="wk"   flex={1}   players={wk}   onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} readOnly={readOnly} boosterKey={boosterKey} />
       <RoleZone role="bat"  flex={1.8} players={bat}  onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} readOnly={readOnly} boosterKey={boosterKey} />
@@ -239,53 +310,10 @@ export default function CricketPitch({ players, onSetCaptaincy, onRemove, readOn
 const styles = StyleSheet.create({
   field: {
     flex:              1,
-    backgroundColor:   FIELD_BG,
+    backgroundColor:   WRAP_BG,
     paddingHorizontal: 6,
     paddingVertical:   4,
     overflow:          'hidden',
-  },
-
-  // Oval green grass — narrower left/right insets so it stays portrait-shaped
-  fieldOval: {
-    position:        'absolute',
-    top:             '1%',
-    bottom:          '1%',
-    left:            '12%',
-    right:           '12%',
-    backgroundColor: FIELD_OVAL,
-    borderRadius:    1000,
-    borderWidth:     1,
-    borderColor:     'rgba(255,255,255,0.04)',
-  },
-
-  // Vertical sandy pitch strip
-  pitchStrip: {
-    position:        'absolute',
-    left:            '42%',
-    right:           '42%',
-    top:             '20%',
-    bottom:          '20%',
-    backgroundColor: PITCH_SANDY,
-    borderRadius:    6,
-    opacity:         0.55,
-  },
-
-  // Batting crease lines
-  creaseTop: {
-    position:        'absolute',
-    left:            '42%',
-    right:           '42%',
-    top:             '26%',
-    height:          1.5,
-    backgroundColor: CREASE_LINE,
-  },
-  creaseBottom: {
-    position:        'absolute',
-    left:            '42%',
-    right:           '42%',
-    bottom:          '26%',
-    height:          1.5,
-    backgroundColor: CREASE_LINE,
   },
 
   // Zone (one per role)
@@ -300,31 +328,6 @@ const styles = StyleSheet.create({
     borderTopWidth:    0,
     marginHorizontal: -6,
     paddingHorizontal: 6,
-  },
-
-  // Role chip label
-  chipRow: {
-    flexDirection:  'row',
-    alignItems:     'center',
-    gap:            6,
-  },
-  chipLine: {
-    flex:            1,
-    height:          1,
-    backgroundColor: DIVIDER,
-  },
-  chip: {
-    borderWidth:      1,
-    borderRadius:     20,
-    paddingHorizontal: 8,
-    paddingVertical:   1,
-    backgroundColor:  'rgba(0,0,0,0.25)',
-  },
-  chipText: {
-    fontSize:      9,
-    fontWeight:    '800',
-    letterSpacing: 1,
-    textTransform: 'uppercase',
   },
 
   // Tiles row — centred so a single tile (e.g. lone WK) stays compact
@@ -371,15 +374,16 @@ const styles = StyleSheet.create({
     textShadowOffset:{ width: 0, height: 1 },
     textShadowRadius: 3,
   },
-  tileTeam: {
-    color:           'rgba(255,255,255,0.85)',
-    fontSize:        8,
-    textAlign:       'center',
-    letterSpacing:   0.3,
-    fontWeight:      '500',
-    textShadowColor: 'rgba(0,0,0,0.85)',
-    textShadowOffset:{ width: 0, height: 1 },
-    textShadowRadius: 3,
+  // Role icon (WK/BAT/AR/BOWL artwork) — bottom-right of the jersey, mirrors
+  // web's .pitch-role-icon (bottom:2px; right:calc(var(--tsz)*-0.18);
+  // width/height:calc(var(--tsz)*0.44), scaled here off the jersey's 32px size).
+  roleIcon: {
+    position: 'absolute',
+    bottom:   2,
+    right:    -6,
+    width:    14,
+    height:   14,
+    zIndex:   10,
   },
 
   // C / VC badge — top-right corner of the jersey, letter swapped for a

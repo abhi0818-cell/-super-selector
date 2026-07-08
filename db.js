@@ -4028,6 +4028,27 @@ export function createDb(cfg = {}) {
     },
 
     /**
+     * Lock-relevant fields (id, lock_time, start_time) for a set of match ids.
+     * Used by getSlBoosterContext() to determine which OTHER matches' booster
+     * activations have actually locked (coalesce(lock_time,start_time) <=
+     * now()) vs. which are still just a reversible, unsaved-until-lock commit
+     * — mirrors the same lock gate used in getLeaderboardSL() above.
+     *
+     * @param {string[]} matchIds
+     * @returns {Promise<Array<{id, lock_time, start_time}>>}
+     */
+    async getMatchesByIds(matchIds) {
+      if (!matchIds || !matchIds.length) return [];
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('matches')
+        .select('id, lock_time, start_time')
+        .in('id', matchIds);
+      if (error) throw error;
+      return data || [];
+    },
+
+    /**
      * Return the active booster (if any) for a specific squad + match.
      * Boosters that affect scoring (triple_captain, os_double, indian_double, team_double)
      * or transfers (wildcard, free_hit) are all retrieved here.
