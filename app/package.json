@@ -6,7 +6,8 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "test": "node -r ./node_modules/sucrase/register --test __tests__/scoringEngine.test.ts __tests__/scoringCrossCheck.test.js __tests__/helpers.test.js"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
