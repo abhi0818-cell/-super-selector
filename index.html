@@ -9346,8 +9346,10 @@ p31,Sample Player,MI,bat,9.0,false
     // PLAYERS uses a getter because the array reference is reassigned on every
     // data-load (setPlayers/initPlayers), so a one-time copy would go stale.
     window.__app = {
-      get PLAYERS() { return PLAYERS; },
-      get state()   { return state;   },
+      get PLAYERS()    { return PLAYERS;    },
+      get state()      { return state;      },
+      get TEAMS_DATA() { return TEAMS_DATA; },
+      set TEAMS_DATA(v){ TEAMS_DATA = v;    },
       $,
       toast,
       render,
@@ -9369,6 +9371,9 @@ p31,Sample Player,MI,bat,9.0,false
       teamByCode,
       isAdmin,
       fromCricAPI,
+      isTournamentStarted,
+      switchTournament,
+      KNOWN_TEAMS,
     };
 
 

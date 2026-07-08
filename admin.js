@@ -36,7 +36,12 @@
   const teamByCode           = A.teamByCode;
   const isAdmin              = A.isAdmin;
   const fromCricAPI          = A.fromCricAPI;
+  const isTournamentStarted  = A.isTournamentStarted;
+  const switchTournament     = A.switchTournament;
+  const KNOWN_TEAMS          = A.KNOWN_TEAMS;
+  const API_KEY_LS           = 'ss_cricapi_key'; // mirrors index.html constant
   // NB: A.PLAYERS — always read as A.PLAYERS (reference is reassigned on data loads)
+  // NB: A.TEAMS_DATA — always read/written as A.TEAMS_DATA (reassigned on data loads)
 
 
     // ─── PLAYER ADMIN ────────────────────────────────────────────────────────
@@ -2436,7 +2441,7 @@
             teamsUpserted = await state.db.bulkUpsertTeams(teamRows);
             // Refresh local teams cache
             const freshTeams = await state.db.getTeams();
-            TEAMS_DATA = freshTeams.map(t => ({ id: t.id, name: t.name, color: t.color, color2: t.color2 ?? null }));
+            A.TEAMS_DATA = freshTeams.map(t => ({ id: t.id, name: t.name, color: t.color, color2: t.color2 ?? null }));
           } catch (e) {
             console.warn('Team upsert failed (non-fatal):', e);
           }
@@ -3074,7 +3079,7 @@
         if (m.home_team_id) tournamentTeamIds.add(m.home_team_id);
         if (m.away_team_id) tournamentTeamIds.add(m.away_team_id);
       });
-      const allTeams = [...TEAMS_DATA].sort((a, b) => a.id.localeCompare(b.id));
+      const allTeams = [...A.TEAMS_DATA].sort((a, b) => a.id.localeCompare(b.id));
       const teams    = tournamentTeamIds.size > 0
         ? allTeams.filter(t => tournamentTeamIds.has(t.id))
         : allTeams;
@@ -3306,9 +3311,9 @@
       try {
         if (state.db) {
           const inserted = await state.db.addTeam({ id, name, color, color2 });
-          TEAMS_DATA.push({ id: inserted.id, name: inserted.name, color: inserted.color, color2: inserted.color2 });
+          A.TEAMS_DATA.push({ id: inserted.id, name: inserted.name, color: inserted.color, color2: inserted.color2 });
         } else {
-          TEAMS_DATA.push({ id, name, color, color2 });
+          A.TEAMS_DATA.push({ id, name, color, color2 });
         }
         toast(`Added ${id}.`);
         renderTeamsAdmin(); renderPool(); renderTeamFilter();
@@ -3325,11 +3330,11 @@
       try {
         if (state.db) {
           const upd = await state.db.updateTeam(id, patch);
-          const idx = TEAMS_DATA.findIndex(t => t.id === id);
-          if (idx >= 0) TEAMS_DATA[idx] = { id: upd.id, name: upd.name, color: upd.color, color2: upd.color2 };
+          const idx = A.TEAMS_DATA.findIndex(t => t.id === id);
+          if (idx >= 0) A.TEAMS_DATA[idx] = { id: upd.id, name: upd.name, color: upd.color, color2: upd.color2 };
         } else {
-          const idx = TEAMS_DATA.findIndex(t => t.id === id);
-          if (idx >= 0) TEAMS_DATA[idx] = { ...TEAMS_DATA[idx], ...patch };
+          const idx = A.TEAMS_DATA.findIndex(t => t.id === id);
+          if (idx >= 0) A.TEAMS_DATA[idx] = { ...A.TEAMS_DATA[idx], ...patch };
         }
         tr.querySelectorAll('.dirty').forEach(el => el.classList.remove('dirty'));
         renderPool(); renderTeamFilter();
@@ -3341,8 +3346,8 @@
       if (!confirm(`Delete team "${t?.name || id}"? Players in this team must be reassigned or deleted first.`)) return;
       try {
         if (state.db) await state.db.deleteTeam(id);
-        const idx = TEAMS_DATA.findIndex(x => x.id === id);
-        if (idx >= 0) TEAMS_DATA.splice(idx, 1);
+        const idx = A.TEAMS_DATA.findIndex(x => x.id === id);
+        if (idx >= 0) A.TEAMS_DATA.splice(idx, 1);
         if (state.filterTeam === id) state.filterTeam = 'ALL';
         toast('Deleted.');
         renderTeamsAdmin(); renderPool(); renderTeamFilter();
