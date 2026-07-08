@@ -33,6 +33,7 @@ import {
 import { MatchFormat, PlayerRole, CaptaincyRole } from '../types';
 import { BOOSTER_META } from '../store/boosterStore';
 import { isMatchPlayed } from './matchLock';
+import { bowlingRulesFor } from './scoringUtils';
 
 export type MatchWeek = { id: string; label: string; match: string; date: string };
 
@@ -177,7 +178,7 @@ export async function getSquadSeasonHistory(squadId: string): Promise<{
     // Gate dot_ball the same way the server/web do (migration_v30): only
     // honour the rule's configured weight when the tournament has it on.
     const dotBallOn = dotBallEnabledByTournament[tournamentIdByMatch[g.match_id]] ?? false;
-    const bowlingRules = dotBallOn ? undefined : { ...SCORING_RULES[fmt], dot_ball: 0 };
+    const bowlingRules = bowlingRulesFor(fmt, dotBallOn);
 
     const players: MatchPlayer[] = g.rows.map((r: any) => {
       const st = stats[r.player_id];

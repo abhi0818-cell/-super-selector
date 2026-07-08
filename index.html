@@ -5873,8 +5873,7 @@ p31,Sample Player,MI,bat,9.0,false
         if (otherMatchIds.length) {
           const rows = await state.db.getMatchesByIds(otherMatchIds);
           rows.forEach(m => {
-            const lockAt = m.lock_time ?? m.start_time ?? null;
-            if (lockAt && new Date(lockAt).getTime() <= Date.now()) lockedMatchIds.add(m.id);
+            if (hasMatchStarted(m)) lockedMatchIds.add(m.id);
           });
         }
         state.sl.boosterLockedMatchIds = lockedMatchIds;

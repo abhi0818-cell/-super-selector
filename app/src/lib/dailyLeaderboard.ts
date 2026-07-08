@@ -26,6 +26,8 @@ import {
 import { MatchFormat, PlayerRole, CaptaincyRole } from '../types';
 import { isMatchPlayed } from './matchLock';
 import { MatchWeek, MatchPlayer, MatchTeam } from './seasonHistory';
+import { resolveDisplayName } from './profileUtils';
+import { bowlingRulesFor } from './scoringUtils';
 
 // ─── Match picker (for the main ranked list) ──────────────────────────────────
 
@@ -109,7 +111,7 @@ export async function loadDailyLeaderboard(matchId: string, currentUserId: strin
     .select('id, display_name, team_name')
     .in('id', userIds);
   const nameById: Record<string, string> = {};
-  (profiles || []).forEach((p: any) => { nameById[p.id] = p.team_name ?? p.display_name ?? 'Player'; });
+  (profiles || []).forEach((p: any) => { nameById[p.id] = resolveDisplayName(p); });
 
   const unsorted = data.map((t: any) => ({
     userId:        t.user_id,
@@ -246,8 +248,7 @@ export async function getDailyUserHistory(contestId: string, userId: string): Pr
                + (breakdown.duck ?? 0) + (breakdown.strikeRateBonus ?? 0);
       }
       if (st?.bowling) {
-        const bowlingRules = dotBallOn ? undefined : { ...SCORING_RULES[fmt], dot_ball: 0 };
-        const { breakdown } = calcBowlingPoints(st.bowling, fmt, bowlingRules);
+        const { breakdown } = calcBowlingPoints(st.bowling, fmt, bowlingRulesFor(fmt, dotBallOn));
         bowl  += (breakdown.wickets ?? 0) + (breakdown.maidens ?? 0) + (breakdown.dotBalls ?? 0);
         bonus += (breakdown.lbwBowledBonus ?? 0) + (breakdown.fiveWicket ?? 0) + (breakdown.fourWicket ?? 0)
                + (breakdown.economyBonus ?? 0) + (breakdown.noBalls ?? 0) + (breakdown.wides ?? 0);

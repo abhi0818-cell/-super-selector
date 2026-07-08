@@ -22,6 +22,17 @@ export class SupabaseSdkMissingError extends Error {
 }
 
 /**
+ * Resolve the leaderboard display name for a profile row.
+ * Priority: team_name → display_name → email → first 8 chars of id.
+ * Mirrors the same fallback chain used in the mobile app (profileUtils.ts).
+ * @param {{ team_name?: string|null, display_name?: string|null, email?: string|null, id?: string|null }} p
+ * @returns {string}
+ */
+function resolveDisplayName(p) {
+  return p.team_name || p.display_name || p.email || (p.id || '').slice(0, 8);
+}
+
+/**
  * @param {{url?: string, anonKey?: string, client?: object}} cfg
  *   Pass a custom `client` (e.g. a stub for tests) to skip CDN loading.
  *
@@ -2204,7 +2215,7 @@ export function createDb(cfg = {}) {
       const { data, error } = await sb.from('profiles').select('id, display_name, email, team_name');
       if (error) throw error;
       const map = {};
-      (data || []).forEach(p => { map[p.id] = p.team_name || p.display_name || p.email || p.id.slice(0, 8); });
+      (data || []).forEach(p => { map[p.id] = resolveDisplayName(p); });
       return map;
     },
 
@@ -2358,7 +2369,7 @@ export function createDb(cfg = {}) {
           .select('id, display_name, email, team_name')
           .in('id', userIds);
         (profiles || []).forEach(p => {
-          profileMap[p.id] = p.team_name || p.display_name || p.email || p.id.slice(0, 8);
+          profileMap[p.id] = resolveDisplayName(p);
         });
       }
 

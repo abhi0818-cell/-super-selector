@@ -12,6 +12,7 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { isMatchLocked } from '../lib/matchLock';
+import { resolveDisplayName } from '../lib/profileUtils';
 
 // ─── Public type ──────────────────────────────────────────────────────────────
 
@@ -163,7 +164,7 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
         .in('id', userIds);
 
       const nameById: Record<string, string> = {};
-      (profiles ?? []).forEach((p: any) => { nameById[p.id] = p.team_name ?? p.display_name ?? 'Player'; });
+      (profiles ?? []).forEach((p: any) => { nameById[p.id] = resolveDisplayName(p); });
 
       // Step 4: build ranked entries
       const uid = get().currentUserId;
