@@ -6,10 +6,11 @@
  * so any number of players in a row always fills the width.
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Alert,
   Image,
+  LayoutChangeEvent,
   Pressable,
   StyleSheet,
   Text,
@@ -60,6 +61,32 @@ const ROLE_ICON: Record<PlayerRole, number> = {
 const WRAP_BG      = '#1a5c1a';   // outer turf backdrop, mirrors #pitchXiWrap/#slPitchXiWrap
 const DIVIDER      = 'rgba(0,0,0,0.08)';
 
+// ─── Adaptive jersey sizing ────────────────────────────────────────────────────
+// Mirrors web's fitHistOval: jerseys shrink to fit a crowded row (many players
+// sharing the same width) but never grow past a sensible ceiling even when a
+// row (e.g. a lone WK) has plenty of room to spare — a single tile blown up to
+// fill all available width would look comically oversized, not "well-fit".
+// Previously every tile used one fixed 32px size regardless of row density,
+// which read as uniformly too small — most rows had room to spare that a
+// fixed size could never take advantage of.
+
+const TSZ_MIN = 26;
+const TSZ_MAX = 44;
+const TILE_GAP    = 4;  // tilesRow's gap between tiles
+const TILE_ROWPAD = 4;  // tilesRow's paddingHorizontal, both sides
+// Fraction of a tile's own width taken up by the jersey itself (the rest is
+// side breathing room for the C/VC and OS badges, which protrude slightly
+// past the jersey's edges) — matches the previous fixed 32px jersey inside a
+// 56px tile (32/56 ≈ 0.57), rounded to a cleaner constant.
+const JERSEY_FRACTION = 0.6;
+
+function fitTileSize(availWidth: number, count: number): number {
+  if (count <= 0 || availWidth <= 0) return TSZ_MAX;
+  const perTile = (availWidth - TILE_ROWPAD - TILE_GAP * (count - 1)) / count;
+  const jerseySize = perTile * JERSEY_FRACTION;
+  return Math.min(TSZ_MAX, Math.max(TSZ_MIN, Math.floor(jerseySize)));
+}
+
 // ─── Player tile ─────────────────────────────────────────────────────────────
 
 interface TileProps {
@@ -70,9 +97,12 @@ interface TileProps {
   /** Effective (pending-or-committed) booster for this match, or null — lifted
    *  up to CricketPitch so every tile in the XI reads the same single value. */
   boosterKey:     string | null;
+  /** This row's fitted jersey size (see fitTileSize) — every other dimension
+   *  on the tile (badges, role icon, name text, tile width) scales off it. */
+  tsz:            number;
 }
 
-function PlayerTile({ player, onSetCaptaincy, onRemove, readOnly, boosterKey }: TileProps) {
+function PlayerTile({ player, onSetCaptaincy, onRemove, readOnly, boosterKey, tsz }: TileProps) {
   const isCap = player.captaincy === 'captain';
   const isVC  = player.captaincy === 'vice_captain';
 
@@ -103,17 +133,33 @@ function PlayerTile({ player, onSetCaptaincy, onRemove, readOnly, boosterKey }: 
     ]);
   };
 
+  // Every badge/icon/font dimension below scales off this tile's fitted
+  // jersey size (tsz) — same calc(var(--tsz)*N) relationships web's CSS uses
+  // (see FieldBackground/fitTileSize comments), just computed in JS instead
+  // of read from a CSS custom property.
+  const badgeSize     = tsz * 0.44;
+  const capTopOffset  = -tsz * 0.15;  // web's .pitch-cbadge: top factor differs from right
+  const sideOffset    = -tsz * 0.18;  // web's .pitch-cbadge right / .pitch-os-badge / .pitch-usd-badge
+  const capFontSize   = Math.max(7, tsz * 0.24);
+  const sideFontSize  = Math.max(8, tsz * 0.3);
+  const tileWidth     = tsz / JERSEY_FRACTION;
+  const nameFontSize  = Math.max(8, tsz * 0.26);
+
   return (
     <Pressable
-      style={({ pressed }) => [styles.tile, !readOnly && pressed && styles.tilePressed]}
+      style={({ pressed }) => [styles.tile, { width: tileWidth }, !readOnly && pressed && styles.tilePressed]}
       onPress={handlePress}
     >
       <View style={styles.avatarWrap}>
         {/* C / VC badge — top-right corner, letter swapped for a booster icon
             (⚡ Triple Captain, 👥 Dual Captain) exactly like web's pitch-cbadge */}
         {(isCap || isVC) && (
-          <View style={[styles.capBadge, isCap ? styles.capBadgeC : styles.capBadgeVC]}>
-            <Text style={[styles.capBadgeText, isCap ? styles.capBadgeTextC : styles.capBadgeTextVC]}>
+          <View style={[
+            styles.capBadge,
+            isCap ? styles.capBadgeC : styles.capBadgeVC,
+            { width: badgeSize, height: badgeSize, borderRadius: badgeSize / 2, top: capTopOffset, right: sideOffset },
+          ]}>
+            <Text style={[styles.capBadgeText, isCap ? styles.capBadgeTextC : styles.capBadgeTextVC, { fontSize: capFontSize }]}>
               {decor.badgeIcon ?? (isCap ? 'C' : 'VC')}
             </Text>
           </View>
@@ -121,15 +167,15 @@ function PlayerTile({ player, onSetCaptaincy, onRemove, readOnly, boosterKey }: 
 
         {/* Overseas badge — top-left, mirrors web's .pitch-os-badge */}
         {showOsBadge && (
-          <View style={styles.osBadge}>
-            <Text style={styles.osBadgeText}>✈️</Text>
+          <View style={[styles.osBadge, { width: badgeSize, height: badgeSize, top: sideOffset, left: sideOffset }]}>
+            <Text style={{ fontSize: sideFontSize }}>✈️</Text>
           </View>
         )}
 
         {/* US Double badge — bottom-left, mirrors web's .pitch-usd-badge */}
         {decor.bottomLeftIcon && (
-          <View style={styles.bottomLeftBadge}>
-            <Text style={styles.bottomLeftBadgeText}>{decor.bottomLeftIcon}</Text>
+          <View style={[styles.bottomLeftBadge, { width: badgeSize, height: badgeSize, left: sideOffset }]}>
+            <Text style={{ fontSize: sideFontSize }}>{decor.bottomLeftIcon}</Text>
           </View>
         )}
 
@@ -137,7 +183,7 @@ function PlayerTile({ player, onSetCaptaincy, onRemove, readOnly, boosterKey }: 
           code={player.team}
           color1={player.teamColor}
           color2={player.teamColor2}
-          size={32}
+          size={tsz}
           variant="pitch"
           boosted={decor.boosted}
         />
@@ -146,10 +192,14 @@ function PlayerTile({ player, onSetCaptaincy, onRemove, readOnly, boosterKey }: 
             (WK/BAT/AR/BOWL artwork). Team-code text used to sit below the name
             here instead; it's redundant once the jersey already carries the
             team label, so it's gone and this takes its corner instead. */}
-        <Image source={ROLE_ICON[player.role]} style={styles.roleIcon} resizeMode="contain" />
+        <Image
+          source={ROLE_ICON[player.role]}
+          style={[styles.roleIcon, { width: badgeSize, height: badgeSize, right: sideOffset }]}
+          resizeMode="contain"
+        />
       </View>
 
-      <Text style={styles.tileName} numberOfLines={1}>{shortName}</Text>
+      <Text style={[styles.tileName, { fontSize: nameFontSize }]} numberOfLines={1}>{shortName}</Text>
     </Pressable>
   );
 }
@@ -165,9 +215,13 @@ interface ZoneProps {
   isCenter?:      boolean;
   readOnly?:      boolean;
   boosterKey:     string | null;
+  /** Measured content width of the field container (see CricketPitch's
+   *  onLayout) — used to fit this row's jersey size to its own player count. */
+  contentWidth:   number;
 }
 
-function RoleZone({ role, flex, players, onSetCaptaincy, onRemove, isCenter, readOnly, boosterKey }: ZoneProps) {
+function RoleZone({ role, flex, players, onSetCaptaincy, onRemove, isCenter, readOnly, boosterKey, contentWidth }: ZoneProps) {
+  const tsz = fitTileSize(contentWidth, players.length);
   return (
     <View style={[
       styles.zone,
@@ -190,6 +244,7 @@ function RoleZone({ role, flex, players, onSetCaptaincy, onRemove, isCenter, rea
               onRemove={() => onRemove(p.id)}
               readOnly={readOnly}
               boosterKey={boosterKey}
+              tsz={tsz}
             />
           ))}
         </View>
@@ -293,14 +348,27 @@ export default function CricketPitch({ players, onSetCaptaincy, onRemove, readOn
   const boosters = useBoosterStore(s => s.boosters);
   const boosterKey = boosters.find(b => b.status === 'active' || b.status === 'pending')?.id ?? null;
 
+  // Measured width of the field, so each row can fit its jersey size to its
+  // OWN player count and the space actually available (see fitTileSize) —
+  // this pitch is embedded at different widths in different places (full-
+  // width on MyXIScreen, half-width next to the transfer panel in
+  // ConfirmXIModal's Review & Save split), so a static screen-width guess
+  // would be wrong wherever it's not full-width. 0 until first layout;
+  // fitTileSize treats that as "not measured yet" and returns TSZ_MAX so
+  // there's no zero-size flash before the first onLayout fires.
+  const [fieldWidth, setFieldWidth] = useState(0);
+  const onFieldLayout = (e: LayoutChangeEvent) => setFieldWidth(e.nativeEvent.layout.width);
+  // field's own horizontal padding (6px each side) — not available row width.
+  const contentWidth = Math.max(0, fieldWidth - 12);
+
   return (
-    <View style={styles.field}>
+    <View style={styles.field} onLayout={onFieldLayout}>
       <FieldBackground />
 
-      <RoleZone role="wk"   flex={1}   players={wk}   onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} readOnly={readOnly} boosterKey={boosterKey} />
-      <RoleZone role="bat"  flex={1.8} players={bat}  onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} readOnly={readOnly} boosterKey={boosterKey} />
-      <RoleZone role="ar"   flex={1.4} players={ar}   onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} isCenter readOnly={readOnly} boosterKey={boosterKey} />
-      <RoleZone role="bowl" flex={1.8} players={bowl} onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} readOnly={readOnly} boosterKey={boosterKey} />
+      <RoleZone role="wk"   flex={1}   players={wk}   onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} readOnly={readOnly} boosterKey={boosterKey} contentWidth={contentWidth} />
+      <RoleZone role="bat"  flex={1.8} players={bat}  onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} readOnly={readOnly} boosterKey={boosterKey} contentWidth={contentWidth} />
+      <RoleZone role="ar"   flex={1.4} players={ar}   onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} isCenter readOnly={readOnly} boosterKey={boosterKey} contentWidth={contentWidth} />
+      <RoleZone role="bowl" flex={1.8} players={bowl} onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} readOnly={readOnly} boosterKey={boosterKey} contentWidth={contentWidth} />
     </View>
   );
 }
@@ -341,8 +409,10 @@ const styles = StyleSheet.create({
 
   // Individual tile — no card/border, matches web's borderless floating
   // token (.pitch-player): just the jersey + name sitting on the green field.
+  // width is always overridden per-tile (see PlayerTile's tileWidth, derived
+  // from that row's fitted jersey size) — no static fallback needed since
+  // CricketPitch always passes a real tsz down before first paint.
   tile: {
-    width:           56,
     alignItems:      'center',
     justifyContent:  'center',
     gap:             2,
@@ -375,27 +445,20 @@ const styles = StyleSheet.create({
     textShadowRadius: 3,
   },
   // Role icon (WK/BAT/AR/BOWL artwork) — bottom-right of the jersey, mirrors
-  // web's .pitch-role-icon (bottom:2px; right:calc(var(--tsz)*-0.18);
-  // width/height:calc(var(--tsz)*0.44), scaled here off the jersey's 32px size).
+  // web's .pitch-role-icon. bottom is fixed (web's is too — bottom:2px);
+  // right/width/height scale with tsz, always passed in per-tile below.
   roleIcon: {
     position: 'absolute',
     bottom:   2,
-    right:    -6,
-    width:    14,
-    height:   14,
     zIndex:   10,
   },
 
   // C / VC badge — top-right corner of the jersey, letter swapped for a
   // booster icon when one applies (see getTileBoosterDecor). Mirrors web's
-  // .pitch-cbadge, including its slightly-protruding offset.
+  // .pitch-cbadge. Position/size scale with tsz (always passed in per-tile);
+  // only the non-scaling visual properties live here.
   capBadge: {
     position:       'absolute',
-    top:             -5,
-    right:           -6,
-    width:           16,
-    height:          16,
-    borderRadius:    8,
     alignItems:      'center',
     justifyContent:  'center',
     zIndex:          10,
@@ -408,39 +471,28 @@ const styles = StyleSheet.create({
   capBadgeC:  { backgroundColor: '#C9A84C' },
   capBadgeVC: { backgroundColor: '#ffffffee' },
   capBadgeText: {
-    fontSize:   8,
     fontWeight: '900',
   },
   capBadgeTextC:  { color: '#1C1F26' },
   capBadgeTextVC: { color: '#7a5500' },
 
   // Overseas badge — top-left of the jersey, mirrors web's .pitch-os-badge.
+  // Position/size scale with tsz (always passed in per-tile).
   osBadge: {
     position:       'absolute',
-    top:             -5,
-    left:            -6,
-    width:           16,
-    height:          16,
     alignItems:      'center',
     justifyContent:  'center',
     zIndex:          10,
-  },
-  osBadgeText: {
-    fontSize: 10,
   },
 
   // US Double badge — bottom-left of the jersey, mirrors web's .pitch-usd-badge.
+  // bottom is fixed (web's is too — bottom:2px); left/width/height scale with
+  // tsz (always passed in per-tile).
   bottomLeftBadge: {
     position:       'absolute',
     bottom:          -2,
-    left:            -6,
-    width:           16,
-    height:          16,
     alignItems:      'center',
     justifyContent:  'center',
     zIndex:          10,
-  },
-  bottomLeftBadgeText: {
-    fontSize: 10,
   },
 });
