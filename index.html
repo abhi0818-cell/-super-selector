@@ -6695,6 +6695,32 @@ p31,Sample Player,MI,bat,9.0,false
       const mainSlEntry   = userSquads.find(u => !u.contest.is_private && u.contest.contest_type === 'season_long');
       const mainSlSquadId = mainSlEntry?.squad?.id ?? null;
 
+      // The default public Season Long contest for this tournament, if one
+      // exists — used below to offer a direct "join the main league" card to
+      // brand-new teams who land on this tab without a squad yet. Without
+      // this, a new team only ever sees private-league create/join UI here,
+      // even though the public SL contest is open with no invite gate.
+      let publicSlContest = (state.sl.contests || [])
+        .find(c => c.contest_type === 'season_long' && !c.is_private) ?? null;
+      if (!publicSlContest && state.db && state.activeTournamentId) {
+        try {
+          const freshContests = await state.db.getContests(state.activeTournamentId);
+          state.sl.contests = freshContests;
+          publicSlContest = freshContests.find(c => c.contest_type === 'season_long' && !c.is_private) ?? null;
+        } catch (e) { console.warn('[Leagues tab] getContests failed:', e.message); }
+      }
+
+      // ── 0. Join the main Season Long league (only if not already a member) ─
+      const joinMainHtml = (publicSlContest && !mainSlSquadId) ? `
+        <div style="border:1px solid var(--accent); border-radius:8px; padding:12px 14px; margin-bottom:16px; background:rgba(34,211,238,0.06);">
+          <div style="font-size:12px;font-weight:600;margin-bottom:8px;">🌐 Join ${escapeHtml(publicSlContest.name || 'Season Long')} — the main league, open to everyone</div>
+          <div class="save-bar">
+            <input id="slMainJoinTeamName" type="text" placeholder="Your team name" style="flex:1;" />
+            <button id="slMainJoinBtn" class="primary">Join</button>
+          </div>
+          <div id="slMainJoinStatus" style="font-size:11px;margin-top:6px;color:var(--muted);"></div>
+        </div>` : '';
+
       // ── 1. Your Leagues list ─────────────────────────────────────────────
       let leagueListHtml = '';
       if (userSquads.length) {
@@ -6755,7 +6781,7 @@ p31,Sample Player,MI,bat,9.0,false
           <div id="slPlJoinStatus" style="font-size:11px;margin-top:6px;color:var(--muted);"></div>
         </div>`;
 
-      el.innerHTML = leagueListHtml + createHtml + joinHtml;
+      el.innerHTML = joinMainHtml + leagueListHtml + createHtml + joinHtml;
 
       // ── Wire switch buttons ────────────────────────────────────────────
       el.querySelectorAll('.sl-league-switch-btn').forEach(btn => {
@@ -6777,6 +6803,34 @@ p31,Sample Player,MI,bat,9.0,false
             : `Switched to league: ${ct.name}`;
           toast(switchMsg, 3000);
         });
+      });
+
+      // ── Join main league handler ─────────────────────────────────────────
+      $('#slMainJoinBtn')?.addEventListener('click', async () => {
+        const teamName = $('#slMainJoinTeamName')?.value.trim();
+        const statusEl = $('#slMainJoinStatus');
+        const btn      = $('#slMainJoinBtn');
+        if (!teamName) { statusEl.textContent = 'Enter a team name.'; statusEl.style.color = 'var(--bad)'; return; }
+        if (!state.db) { statusEl.textContent = 'Connect a database first.'; statusEl.style.color = 'var(--bad)'; return; }
+        btn.disabled = true; statusEl.textContent = 'Joining…'; statusEl.style.color = 'var(--muted)';
+        try {
+          const newSquad = await state.db.joinSeason(publicSlContest.id, teamName);
+          // If this is the user's first squad, make it the active one and load its draft.
+          if (!state.sl.squad) {
+            state.sl.seasonContest  = publicSlContest;
+            state.sl.squad          = newSquad;
+            state.sl.seasonXferCount = 0;
+            state.sl.seasonXferCap   = publicSlContest.total_transfers_allowed ?? null;
+            state.sl.seasonPhase     = 'regular';
+            await slLoadDraft();
+            renderSlPanel(); renderPool();
+          }
+          toast(`"${teamName}" joined ${publicSlContest.name || 'Season Long'}!`, 4000);
+          renderSlLeaguesTab(); // refresh so the join card disappears and Your Leagues shows it
+        } catch (e) {
+          statusEl.textContent = 'Failed: ' + e.message; statusEl.style.color = 'var(--bad)';
+          btn.disabled = false;
+        }
       });
 
       // ── Wire uppercase for invite input ──────────────────────────────────
