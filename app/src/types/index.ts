@@ -127,4 +127,5 @@ export type RootTabParamList = {
   MyXI:        { openPicker?: boolean } | undefined;
   Leaderboard: undefined;
   Rules:       undefined;
+  Admin:       undefined;
 };

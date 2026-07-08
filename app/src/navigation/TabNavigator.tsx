@@ -2,12 +2,16 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Text } from 'react-native';
 import { RootTabParamList } from '../types';
-import HomeScreen from '../screens/HomeScreen';
-import MyXIScreen from '../screens/MyXIScreen';
+import HomeScreen        from '../screens/HomeScreen';
+import MyXIScreen        from '../screens/MyXIScreen';
 import LeaderboardScreen from '../screens/LeaderboardScreen';
-import RulesScreen        from '../screens/RulesScreen';
+import RulesScreen       from '../screens/RulesScreen';
+import AdminScreen       from '../screens/AdminScreen';
 import { colors, fontSize } from '../theme';
-import { useTeamStore } from '../store/teamStore';
+import { useTeamStore }  from '../store/teamStore';
+import { useAuthStore }  from '../store/authStore';
+
+const ADMIN_EMAIL = 'abhi0818@gmail.com';
 
 const Tab = createBottomTabNavigator<RootTabParamList>();
 
@@ -17,6 +21,8 @@ function TabIcon({ icon, focused }: { icon: string; focused: boolean }) {
 
 export default function TabNavigator() {
   const { selected, validation } = useTeamStore();
+  const { user }                 = useAuthStore();
+  const isAdmin                  = user?.email === ADMIN_EMAIL;
 
   return (
     <Tab.Navigator
@@ -79,6 +85,19 @@ export default function TabNavigator() {
         options={{
           tabBarLabel: 'Rules',
           tabBarIcon:  ({ focused }) => <TabIcon icon="📖" focused={focused} />,
+        }}
+      />
+      <Tab.Screen
+        name="Admin"
+        component={AdminScreen}
+        options={{
+          tabBarLabel: 'Admin',
+          tabBarIcon:  ({ focused }) => <TabIcon icon="⚙️" focused={focused} />,
+          // Hide tab from non-admins — screen still exists in the navigator
+          // so it can be navigated to programmatically if needed, but regular
+          // users never see the tab button.
+          tabBarButton: isAdmin ? undefined : () => null,
+          tabBarStyle:  isAdmin ? undefined : { display: 'none' },
         }}
       />
     </Tab.Navigator>
