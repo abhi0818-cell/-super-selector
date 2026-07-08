@@ -9374,6 +9374,19 @@ p31,Sample Player,MI,bat,9.0,false
       isTournamentStarted,
       switchTournament,
       KNOWN_TEAMS,
+      // reassigned lets — need getter+setter so admin.js always sees the current value
+      get ALL_PLAYER_IDS()  { return ALL_PLAYER_IDS; },
+      set ALL_PLAYER_IDS(v) { ALL_PLAYER_IDS = v;    },
+      get playersSource()   { return playersSource;   },
+      set playersSource(v)  { playersSource = v;      },
+      // constants from index.html used by admin.js
+      KNOWN_ROLES, MULTIPLIERS, NAME_ALIASES, RULES, RULE_GROUP_ORDER, RULE_META,
+      // index.html functions called from admin.js
+      applyDotBallGate, buildLiveScorecardFromStats, calcFielding, calculateScore,
+      connectLive, forcePollNow, matchLifecycle, maybeStartLbPolling,
+      persistLiveSlScores, refreshAllPlayerIds, renderLeaderboard,
+      renderSlLiveTab, renderSlXiTab, resolveFielder, summarizeFieldingIssues,
+      afterTeamCodeFix,
     };
 
 

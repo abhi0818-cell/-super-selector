@@ -36,12 +36,37 @@
   const teamByCode           = A.teamByCode;
   const isAdmin              = A.isAdmin;
   const fromCricAPI          = A.fromCricAPI;
-  const isTournamentStarted  = A.isTournamentStarted;
-  const switchTournament     = A.switchTournament;
-  const KNOWN_TEAMS          = A.KNOWN_TEAMS;
-  const API_KEY_LS           = 'ss_cricapi_key'; // mirrors index.html constant
-  // NB: A.PLAYERS — always read as A.PLAYERS (reference is reassigned on data loads)
-  // NB: A.TEAMS_DATA — always read/written as A.TEAMS_DATA (reassigned on data loads)
+  const isTournamentStarted       = A.isTournamentStarted;
+  const switchTournament          = A.switchTournament;
+  const KNOWN_TEAMS               = A.KNOWN_TEAMS;
+  const API_KEY_LS                = 'ss_cricapi_key'; // mirrors index.html constant
+  // constants
+  const KNOWN_ROLES               = A.KNOWN_ROLES;
+  const MULTIPLIERS               = A.MULTIPLIERS;
+  const NAME_ALIASES              = A.NAME_ALIASES;
+  const RULES                     = A.RULES;
+  const RULE_GROUP_ORDER          = A.RULE_GROUP_ORDER;
+  const RULE_META                 = A.RULE_META;
+  // index.html functions called by admin.js
+  const applyDotBallGate          = A.applyDotBallGate;
+  const buildLiveScorecardFromStats = A.buildLiveScorecardFromStats;
+  const calcFielding              = A.calcFielding;
+  const calculateScore            = A.calculateScore;
+  const connectLive               = A.connectLive;
+  const forcePollNow              = A.forcePollNow;
+  const matchLifecycle            = A.matchLifecycle;
+  const maybeStartLbPolling       = A.maybeStartLbPolling;
+  const persistLiveSlScores       = A.persistLiveSlScores;
+  const refreshAllPlayerIds       = A.refreshAllPlayerIds;
+  const renderLeaderboard         = A.renderLeaderboard;
+  const renderSlLiveTab           = A.renderSlLiveTab;
+  const renderSlXiTab             = A.renderSlXiTab;
+  const resolveFielder            = A.resolveFielder;
+  const summarizeFieldingIssues   = A.summarizeFieldingIssues;
+  const afterTeamCodeFix          = A.afterTeamCodeFix;
+  // NB: A.PLAYERS    — always read as A.PLAYERS    (reference reassigned on data loads)
+  // NB: A.TEAMS_DATA — always read as A.TEAMS_DATA (reference reassigned on data loads)
+  // NB: A.ALL_PLAYER_IDS / A.playersSource — use A. prefix for reads AND writes
 
 
     // ─── PLAYER ADMIN ────────────────────────────────────────────────────────
@@ -971,12 +996,12 @@
     function nextPlayerId() {
       // Pick smallest unused pNN. Must check against BOTH the currently-loaded
       // A.PLAYERS (which can be tournament-scoped — see getPlayersForTournament)
-      // AND the global ALL_PLAYER_IDS cache, since players.id is a single global
+      // AND the global A.ALL_PLAYER_IDS cache, since players.id is a single global
       // namespace shared by every tournament. Checking A.PLAYERS alone can suggest
       // an id (e.g. 'p01') that's free in this tournament's subset but already
       // taken globally, which fails the insert (or silently collides).
       const used = new Set(A.PLAYERS.map(p => p.id));
-      ALL_PLAYER_IDS.forEach(id => used.add(id));
+      A.ALL_PLAYER_IDS.forEach(id => used.add(id));
       for (let i = 1; i < 1000; i++) {
         const id = 'p' + String(i).padStart(2, '0');
         if (!used.has(id)) return id;
@@ -1000,8 +1025,8 @@
         tableView.insertBefore(labelEl, tableView.firstChild);
       }
       if (labelEl && activeTournament) {
-        const isTournament = playersSource === 'tournament';
-        const isGlobal     = playersSource === 'global';
+        const isTournament = A.playersSource === 'tournament';
+        const isGlobal     = A.playersSource === 'global';
         const badge = isTournament
           ? `<span style="color:var(--accent); font-weight:600;">${escapeHtml(activeTournament.name)}</span>`
           : `<span style="color:var(--muted);">all tournaments (no players imported for ${escapeHtml(activeTournament.name)} yet)</span>`;
@@ -1079,7 +1104,7 @@
         } else {
           A.PLAYERS.push({ id, name, team, role, credits, overseas });
         }
-        ALL_PLAYER_IDS.add(id); // keep the global uniqueness set in sync immediately, no need to wait for a refetch
+        A.ALL_PLAYER_IDS.add(id); // keep the global uniqueness set in sync immediately, no need to wait for a refetch
         toast(`Added ${name}.`);
         renderAdmin(); renderPool(); render();
       } catch (e) { toast('Add failed: ' + e.message, 4000); }
@@ -1115,7 +1140,7 @@
       if (!confirm(`Delete ${p?.name || id}? This cannot be undone.`)) return;
       try {
         if (state.db) await state.db.deletePlayer(id);
-        ALL_PLAYER_IDS.delete(id); // global row is actually gone (deletePlayer throws if still FK-referenced), so the id is free again
+        A.ALL_PLAYER_IDS.delete(id); // global row is actually gone (deletePlayer throws if still FK-referenced), so the id is free again
         const idx = A.PLAYERS.findIndex(x => x.id === id);
         if (idx >= 0) A.PLAYERS.splice(idx, 1);
         // Also drop from current XI if selected
@@ -1420,13 +1445,13 @@
                       )];
                       console.info('[Scrape Now] diagnostic:', {
                         statRowCount: statRows.length, resolvedCount, rosterCount,
-                        playersInPool: A.PLAYERS.length, playersSource,
+                        playersInPool: A.PLAYERS.length, playersSource: A.playersSource,
                         matchedTeamIds, expects: [m.home_team_id, m.away_team_id],
                       });
                       if (!rawScorecard) {
                         if (resolvedCount === 0) {
                           toast(`Saved ${statRows.length} player rows, but NONE of those player_ids exist in the currently loaded ` +
-                            `pool (${A.PLAYERS.length} players, source: ${playersSource}). Your player pool for ${m.home_team_id}/${m.away_team_id} ` +
+                            `pool (${A.PLAYERS.length} players, source: ${A.playersSource}). Your player pool for ${m.home_team_id}/${m.away_team_id} ` +
                             `has ${rosterCount} players — if that's 0, this tournament's roster was never set up. If it's >0, the scraper resolved ` +
                             `to different player records than your roster (re-check Player Linking).`, 9000);
                         } else {
