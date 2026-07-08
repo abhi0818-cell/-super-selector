@@ -61,7 +61,6 @@
   const renderLeaderboard         = A.renderLeaderboard;
   const renderSlLiveTab           = A.renderSlLiveTab;
   const renderSlXiTab             = A.renderSlXiTab;
-  const resolveFielder            = A.resolveFielder;
   const summarizeFieldingIssues   = A.summarizeFieldingIssues;
   const afterTeamCodeFix          = A.afterTeamCodeFix;
   // NB: A.PLAYERS    — always read as A.PLAYERS    (reference reassigned on data loads)
