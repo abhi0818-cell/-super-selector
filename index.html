@@ -378,6 +378,47 @@
     .modal-body { padding: 12px 18px; overflow-y: auto; }
     .modal-footer { padding: 10px 18px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 12px; color: var(--muted); }
 
+    /* Review & Save popup (shown on Save XI, both Daily and SL) — pitch
+       preview left, IN/OUT diff + booster banner right. Reuses the .modal
+       shell above; these rules only style the body content. */
+    .review-split { display: flex; gap: 18px; min-height: 0; }
+    .review-pitch-col { flex: 3; min-width: 0; }
+    .review-panel-col { flex: 2; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+    .review-panel-title {
+      color: var(--muted); font-size: 10px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 1px; margin: 0;
+    }
+    .review-changes-list { flex: 1; overflow-y: auto; max-height: 360px; }
+    .review-change-item {
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 7px 0; border-bottom: 1px dashed var(--border);
+    }
+    .review-change-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
+    .review-change-dot.good { background: var(--good); }
+    .review-change-dot.bad  { background: var(--bad); }
+    .review-change-body { flex: 1; }
+    .review-change-name { font-size: 13px; font-weight: 700; }
+    .review-change-name.good { color: var(--good); }
+    .review-change-name.bad  { color: var(--bad); }
+    .review-change-meta { color: var(--muted); font-size: 9px; font-weight: 600; letter-spacing: 0.5px; margin-top: 1px; }
+    .review-divider { height: 1px; background: var(--border); margin: 6px 0; }
+    .review-no-changes {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 6px; flex: 1; color: var(--muted); font-size: 13px; text-align: center; padding: 24px 0;
+    }
+    .review-booster-banner {
+      display: flex; align-items: center; gap: 8px; padding: 8px;
+      border-radius: 8px; border: 1px solid rgba(201,168,76,0.5);
+      background: rgba(201,168,76,0.1);
+    }
+    .review-booster-icon { font-size: 20px; }
+    .review-booster-name { color: var(--gold, #92650A); font-size: 13px; font-weight: 800; }
+    .review-booster-note { color: var(--muted); font-size: 9px; font-weight: 600; margin-top: 1px; }
+    @media (max-width: 720px) {
+      .review-split { flex-direction: column; }
+      .review-changes-list { max-height: 220px; }
+    }
+
     .admin-table { width: 100%; border-collapse: collapse; font-size: 12px; }
     .admin-table th { text-align: left; padding: 8px 6px; color: var(--muted); border-bottom: 1px solid var(--border); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; font-size: 10px; }
     .admin-table td { padding: 4px 6px; border-bottom: 1px dashed var(--border); vertical-align: middle; }
@@ -1959,6 +2000,32 @@ p31,Sample Player,MI,bat,9.0,false
       </header>
       <div class="modal-body">
         <div id="slBoosterModalBody"><div class="sc-empty">Loading…</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Review & Save popup — shown on "Save XI" (Daily and SL both) before
+       anything is persisted. Pitch preview + IN/OUT diff + booster banner
+       (SL only). See openReviewSaveModal(). -->
+  <div id="reviewSaveModal" class="modal-backdrop">
+    <div class="modal" style="max-width:760px;">
+      <header>
+        <h2 id="reviewSaveModalTitle">Review & Save</h2>
+        <button class="modal-close" id="reviewSaveModalCloseBtn" title="Close">×</button>
+      </header>
+      <div class="modal-body">
+        <div class="review-split">
+          <div class="review-pitch-col" id="reviewSaveModalPitch"></div>
+          <div class="review-panel-col">
+            <div id="reviewSaveModalBooster"></div>
+            <p class="review-panel-title">Transfers</p>
+            <div class="review-changes-list" id="reviewSaveModalChanges"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="reviewSaveBackBtn">← Back to edit</button>
+        <button class="primary" id="reviewSaveConfirmBtn">Confirm & Save</button>
       </div>
     </div>
   </div>
@@ -6112,6 +6179,37 @@ p31,Sample Player,MI,bat,9.0,false
           return;
         }
       }
+
+      btn.disabled = false; btn.textContent = 'Save XI';
+
+      // Effective (pending-or-committed) booster for the match this draft
+      // will apply to — same resolution doSaveSlXi's commit step uses below,
+      // so the preview can never show a different booster than what saves.
+      let boosterKey = null;
+      try {
+        const ctx = await getSlBoosterContext();
+        boosterKey = ctx?.pendingForNext ?? null;
+      } catch (e) { /* best-effort — banner just won't show */ }
+
+      // Only an empty baseline (no prior locked XI at all) means "fresh" —
+      // matches the isFirstActiveLock convention doSaveSlXi uses for the toast.
+      const previousIds = (state.sl.prevXI?.playerIds?.length) ? state.sl.prevXI.playerIds : [];
+
+      openReviewSaveModal({
+        title:      'Review & Save XI',
+        currentIds: xi,
+        previousIds,
+        captainId:  cap,
+        vcId:       vc,
+        boosterKey,
+        onConfirm:  doSaveSlXi,
+      });
+    }
+
+    async function doSaveSlXi() {
+      const xi  = state.sl.xiPlayers;
+      const cap = state.sl.xiCaptain;
+      const vc  = state.sl.xiVc;
       try {
         // 1. Persist draft (no match association, no transfers)
         await state.db.saveDraft(state.sl.squad.id, { playerIds: xi, captainId: cap, vcId: vc });
@@ -6182,10 +6280,7 @@ p31,Sample Player,MI,bat,9.0,false
         // straight into Edit mode instead of the read-only Pick 11 view.
         if ($('#poolPanel').style.display !== 'none') setPoolOpen(false);
         switchPageTab('contest');
-      } catch (e) {
-        toast('Save failed: ' + e.message, 5000);
       } finally {
-        btn.disabled = false; btn.textContent = 'Save XI';
         renderSlXiTab();
       }
     }
@@ -8361,26 +8456,47 @@ p31,Sample Player,MI,bat,9.0,false
       if (!state.captain || !state.viceCaptain) { toast('Pick Captain and Vice-Captain.'); return; }
       const m = saveTargetMatch();
       if (!m) { toast('Select a match first — XI must be tied to a match.'); return; }
-      const name = autoXIName();
+
+      // Diff against whatever's already saved for this match (if anything).
+      // Daily has no transfer/penalty concept — this is purely an at-a-glance
+      // "what did I actually change" check before committing, same spirit as
+      // mobile's picker-open-snapshot diff for Daily.
+      let previousIds = [];
       try {
-        // One XI per match — if one already exists, replace it.
-        const existing = await state.db.getUserTeamForMatch(m.id);
-        if (existing) await state.db.deleteUserTeam(existing.id);
-        const id = await state.db.saveUserTeam({
-          name, format: state.format,
-          playerIds: [...state.selected],
-          captainId: state.captain, viceCaptainId: state.viceCaptain,
-          matchId: m.id,
-        });
-        state.activeSavedTeamId = id;
-        state.savedTeams = await state.db.listUserTeams();
-        renderSavedTeams();
-        toast(`Saved: ${name}`);
-        // Close the editor, then jump to the Contest tab instead of leaving the
-        // user on the read-only Pick XI view.
-        if ($('#poolPanel').style.display !== 'none') setPoolOpen(false);
-        switchPageTab('contest');
-      } catch (e) { toast('Save failed: ' + e.message, 4000); }
+        const existingXi = await state.db.getUserTeamForMatch(m.id);
+        if (existingXi?.playerIds?.length) previousIds = existingXi.playerIds;
+      } catch (e) { /* best-effort — an empty baseline just shows everything as IN */ }
+
+      openReviewSaveModal({
+        title:      'Review & Save XI',
+        currentIds: state.selected,
+        previousIds,
+        captainId:  state.captain,
+        vcId:       state.viceCaptain,
+        boosterKey: null, // Daily has no boosters
+        onConfirm:  () => doSaveCurrentXI(m),
+      });
+    }
+
+    async function doSaveCurrentXI(m) {
+      const name = autoXIName();
+      // One XI per match — if one already exists, replace it.
+      const existing = await state.db.getUserTeamForMatch(m.id);
+      if (existing) await state.db.deleteUserTeam(existing.id);
+      const id = await state.db.saveUserTeam({
+        name, format: state.format,
+        playerIds: [...state.selected],
+        captainId: state.captain, viceCaptainId: state.viceCaptain,
+        matchId: m.id,
+      });
+      state.activeSavedTeamId = id;
+      state.savedTeams = await state.db.listUserTeams();
+      renderSavedTeams();
+      toast(`Saved: ${name}`);
+      // Close the editor, then jump to the Contest tab instead of leaving the
+      // user on the read-only Pick XI view.
+      if ($('#poolPanel').style.display !== 'none') setPoolOpen(false);
+      switchPageTab('contest');
     }
 
     function renderSaveLabel() {
@@ -14184,7 +14300,12 @@ p31,Sample Player,MI,bat,9.0,false
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#playerStatsModal').classList.contains('open')) closePlayerStatsModal(); });
     $('#slBoosterModalCloseBtn').addEventListener('click', closeSlBoosterModal);
     $('#slBoosterModal').addEventListener('click', e => { if (e.target.id === 'slBoosterModal') closeSlBoosterModal(); });
+
+    $('#reviewSaveModalCloseBtn').addEventListener('click', closeReviewSaveModal);
+    $('#reviewSaveBackBtn').addEventListener('click', closeReviewSaveModal);
+    $('#reviewSaveModal').addEventListener('click', e => { if (e.target.id === 'reviewSaveModal') closeReviewSaveModal(); });
     document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#slBoosterModal').classList.contains('open')) closeSlBoosterModal(); });
+    document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#reviewSaveModal').classList.contains('open')) closeReviewSaveModal(); });
     // Team filter is now chip-based (rendered by renderTeamFilter) — no select listener needed.
     // Note: #matchFilter select replaced with #matchFilterChips chip UI — no select listener needed.
     $('#csvOpenBtn').addEventListener('click', openCsvView);
@@ -14682,6 +14803,121 @@ p31,Sample Player,MI,bat,9.0,false
         + '<span class="hist-pitch-pts-val">' + totalPts + '</span>'
         + '</div>'
         + '</div>';
+    }
+
+    // ── Review & Save popup ──────────────────────────────────────────────────
+    // Shown on "Save XI" (Daily and SL both) before anything is persisted —
+    // read-only pitch (reuses histPitchHtml — it has no dependency on global
+    // render state beyond teamByCode/playerById, so it's a drop-in preview
+    // renderer here too), an IN/OUT diff of what will change, and a booster
+    // banner (SL only). Mirrors the mobile app's Review & Save step.
+
+    // Maps live player-pool ids to the shape histPitchToken() expects
+    // (player_id/team_id instead of pool's id/team — same convention
+    // histPitchHtml's other callers already use for history rows).
+    function playersForReview(ids) {
+      return (ids || []).map(id => {
+        const p = playerById(id);
+        if (!p) return null;
+        return { player_id: p.id, name: p.name, team_id: p.team, role: p.role, is_overseas: p.overseas };
+      }).filter(Boolean);
+    }
+
+    function reviewChangesListHtml(currentIds, previousIds) {
+      const prevSet = new Set(previousIds || []);
+      const currSet = new Set(currentIds  || []);
+      const removed  = (previousIds || []).filter(id => !currSet.has(id));
+      const added    = (currentIds  || []).filter(id => !prevSet.has(id));
+      if (!removed.length && !added.length) {
+        return '<div class="review-no-changes">🏏<div>Fresh XI</div><div style="font-size:11px;">No transfers this week</div></div>';
+      }
+      const RLBL = { wk: 'WK', bat: 'BAT', ar: 'AR', bowl: 'BOWL' };
+      const row = (id, dir) => {
+        const p    = playerById(id);
+        const name = p ? escapeHtml(p.name) : id;
+        const role = p ? (RLBL[p.role] || String(p.role || '').toUpperCase()) : '';
+        const cls  = dir === 'OUT' ? 'bad' : 'good';
+        return '<div class="review-change-item">'
+          + '<span class="review-change-dot ' + cls + '"></span>'
+          + '<div class="review-change-body">'
+          + '<div class="review-change-name ' + cls + '">' + name + '</div>'
+          + '<div class="review-change-meta">' + dir + ' · ' + role + '</div>'
+          + '</div></div>';
+      };
+      return removed.map(id => row(id, 'OUT')).join('')
+        + (removed.length && added.length ? '<div class="review-divider"></div>' : '')
+        + added.map(id => row(id, 'IN')).join('');
+    }
+
+    // Wildcard/Free Hit make transfers unlimited-and-uncapped, so the diff
+    // list above can run to a full 11-for-11 swap — this note explains why,
+    // rather than leaving a long list unexplained (mirrors mobile's banner).
+    const REVIEW_TRANSFER_BOOSTERS = new Set(['wildcard', 'free_hit']);
+    function reviewBoosterBannerHtml(boosterKey) {
+      const meta = boosterKey ? BOOSTER_META[boosterKey] : null;
+      if (!meta) return '';
+      const note = REVIEW_TRANSFER_BOOSTERS.has(boosterKey)
+        ? '<div class="review-booster-note">Unlimited transfers this match — no cap or deduction</div>'
+        : '';
+      return '<div class="review-booster-banner">'
+        + '<span class="review-booster-icon">' + meta.icon + '</span>'
+        + '<div><div class="review-booster-name">' + escapeHtml(meta.label) + ' active</div>' + note + '</div>'
+        + '</div>';
+    }
+
+    /**
+     * Opens the Review & Save popup. Nothing is persisted until the user
+     * presses Confirm & Save — onConfirm() does the actual write and may
+     * throw; on failure the modal stays open (with a toast) so the user can
+     * retry or go back, instead of silently losing their place.
+     *
+     * @param {object} opts
+     * @param {string}   opts.title
+     * @param {string[]} opts.currentIds   - player ids in the XI about to be saved
+     * @param {string[]} opts.previousIds  - player ids already saved/locked for this match (diff baseline)
+     * @param {string}   opts.captainId
+     * @param {string}   opts.vcId
+     * @param {?string}  opts.boosterKey   - effective booster for this match, or null (Daily always null)
+     * @param {function(): Promise<void>} opts.onConfirm
+     */
+    function openReviewSaveModal(opts) {
+      const t = {
+        players: playersForReview(opts.currentIds),
+        captain_id: opts.captainId,
+        vice_captain_id: opts.vcId,
+        booster: opts.boosterKey || null,
+        total_points: null,
+      };
+      $('#reviewSaveModalTitle').textContent = opts.title || 'Review & Save';
+      $('#reviewSaveModalPitch').innerHTML   = histPitchHtml(t);
+      $('#reviewSaveModalBooster').innerHTML = reviewBoosterBannerHtml(opts.boosterKey);
+      $('#reviewSaveModalChanges').innerHTML = reviewChangesListHtml(opts.currentIds, opts.previousIds);
+
+      const confirmBtn = $('#reviewSaveConfirmBtn');
+      confirmBtn.disabled = false; confirmBtn.textContent = 'Confirm & Save';
+      confirmBtn.onclick = async () => {
+        confirmBtn.disabled = true; confirmBtn.textContent = 'Saving…';
+        try {
+          await opts.onConfirm();
+          closeReviewSaveModal();
+        } catch (e) {
+          toast('Save failed: ' + e.message, 5000);
+        } finally {
+          confirmBtn.disabled = false; confirmBtn.textContent = 'Confirm & Save';
+        }
+      };
+
+      $('#reviewSaveModal').classList.add('open');
+      // .pitch-oval-hist sizes its jersey tokens (--tsz) off measured
+      // clientWidth/clientHeight (see fitHistOval) — those are 0 until the
+      // modal is actually visible, so this has to run after the 'open' class
+      // takes effect, same ordering every other fitHistOval call site uses.
+      requestAnimationFrame(() => {
+        $('#reviewSaveModalPitch').querySelectorAll('.pitch-oval-hist').forEach(ov => fitHistOval(ov));
+      });
+    }
+    function closeReviewSaveModal() {
+      $('#reviewSaveModal').classList.remove('open');
     }
 
     // ── History points breakdown panel ───────────────────────────────────────
