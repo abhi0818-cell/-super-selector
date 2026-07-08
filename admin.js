@@ -3758,17 +3758,16 @@
 
   // ─── REGISTER ADMIN API ──────────────────────────────────────────────────
   /**
-   * Re-render all data-dependent admin views after a DB connect or page reload.
+   * Refresh admin views after a DB connect or after admin.js first loads.
+   * Only re-renders the currently active tab so the user's tournament
+   * selection is preserved (don't eagerly render all tabs).
    * Called from connectDb() in index.html (via guard) and from loadAdminModule().then().
    */
   function refreshAdminViews() {
     renderApiPill();
     if (!state.db) return;
-    renderMatchesAdmin();
-    renderContestsAdmin();
-    renderTeamsAdmin();
-    renderAdmin();
-    if (state.rulesEditing) renderRulesEditor();
+    // Re-render the current tab (or default to 'players' if none selected yet)
+    setAdminTab(state.adminTab || 'players');
   }
 
   // Functions needed from index.html are accessed via window.__admin?.fn?.()
