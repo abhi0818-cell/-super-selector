@@ -2719,6 +2719,7 @@
     // Independent of the user's XI — shows what each player WOULD score
     // (no captain/VC multiplier; that's per-team).
     function renderFantasyScorecard() {
+      const roleLabel = { wk: 'WK', bat: 'BAT', ar: 'AR', bowl: 'BOWL' };
       const view = $('#fantasyScorecardView');
       const meta = $('#fantasyScorecardMeta');
       const count = $('#fantasyScorecardCount');
