@@ -10780,6 +10780,7 @@ p31,Sample Player,MI,bat,9.0,false
     // API key quick-pick: fills the input + persists across reloads
     const API_KEY_LS = 'ss_cricapi_key';
     const APIKEY_PICK_LS = 'ss_cricapi_key_pick';
+    const SERIES_ID_LS = 'ss_cricapi_series_id';
     $('#apiKeyPicker').addEventListener('change', e => {
       const v = e.target.value;
       localStorage.setItem(APIKEY_PICK_LS, v);
