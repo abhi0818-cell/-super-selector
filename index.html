@@ -6412,8 +6412,18 @@ p31,Sample Player,MI,bat,9.0,false
       // open at kickoff), lock it now using the current draft as the snapshot.
       // hasMatchStarted() accounts for lock_time/delayed status, so a delayed
       // match with no fresh lock_time will never be auto-locked here.
+      //
+      // IMPORTANT: only ever catch up on matches that started at or after this
+      // squad was created. Without this guard, a squad joining mid-season sees
+      // EVERY prior match as "started with no XI yet" (since the squad simply
+      // didn't exist then) and this loop would backfill the squad's brand-new
+      // draft into every single one of them — fabricating locked history for
+      // matches the squad was never part of. Confirmed in production: a squad
+      // that joined at M23 got auto-locked into all 22 preceding matches.
+      const squadCreatedAt = state.sl.squad.created_at ? new Date(state.sl.squad.created_at) : null;
       const startedMatches = state.matches
         .filter(m => hasMatchStarted(m))
+        .filter(m => !squadCreatedAt || new Date(effectiveLockTime(m)) >= squadCreatedAt)
         .sort((a, b) => new Date(effectiveLockTime(a)) - new Date(effectiveLockTime(b)));
 
       let didLock = false;
