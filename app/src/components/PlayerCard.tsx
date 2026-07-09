@@ -14,6 +14,8 @@ interface Props {
   recentForm?:  (number | null)[];
   // Opens the match-history modal. Omit to hide the stat row entirely.
   onStatsPress?: () => void;
+  // "Plays next" | "After 2 matches" etc — derived from the schedule.
+  playsAfterLabel?: string | null;
 }
 
 const C = {
@@ -35,7 +37,7 @@ function pipStyle(pts: number | null | undefined): { bg: string; fg: string } {
   return                  { bg: '#b03a3a', fg: '#fff' };
 }
 
-export default function PlayerCard({ player, selected, disabled, onPress, recentForm, onStatsPress }: Props) {
+export default function PlayerCard({ player, selected, disabled, onPress, recentForm, onStatsPress, playsAfterLabel }: Props) {
   return (
     <Pressable
       onPress={onPress}
@@ -66,6 +68,19 @@ export default function PlayerCard({ player, selected, disabled, onPress, recent
             </View>
           )}
         </View>
+        {!!playsAfterLabel && (
+          <View style={[
+            styles.playsBadge,
+            playsAfterLabel === 'Plays next' ? styles.playsBadgeNext : styles.playsBadgeAfter,
+          ]}>
+            <Text style={[
+              styles.playsBadgeText,
+              playsAfterLabel === 'Plays next' ? styles.playsBadgeTextNext : styles.playsBadgeTextAfter,
+            ]}>
+              {playsAfterLabel}
+            </Text>
+          </View>
+        )}
       </View>
 
       <View style={styles.right}>
@@ -201,6 +216,30 @@ const styles = StyleSheet.create({
   statBtnText: {
     fontSize: 13,
   },
+
+  playsBadge: {
+    alignSelf:         'flex-start',
+    marginTop:         4,
+    paddingHorizontal: 6,
+    paddingVertical:   2,
+    borderRadius:      99,
+    borderWidth:       1,
+  },
+  playsBadgeNext: {
+    backgroundColor: 'rgba(201,168,76,0.14)',
+    borderColor:     'rgba(201,168,76,0.4)',
+  },
+  playsBadgeAfter: {
+    backgroundColor: 'rgba(122,112,96,0.09)',
+    borderColor:     'rgba(122,112,96,0.22)',
+  },
+  playsBadgeText: {
+    fontSize:   10,
+    fontWeight: '600',
+    letterSpacing: 0.1,
+  },
+  playsBadgeTextNext:  { color: C.accent },
+  playsBadgeTextAfter: { color: C.muted },
 
   checkBadge: {
     width:          20,

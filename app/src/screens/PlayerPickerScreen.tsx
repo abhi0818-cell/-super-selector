@@ -226,6 +226,23 @@ export default function PlayerPickerScreen() {
     return selected.length >= 11;
   }, [selectedIds, selected.length]);
 
+  // "Plays next" / "After X matches" label per team — derived from the upcoming
+  // match schedule. Only truly upcoming matches are counted (in_progress is excluded
+  // so locked-match teams recalculate to their next future game automatically).
+  const playsAfterMap = useMemo((): Map<string, string> => {
+    const upcoming = matches
+      .filter(m => m.status === 'upcoming')
+      .sort((a, b) => (a.matchNumber ?? 0) - (b.matchNumber ?? 0));
+    const map = new Map<string, string>();
+    const allTeams = new Set(matches.flatMap(m => [m.homeTeamId, m.awayTeamId].filter(Boolean)));
+    allTeams.forEach(team => {
+      const idx = upcoming.findIndex(m => m.homeTeamId === team || m.awayTeamId === team);
+      if (idx < 0) return;
+      map.set(team, idx === 0 ? 'Plays next' : `After ${idx} match${idx > 1 ? 'es' : ''}`);
+    });
+    return map;
+  }, [matches]);
+
   const renderItem = useCallback(({ item }: { item: Player }) => (
     <PlayerCard
       player={item}
@@ -234,8 +251,9 @@ export default function PlayerPickerScreen() {
       onPress={() => togglePlayer(item)}
       recentForm={recentForm[item.id]}
       onStatsPress={() => setStatsPlayer(item)}
+      playsAfterLabel={playsAfterMap.get(item.team) ?? null}
     />
-  ), [selectedIds, isDisabled, togglePlayer, recentForm]);
+  ), [selectedIds, isDisabled, togglePlayer, recentForm, playsAfterMap]);
 
   const keyExtractor = useCallback((item: Player) => item.id, []);
 
