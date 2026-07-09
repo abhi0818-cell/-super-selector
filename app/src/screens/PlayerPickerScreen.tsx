@@ -230,8 +230,13 @@ export default function PlayerPickerScreen() {
   // match schedule. Only truly upcoming matches are counted (in_progress is excluded
   // so locked-match teams recalculate to their next future game automatically).
   const playsAfterMap = useMemo((): Map<string, string> => {
+    // Exclude completed/live/in_progress — the fetch already drops completed,
+    // but in_progress must also be excluded so locked-match teams recalculate
+    // to their next future game. Don't match on 'upcoming' literally — the DB
+    // may store 'scheduled' or other values for not-yet-started matches.
+    const DONE = new Set(['completed', 'live', 'in_progress']);
     const upcoming = matches
-      .filter(m => m.status === 'upcoming')
+      .filter(m => !DONE.has(m.status))
       .sort((a, b) => (a.matchNumber ?? 0) - (b.matchNumber ?? 0));
     const map = new Map<string, string>();
     const allTeams = new Set(matches.flatMap(m => [m.homeTeamId, m.awayTeamId].filter(Boolean)));

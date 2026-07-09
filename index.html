@@ -7927,8 +7927,9 @@ p31,Sample Player,MI,bat,9.0,false
     // recalculate to show their next future game distance.
     function getPlaysAfterLabel(teamCode) {
       if (!teamCode || !state.matches?.length) return '';
+      const DONE = new Set(['completed', 'live', 'in_progress']);
       const upcoming = state.matches
-        .filter(m => m.status === 'upcoming')
+        .filter(m => !DONE.has(m.status))
         .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0));
       const idx = upcoming.findIndex(m =>
         m.home_team_id === teamCode || m.away_team_id === teamCode
