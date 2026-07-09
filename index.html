@@ -6179,7 +6179,12 @@ p31,Sample Player,MI,bat,9.0,false
           state.sl.seasonXferCount = 0;
           state.sl.seasonXferCap   = state.sl.seasonContest?.total_transfers_allowed ?? null;
           state.sl.seasonPhase     = 'regular';
-          await slLoadDraft();
+          // refreshOnly=true — this squad is brand new, so there's nothing in the
+          // DB to load yet. A non-refresh call here would overwrite the 11 players
+          // the user just picked (captured in `xi`/`cap`/`vc` above) with the empty
+          // DB state, so doSaveSlXi() below would silently save an empty draft
+          // even though the review modal correctly showed the real picks.
+          await slLoadDraft({ refreshOnly: true });
           const nameHint = $('#slNameHint');
           if (nameHint) nameHint.style.display = 'none';
         } catch (e) {
