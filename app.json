@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "extra": {
+      "eas": {
+        "projectId": "883c1db1-efcd-4599-a48f-f67685af86e1"
+      }
+    },
+    "android": {
+      "package": "com.superselector.app"
+    }
+  }
+}
