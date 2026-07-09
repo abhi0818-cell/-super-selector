@@ -3115,7 +3115,7 @@ p31,Sample Player,MI,bat,9.0,false
               '<td>' + boostCell + '</td>' +
               '<td>' + xferCell + '</td>' +
               '<td class="pts">' + net.toFixed(1) + '</td>' +
-              '<td>' + runningAtMatch.toFixed(1) + '</td>' +
+              '<td class="pts">' + runningAtMatch.toFixed(1) + '</td>' +
               '</tr>';
 
             // Pitch panel stays OUTSIDE any <table>/<td> to avoid the Safari compositor
@@ -6481,8 +6481,8 @@ p31,Sample Player,MI,bat,9.0,false
 
       // Shared colgroup so every match's mini single-row table lines up with the
       // header table's columns (same pattern as renderHistory / loadSLDetailInto):
-      // Match | Captain | Vice-Captain | Booster | XI pts | Xfers Left | Net | Running.
-      const COLGROUP = '<colgroup><col><col style="width:56px"><col style="width:64px"><col style="width:60px"><col style="width:54px"><col style="width:74px"><col style="width:56px"><col style="width:76px"></colgroup>';
+      // Match | Captain | Vice-Captain | Booster | Xfers Left | Net | Running.
+      const COLGROUP = '<colgroup><col><col style="width:56px"><col style="width:64px"><col style="width:60px"><col style="width:74px"><col style="width:56px"><col style="width:76px"></colgroup>';
 
       // Season-wide transfer budget (null = unlimited) — the -Xfer column counts
       // down from this as transfers are used, instead of just showing the points
@@ -6543,10 +6543,9 @@ p31,Sample Player,MI,bat,9.0,false
           '<td>' + captainCell + '</td>' +
           '<td>' + vcCell + '</td>' +
           '<td>' + boostCell + '</td>' +
-          '<td>' + m.xi_total.toFixed(1) + '</td>' +
-          '<td class="pen">' + penCell + '</td>' +
+          '<td class="pts">' + penCell + '</td>' +
           '<td class="pts">' + net.toFixed(1) + '</td>' +
-          '<td>' + running.toFixed(1) + '</td>' +
+          '<td class="pts">' + running.toFixed(1) + '</td>' +
           '</tr>';
 
         // Pitch panel stays OUTSIDE any <table>/<td> to avoid the Safari compositor
@@ -6619,10 +6618,9 @@ p31,Sample Player,MI,bat,9.0,false
           '<td>' + liveCapCell + '</td>' +
           '<td>' + liveVcCell + '</td>' +
           '<td>' + liveBoostCell + '</td>' +
-          '<td>' + liveRow.total.toFixed(1) + '</td>' +
-          '<td class="pen">' + (totalBudget === null ? 'Unlimited' : Math.max(0, totalBudget - cumXfer)) + '</td>' +
+          '<td class="pts">' + (totalBudget === null ? 'Unlimited' : Math.max(0, totalBudget - cumXfer)) + '</td>' +
           '<td class="pts">' + liveRow.total.toFixed(1) + '</td>' +
-          '<td>' + (running + liveRow.total).toFixed(1) + '</td>' +
+          '<td class="pts">' + (running + liveRow.total).toFixed(1) + '</td>' +
           '</tr>';
         const liveMatchTable = '<table class="sl-season-table hist-match-table">' + COLGROUP + '<tbody>' + liveMatchRow + '</tbody></table>';
         const livePitchPanel = '<div id="' + pitchPanelId + '" style="display:none;">' + livePitchHtml + '</div>';
@@ -6642,15 +6640,14 @@ p31,Sample Player,MI,bat,9.0,false
         '<td style="padding:6px 8px;"></td>' +
         '<td style="padding:6px 8px;"></td>' +
         '<td style="padding:6px 8px;">' + boosterTotalCell + '</td>' +
-        '<td style="padding:6px 8px;">' + (xiGross + (liveRow?.total ?? 0)).toFixed(1) + '</td>' +
-        '<td class="pen" style="padding:6px 8px;">' + (totalBudget === null ? 'Unlimited' : Math.max(0, totalBudget - cumXfer)) + (totalPenalty ? ' <span style="color:var(--bad);font-size:9px;">(-' + totalPenalty + ')</span>' : '') + '</td>' +
+        '<td class="pts" style="padding:6px 8px;">' + (totalBudget === null ? 'Unlimited' : Math.max(0, totalBudget - cumXfer)) + (totalPenalty ? ' <span style="color:var(--bad);font-size:9px;">(-' + totalPenalty + ')</span>' : '') + '</td>' +
         '<td class="pts" style="padding:6px 8px;">' + grandTotal + '</td>' +
-        '<td style="padding:6px 8px;">' + grandTotal + '</td>' +
+        '<td class="pts" style="padding:6px 8px;">' + grandTotal + '</td>' +
         '</tr>';
 
       const headerTable = '<table class="sl-season-table hist-header-table">' + COLGROUP +
         '<thead>' +
-        '<tr><th class="l">Match</th><th>Captain</th><th>Vice-Captain</th><th>Booster</th><th>XI pts</th><th>Xfers Left</th><th>Net</th><th>Running</th></tr>' +
+        '<tr><th class="l">Match</th><th>Captain</th><th>Vice-Captain</th><th>Booster</th><th>Xfers Left</th><th>Net</th><th>Running</th></tr>' +
         slTotalRow +
         '</thead>' +
         '</table>';
