@@ -38,6 +38,12 @@
         "projectId": "883c1db1-efcd-4599-a48f-f67685af86e1"
       }
     },
-    "owner": "abhi0818"
+    "owner": "abhi0818",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/883c1db1-efcd-4599-a48f-f67685af86e1"
+    }
   }
 }
