@@ -7921,15 +7921,18 @@ p31,Sample Player,MI,bat,9.0,false
 
     function closePlayerStatsModal() { $('#playerStatsModal').classList.remove('open'); }
 
-    // Returns a "plays next" / "after X matches" label for a team based on the
-    // schedule. Only looks at truly upcoming matches (status='upcoming') so that
-    // once a match is locked / in-progress the players from it automatically
-    // recalculate to show their next future game distance.
+    // Returns a "plays next" / "after X matches" label for a team.
+    // Anchors on the active match number to exclude past matches that haven't
+    // been marked 'completed' in the DB yet. Label uses 1-based ordinal position:
+    // position 1 = "Plays next", position 2 = "After 2 matches", etc.
     function getPlaysAfterLabel(teamCode) {
       if (!teamCode || !state.matches?.length) return '';
       const DONE = new Set(['completed', 'live', 'in_progress']);
+      // Use the active match number as a floor — this cuts out any past matches
+      // that the DB hasn't marked as completed yet.
+      const activeMN = activeMatch()?.match_number ?? 0;
       const upcoming = state.matches
-        .filter(m => !DONE.has(m.status))
+        .filter(m => !DONE.has(m.status) && (m.match_number ?? 0) >= activeMN)
         .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0));
       const idx = upcoming.findIndex(m =>
         m.home_team_id === teamCode || m.away_team_id === teamCode

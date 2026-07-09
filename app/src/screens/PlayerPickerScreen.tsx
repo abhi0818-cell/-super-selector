@@ -230,20 +230,22 @@ export default function PlayerPickerScreen() {
   // match schedule. Only truly upcoming matches are counted (in_progress is excluded
   // so locked-match teams recalculate to their next future game automatically).
   const playsAfterMap = useMemo((): Map<string, string> => {
-    // Exclude completed/live/in_progress — the fetch already drops completed,
-    // but in_progress must also be excluded so locked-match teams recalculate
-    // to their next future game. Don't match on 'upcoming' literally — the DB
-    // may store 'scheduled' or other values for not-yet-started matches.
+    // Anchor on the current match number to exclude past matches that aren't
+    // yet marked completed in the DB. Label uses 1-based ordinal position so
+    // "Plays next" = slot 1, "After 2 matches" = slot 2, etc.
     const DONE = new Set(['completed', 'live', 'in_progress']);
+    const currentMatch = matches.find(m => m.id === currentMatchId);
+    const activeMN = currentMatch?.matchNumber ?? 0;
     const upcoming = matches
-      .filter(m => !DONE.has(m.status))
+      .filter(m => !DONE.has(m.status) && (m.matchNumber ?? 0) >= activeMN)
       .sort((a, b) => (a.matchNumber ?? 0) - (b.matchNumber ?? 0));
     const map = new Map<string, string>();
     const allTeams = new Set(matches.flatMap(m => [m.homeTeamId, m.awayTeamId].filter(Boolean)));
     allTeams.forEach(team => {
       const idx = upcoming.findIndex(m => m.homeTeamId === team || m.awayTeamId === team);
       if (idx < 0) return;
-      map.set(team, idx === 0 ? 'Plays next' : `After ${idx} match${idx > 1 ? 'es' : ''}`);
+      if (idx === 0) { map.set(team, 'Plays next'); return; }
+      map.set(team, `After ${idx} match${idx > 1 ? 'es' : ''}`);
     });
     return map;
   }, [matches]);
