@@ -184,6 +184,9 @@
     .player-card .name { font-weight: 600; font-size: 14px; line-height: 1.2; }
     .player-card .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
     .player-card .credit { font-size: 13px; font-weight: 700; color: var(--accent-2); }
+    .plays-badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 99px; margin-top: 4px; white-space: nowrap; letter-spacing: 0.1px; }
+    .plays-badge.plays-next  { background: rgba(201,168,76,0.18); color: var(--accent); border: 1px solid rgba(201,168,76,0.4); }
+    .plays-badge.plays-after { background: rgba(120,120,120,0.1); color: var(--muted); border: 1px solid rgba(120,120,120,0.2); }
     .form-strip { display: flex; gap: 3px; align-items: center; }
     .form-pip {
       width: 16px; height: 16px; border-radius: 4px; font-size: 9px; font-weight: 700;
@@ -7918,6 +7921,23 @@ p31,Sample Player,MI,bat,9.0,false
 
     function closePlayerStatsModal() { $('#playerStatsModal').classList.remove('open'); }
 
+    // Returns a "plays next" / "after X matches" label for a team based on the
+    // schedule. Only looks at truly upcoming matches (status='upcoming') so that
+    // once a match is locked / in-progress the players from it automatically
+    // recalculate to show their next future game distance.
+    function getPlaysAfterLabel(teamCode) {
+      if (!teamCode || !state.matches?.length) return '';
+      const upcoming = state.matches
+        .filter(m => m.status === 'upcoming')
+        .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0));
+      const idx = upcoming.findIndex(m =>
+        m.home_team_id === teamCode || m.away_team_id === teamCode
+      );
+      if (idx < 0) return '';
+      if (idx === 0) return '<span class="plays-badge plays-next">Plays next</span>';
+      return `<span class="plays-badge plays-after">After ${idx} match${idx > 1 ? 'es' : ''}</span>`;
+    }
+
     function renderPool(){
       renderTeamFilter();
       renderCreditsFilter();
@@ -7987,6 +8007,7 @@ p31,Sample Player,MI,bat,9.0,false
         // full code with -W still shows in the meta line below the name.
         const jerseyLabel = p.team.replace(/-W$/, '');
         const jersey = jerseyHtml(tm?.color, tm?.color2, jerseyLabel);
+        const playsLabel = getPlaysAfterLabel(p.team);
         return `
           <div class="player-card ${sel?'selected':''} ${disabled?'disabled':''}" data-id="${p.id}">
             <div>
@@ -7996,6 +8017,7 @@ p31,Sample Player,MI,bat,9.0,false
                 ${p.team}
                 ${p.overseas ? '<span class="os-tag" title="Overseas player">✈️</span>' : ''}
               </div>
+              ${playsLabel}
               ${capVcBtns}
             </div>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
