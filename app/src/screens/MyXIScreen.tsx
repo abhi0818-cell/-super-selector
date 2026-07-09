@@ -16,7 +16,9 @@ import {
 import { supabase } from '../lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useNavigation } from '@react-navigation/native';
 import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { RootTabParamList, SelectedPlayer, CaptaincyRole } from '../types';
 import { useTeamStore, RULES } from '../store/teamStore';
 import { useAuthStore } from '../store/authStore';
@@ -66,6 +68,7 @@ const C = {
 } as const;
 
 export default function MyXIScreen({ route }: Props) {
+  const navigation = useNavigation<BottomTabNavigationProp<RootTabParamList>>();
   const { signOut, user }               = useAuthStore();
   const [teamName, setTeamName] = useState<string | null>(
     (user?.user_metadata as any)?.team_name ?? null
@@ -601,6 +604,11 @@ export default function MyXIScreen({ route }: Props) {
             onRemove={(id) => removePlayer(id)}
             onConfirm={handleConfirm}
             onEditMore={handleEditMore}
+            onCancel={() => {
+              setConfirmOpen(false);
+              setPickerOpen(false);
+              navigation.navigate('Home');
+            }}
           />
         )}
 
@@ -614,7 +622,7 @@ export default function MyXIScreen({ route }: Props) {
         {/* Player Picker Modal */}
         <Modal
           visible={pickerOpen}
-          animationType="slide"
+          animationType="none"
           presentationStyle="pageSheet"
           onRequestClose={handlePickerDone}
         >

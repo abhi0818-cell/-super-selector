@@ -8,12 +8,13 @@
 
 import React, { useState } from 'react';
 import {
-  Alert,
   Image,
   LayoutChangeEvent,
+  Modal,
   Pressable,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import Svg, {
@@ -93,27 +94,18 @@ interface TileProps {
   player:         SelectedPlayer;
   onSetCaptaincy: (role: CaptaincyRole) => void;
   onRemove:       () => void;
+  onTilePress:    (player: SelectedPlayer) => void;
   readOnly?:      boolean;
-  /** Effective (pending-or-committed) booster for this match, or null — lifted
-   *  up to CricketPitch so every tile in the XI reads the same single value. */
   boosterKey:     string | null;
-  /** This row's fitted jersey size (see fitTileSize) — every other dimension
-   *  on the tile (badges, role icon, name text, tile width) scales off it. */
   tsz:            number;
 }
 
-function PlayerTile({ player, onSetCaptaincy, onRemove, readOnly, boosterKey, tsz }: TileProps) {
+function PlayerTile({ player, onSetCaptaincy, onRemove, onTilePress, readOnly, boosterKey, tsz }: TileProps) {
   const isCap = player.captaincy === 'captain';
   const isVC  = player.captaincy === 'vice_captain';
 
-  // Mirrors web's pitchBoosterDecor exactly — same badge-icon-swap / jersey-ring
-  // / bottom-left-badge rules, id by id, instead of a separate icon row.
   const decor = getTileBoosterDecor(player.captaincy, player.overseas, boosterKey);
 
-  // Overseas ✈️ badge, top-left of the jersey — mirrors web's .pitch-os-badge.
-  // Mobile never rendered this at all, so there was no way to SEE which
-  // players os_double/indian_double actually applied to (they just looked
-  // like every tile lit up the same, since nothing distinguished them).
   const format = useTeamStore(s => s.format);
   const showOsBadge = player.overseas && osCapApplies(format);
 
@@ -125,12 +117,7 @@ function PlayerTile({ player, onSetCaptaincy, onRemove, readOnly, boosterKey, ts
 
   const handlePress = () => {
     if (readOnly) return;
-    Alert.alert(player.name, `${player.team} · ${player.role.toUpperCase()}`, [
-      { text: isCap ? '★ Captain (set)' : 'Set Captain (C)',            onPress: () => onSetCaptaincy('captain') },
-      { text: isVC  ? '★ Vice-Captain (set)' : 'Set Vice-Captain (VC)', onPress: () => onSetCaptaincy('vice_captain') },
-      { text: 'Remove',  style: 'destructive', onPress: onRemove },
-      { text: 'Cancel',  style: 'cancel' },
-    ]);
+    onTilePress(player);
   };
 
   // Every badge/icon/font dimension below scales off this tile's fitted
@@ -212,28 +199,17 @@ interface ZoneProps {
   players:        SelectedPlayer[];
   onSetCaptaincy: (id: string, role: CaptaincyRole) => void;
   onRemove:       (id: string) => void;
+  onTilePress:    (player: SelectedPlayer) => void;
   isCenter?:      boolean;
   readOnly?:      boolean;
   boosterKey:     string | null;
-  /** Measured content width of the field container (see CricketPitch's
-   *  onLayout) — used to fit this row's jersey size to its own player count. */
   contentWidth:   number;
 }
 
-function RoleZone({ role, flex, players, onSetCaptaincy, onRemove, isCenter, readOnly, boosterKey, contentWidth }: ZoneProps) {
+function RoleZone({ role, flex, players, onSetCaptaincy, onRemove, onTilePress, isCenter, readOnly, boosterKey, contentWidth }: ZoneProps) {
   const tsz = fitTileSize(contentWidth, players.length);
   return (
-    <View style={[
-      styles.zone,
-      { flex },
-      isCenter && styles.zoneCenter,
-    ]}>
-      {/* Role-row label (WK/BAT/AR/BOWL chip) is hidden here — mirrors web's
-          .pitch-role-lbl { display:none }. Team Double's 🚀 used to show once
-          per row on this label instead of repeating per tile; it now renders
-          on every tile via getTileBoosterDecor's bottomLeftIcon instead. */}
-
-      {/* Tiles — flex-1 each so they fill the row regardless of count */}
+    <View style={[styles.zone, { flex }, isCenter && styles.zoneCenter]}>
       {players.length > 0 && (
         <View style={styles.tilesRow}>
           {players.map(p => (
@@ -242,6 +218,7 @@ function RoleZone({ role, flex, players, onSetCaptaincy, onRemove, isCenter, rea
               player={p}
               onSetCaptaincy={(r) => onSetCaptaincy(p.id, r)}
               onRemove={() => onRemove(p.id)}
+              onTilePress={onTilePress}
               readOnly={readOnly}
               boosterKey={boosterKey}
               tsz={tsz}
@@ -343,32 +320,54 @@ export default function CricketPitch({ players, onSetCaptaincy, onRemove, readOn
   const ar   = players.filter(p => p.role === 'ar');
   const bowl = players.filter(p => p.role === 'bowl');
 
-  // Single source of truth for "the booster in effect right now" — shared by
-  // every tile so they can never disagree.
-  const boosters = useBoosterStore(s => s.boosters);
+  const boosters   = useBoosterStore(s => s.boosters);
   const boosterKey = boosters.find(b => b.status === 'active' || b.status === 'pending')?.id ?? null;
 
-  // Measured width of the field, so each row can fit its jersey size to its
-  // OWN player count and the space actually available (see fitTileSize) —
-  // this pitch is embedded at different widths in different places (full-
-  // width on MyXIScreen, half-width next to the transfer panel in
-  // ConfirmXIModal's Review & Save split), so a static screen-width guess
-  // would be wrong wherever it's not full-width. 0 until first layout;
-  // fitTileSize treats that as "not measured yet" and returns TSZ_MAX so
-  // there's no zero-size flash before the first onLayout fires.
-  const [fieldWidth, setFieldWidth] = useState(0);
+  const [fieldWidth, setFieldWidth]     = useState(0);
+  const [activePlayer, setActivePlayer] = useState<SelectedPlayer | null>(null);
   const onFieldLayout = (e: LayoutChangeEvent) => setFieldWidth(e.nativeEvent.layout.width);
-  // field's own horizontal padding (6px each side) — not available row width.
   const contentWidth = Math.max(0, fieldWidth - 12);
+
+  const isCap = activePlayer?.captaincy === 'captain';
+  const isVC  = activePlayer?.captaincy === 'vice_captain';
 
   return (
     <View style={styles.field} onLayout={onFieldLayout}>
       <FieldBackground />
 
-      <RoleZone role="wk"   flex={1}   players={wk}   onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} readOnly={readOnly} boosterKey={boosterKey} contentWidth={contentWidth} />
-      <RoleZone role="bat"  flex={1.8} players={bat}  onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} readOnly={readOnly} boosterKey={boosterKey} contentWidth={contentWidth} />
-      <RoleZone role="ar"   flex={1.4} players={ar}   onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} isCenter readOnly={readOnly} boosterKey={boosterKey} contentWidth={contentWidth} />
-      <RoleZone role="bowl" flex={1.8} players={bowl} onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} readOnly={readOnly} boosterKey={boosterKey} contentWidth={contentWidth} />
+      <RoleZone role="wk"   flex={1}   players={wk}   onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} onTilePress={setActivePlayer} readOnly={readOnly} boosterKey={boosterKey} contentWidth={contentWidth} />
+      <RoleZone role="bat"  flex={1.8} players={bat}  onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} onTilePress={setActivePlayer} readOnly={readOnly} boosterKey={boosterKey} contentWidth={contentWidth} />
+      <RoleZone role="ar"   flex={1.4} players={ar}   onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} onTilePress={setActivePlayer} isCenter readOnly={readOnly} boosterKey={boosterKey} contentWidth={contentWidth} />
+      <RoleZone role="bowl" flex={1.8} players={bowl} onSetCaptaincy={onSetCaptaincy} onRemove={onRemove} onTilePress={setActivePlayer} readOnly={readOnly} boosterKey={boosterKey} contentWidth={contentWidth} />
+
+      {/* Player action sheet — one instance at field root, always visible, cross-platform */}
+      <Modal
+        transparent
+        visible={activePlayer !== null}
+        animationType="fade"
+        onRequestClose={() => setActivePlayer(null)}
+      >
+        <Pressable style={styles.sheetOverlay} onPress={() => setActivePlayer(null)}>
+          <View style={styles.sheetCard}>
+            <Text style={styles.sheetPlayerName}>{activePlayer?.name}</Text>
+            <Text style={styles.sheetMeta}>{activePlayer?.team} · {activePlayer?.role.toUpperCase()}</Text>
+            <View style={styles.sheetDivider} />
+            <TouchableOpacity style={styles.sheetBtn} onPress={() => { if (activePlayer) onSetCaptaincy(activePlayer.id, 'captain'); setActivePlayer(null); }}>
+              <Text style={styles.sheetBtnText}>{isCap ? '★ Captain (set)' : 'Set Captain (C)'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.sheetBtn} onPress={() => { if (activePlayer) onSetCaptaincy(activePlayer.id, 'vice_captain'); setActivePlayer(null); }}>
+              <Text style={styles.sheetBtnText}>{isVC ? '★ Vice-Captain (set)' : 'Set Vice-Captain (VC)'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.sheetBtn} onPress={() => { if (activePlayer) onRemove(activePlayer.id); setActivePlayer(null); }}>
+              <Text style={[styles.sheetBtnText, styles.sheetBtnRemove]}>Remove</Text>
+            </TouchableOpacity>
+            <View style={styles.sheetDivider} />
+            <TouchableOpacity style={styles.sheetBtn} onPress={() => setActivePlayer(null)}>
+              <Text style={styles.sheetBtnCancel}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -494,5 +493,59 @@ const styles = StyleSheet.create({
     alignItems:      'center',
     justifyContent:  'center',
     zIndex:          10,
+  },
+
+  // ── Player action sheet ──────────────────────────────────────────────────
+  sheetOverlay: {
+    flex:            1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent:  'flex-end',
+  },
+  sheetCard: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius:  20,
+    borderTopRightRadius: 20,
+    paddingTop:      20,
+    paddingBottom:   36,
+    paddingHorizontal: 0,
+  },
+  sheetPlayerName: {
+    fontSize:    18,
+    fontWeight:  '700',
+    color:       '#1C1F26',
+    textAlign:   'center',
+    paddingHorizontal: 24,
+  },
+  sheetMeta: {
+    fontSize:   13,
+    color:      '#7A7060',
+    textAlign:  'center',
+    marginTop:  4,
+    marginBottom: 8,
+    paddingHorizontal: 24,
+  },
+  sheetDivider: {
+    height:          1,
+    backgroundColor: '#e0d9c8',
+    marginVertical:  4,
+  },
+  sheetBtn: {
+    paddingVertical:   16,
+    paddingHorizontal: 24,
+  },
+  sheetBtnText: {
+    fontSize:   16,
+    color:      '#00897B',
+    fontWeight: '600',
+    textAlign:  'center',
+  },
+  sheetBtnRemove: {
+    color: '#C0392B',
+  },
+  sheetBtnCancel: {
+    fontSize:   16,
+    color:      '#7A7060',
+    fontWeight: '700',
+    textAlign:  'center',
   },
 });

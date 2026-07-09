@@ -586,6 +586,8 @@ export default function LeaderboardScreen() {
       {/* Full-screen gradient background */}
       <LinearGradient colors={G.bg} style={StyleSheet.absoluteFill} />
 
+      <SafeAreaView style={styles.safe} edges={['top']}>
+
       {/* ── Header ── */}
       <LinearGradient colors={G.header} style={styles.pageHeader}>
         <View style={styles.headerLeft}>
@@ -707,6 +709,7 @@ export default function LeaderboardScreen() {
         />
       )}
 
+      </SafeAreaView>
     </View>
   );
 }
@@ -717,6 +720,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F5F0E0',
+  },
+  safe: {
+    flex: 1,
   },
 
   // Page header
@@ -909,15 +915,11 @@ const styles = StyleSheet.create({
   modalClose: {
     width:          34,
     height:         34,
-    borderRadius:   radius.md,
-    backgroundColor: 'rgba(0,0,0,0.05)',
-    borderWidth:    1,
-    borderColor:    C.border,
     alignItems:     'center',
     justifyContent: 'center',
     flexShrink:     0,
   },
-  modalCloseText: { color: C.text, fontSize: fontSize.base, fontWeight: '700' },
+  modalCloseText: { color: C.muted, fontSize: 22, fontWeight: '400' },
   modalMeta:      { flex: 1, gap: 2 },
   modalName:      { color: C.text, fontSize: fontSize.base, fontWeight: '800' },
   modalTeamName:  { color: C.muted, fontSize: fontSize.xs },
@@ -928,32 +930,34 @@ const styles = StyleSheet.create({
   // Matchweek tabs
   mwTabsScroll: {
     flexShrink:        0,
+    maxHeight:         80,
     borderBottomWidth: 1,
     borderBottomColor: C.border,
   },
   mwTabs: {
     flexDirection:     'row',
     paddingHorizontal: spacing.lg,
-    paddingVertical:   spacing.sm,
+    paddingVertical:   spacing.xs,
     gap:               spacing.sm,
+    alignItems:        'center',
   },
   mwTab: {
     alignItems:        'center',
-    paddingHorizontal: spacing.lg,
-    paddingVertical:   spacing.sm,
-    borderRadius:      radius.lg,
+    paddingHorizontal: spacing.md,
+    paddingVertical:   6,
+    borderRadius:      radius.md,
     borderWidth:       1,
     borderColor:       C.border,
     backgroundColor:   'rgba(0,0,0,0.03)',
-    minWidth:          90,
-    gap:               2,
+    minWidth:          76,
+    gap:               1,
   },
   mwTabActive:       { borderColor: C.borderA },
-  mwTabLabel:        { color: C.text, fontSize: fontSize.sm, fontWeight: '800' },
+  mwTabLabel:        { color: C.text, fontSize: fontSize.xs, fontWeight: '800' },
   mwTabLabelActive:  { color: C.accent },
-  mwTabMatch:        { color: C.muted, fontSize: 9 },
+  mwTabMatch:        { color: C.muted, fontSize: 8 },
   mwTabMatchActive:  { color: C.accent },
-  mwTabPts:          { color: C.muted, fontSize: 9, fontWeight: '700' },
+  mwTabPts:          { color: C.muted, fontSize: 8, fontWeight: '700' },
   mwTabPtsActive:    { color: C.accent },
 
   // Body

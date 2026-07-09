@@ -66,10 +66,12 @@ function shortenName(name: string) {
 interface CaptainStepProps {
   players:  SelectedPlayer[];
   onAssign: (id: string, role: CaptaincyRole) => void;
-  onNext:   () => void;
 }
 
-function CaptainStep({ players, onAssign, onNext }: CaptainStepProps) {
+const ROLE_ORDER: Record<string, number> = { wk: 0, bat: 1, ar: 2, bowl: 3 };
+
+function CaptainStep({ players, onAssign }: CaptainStepProps) {
+  const sorted      = [...players].sort((a, b) => (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9));
   const captain     = players.find(p => p.captaincy === 'captain');
   const viceCaptain = players.find(p => p.captaincy === 'vice_captain');
   const bothSet     = !!captain && !!viceCaptain;
@@ -138,7 +140,7 @@ function CaptainStep({ players, onAssign, onNext }: CaptainStepProps) {
         contentContainerStyle={styles.grid}
         showsVerticalScrollIndicator={false}
       >
-        {players.map(p => {
+        {sorted.map(p => {
           const isCap = p.captaincy === 'captain';
           const isVC  = p.captaincy === 'vice_captain';
           return (
@@ -173,25 +175,6 @@ function CaptainStep({ players, onAssign, onNext }: CaptainStepProps) {
         })}
       </ScrollView>
 
-      {/* Footer */}
-      <LinearGradient colors={G.footer} style={styles.footer}>
-        <Pressable
-          style={styles.nextBtnWrap}
-          onPress={bothSet ? onNext : undefined}
-          disabled={!bothSet}
-        >
-          <LinearGradient
-            colors={G.nextBtn}
-            style={[styles.nextBtn, !bothSet && styles.nextBtnDisabled]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-          >
-            <Text style={styles.nextBtnText}>
-              {bothSet ? 'Next  →' : `${!captain ? 'Set Captain' : 'Set Vice-Captain'} to continue`}
-            </Text>
-          </LinearGradient>
-        </Pressable>
-      </LinearGradient>
     </View>
   );
 }
@@ -204,11 +187,12 @@ interface SummaryStepProps {
   activeBoosterId?: string | null;
   onBack:         () => void;
   onSave:         () => void;
+  onCancel:       () => void;
   onSetCaptaincy: (id: string, role: CaptaincyRole) => void;
   onRemove:       (id: string) => void;
 }
 
-function SummaryStep({ current, previous, activeBoosterId, onBack, onSave, onSetCaptaincy, onRemove }: SummaryStepProps) {
+function SummaryStep({ current, previous, activeBoosterId, onBack, onSave, onCancel, onSetCaptaincy, onRemove }: SummaryStepProps) {
   const added      = current.filter(p => !previous.find(b => b.id === p.id));
   const removed    = previous.filter(b => !current.find(p => p.id === b.id));
   const hasChanges = added.length > 0 || removed.length > 0;
@@ -293,13 +277,13 @@ function SummaryStep({ current, previous, activeBoosterId, onBack, onSave, onSet
 
       {/* Footer */}
       <LinearGradient colors={G.footer} style={styles.footer}>
-        <Pressable style={styles.backBtn} onPress={onBack}>
-          <Text style={styles.backBtnText}>← Change C/VC</Text>
-        </Pressable>
         <Pressable style={styles.saveBtnWrap} onPress={onSave}>
-          <LinearGradient colors={G.saveBtn} style={styles.saveBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+          <LinearGradient colors={G.nextBtn} style={styles.saveBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
             <Text style={styles.saveBtnText}>Save XI  ✓</Text>
           </LinearGradient>
+        </Pressable>
+        <Pressable style={styles.cancelBtnWrap} onPress={onCancel}>
+          <Text style={styles.cancelBtnText}>Cancel</Text>
         </Pressable>
       </LinearGradient>
     </View>
@@ -320,11 +304,12 @@ interface Props {
   onRemove:       (id: string) => void;
   onConfirm:      () => void;
   onEditMore:     () => void;
+  onCancel:       () => void;
 }
 
 export default function ConfirmXIModal({
   visible, contestName, current, previous, activeBoosterId,
-  onSetCaptaincy, onRemove, onConfirm, onEditMore,
+  onSetCaptaincy, onRemove, onConfirm, onEditMore, onCancel,
 }: Props) {
   const [step, setStep] = useState<'captain' | 'summary'>('captain');
 
@@ -332,13 +317,15 @@ export default function ConfirmXIModal({
     if (visible) setStep('captain');
   }, [visible]);
 
-  const stepLabel = step === 'captain' ? 'Choose C & VC' : 'Review & Save';
-  const stepNum   = step === 'captain' ? '1 / 2' : '2 / 2';
+  const stepLabel   = step === 'captain' ? 'Choose C & VC' : 'Review & Save';
+  const captain     = current.find(p => p.captaincy === 'captain');
+  const viceCaptain = current.find(p => p.captaincy === 'vice_captain');
+  const bothSet     = !!captain && !!viceCaptain;
 
   return (
     <Modal
       visible={visible}
-      animationType="slide"
+      animationType="none"
       presentationStyle="pageSheet"
       onRequestClose={step === 'summary' ? () => setStep('captain') : onEditMore}
     >
@@ -353,17 +340,30 @@ export default function ConfirmXIModal({
               style={styles.headerBack}
               onPress={step === 'summary' ? () => setStep('captain') : onEditMore}
             >
-              <Text style={styles.headerBackText}>
-                {step === 'summary' ? '←' : '✕'}
-              </Text>
+              <Text style={styles.headerBackText}>←</Text>
             </Pressable>
             <View style={styles.headerCenter}>
               <Text style={styles.headerTitle}>{stepLabel}</Text>
               <Text style={styles.headerSub}>{contestName}</Text>
             </View>
-            <View style={styles.stepPill}>
-              <Text style={styles.stepPillText}>{stepNum}</Text>
-            </View>
+            {step === 'captain' ? (
+              <Pressable
+                style={styles.headerNextWrap}
+                onPress={bothSet ? () => setStep('summary') : undefined}
+                disabled={!bothSet}
+              >
+                <LinearGradient
+                  colors={G.nextBtn}
+                  style={[styles.headerNext, !bothSet && styles.headerNextDisabled]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                >
+                  <Text style={styles.headerNextText}>Next →</Text>
+                </LinearGradient>
+              </Pressable>
+            ) : (
+              <View style={styles.headerNextWrap} />
+            )}
           </LinearGradient>
 
           {/* Step progress dots */}
@@ -377,7 +377,6 @@ export default function ConfirmXIModal({
             <CaptainStep
               players={current}
               onAssign={onSetCaptaincy}
-              onNext={() => setStep('summary')}
             />
           ) : (
             <SummaryStep
@@ -386,6 +385,7 @@ export default function ConfirmXIModal({
               activeBoosterId={activeBoosterId}
               onBack={() => setStep('captain')}
               onSave={onConfirm}
+              onCancel={onCancel}
               onSetCaptaincy={onSetCaptaincy}
               onRemove={onRemove}
             />
@@ -429,9 +429,9 @@ const styles = StyleSheet.create({
     borderColor:     C.border,
   },
   headerBackText: { color: C.text, fontSize: 18, fontWeight: '700' },
-  headerCenter:   { flex: 1, gap: 1 },
-  headerTitle:    { color: C.text, fontSize: fontSize.lg, fontWeight: '800' },
-  headerSub:      { color: C.accent, fontSize: fontSize.xs },
+  headerCenter:   { flex: 1, gap: 1, alignItems: 'center' },
+  headerTitle:    { color: C.text, fontSize: fontSize.lg, fontWeight: '800', textAlign: 'center' },
+  headerSub:      { color: C.accent, fontSize: fontSize.xs, textAlign: 'center' },
   stepPill: {
     backgroundColor:   'rgba(201,168,76,0.12)',
     borderWidth:       1,
@@ -687,11 +687,32 @@ const styles = StyleSheet.create({
   backBtnText: { color: C.text, fontSize: fontSize.base, fontWeight: '600' },
 
   // Save button (summary step)
-  saveBtnWrap: { flex: 1.6 },
+  saveBtnWrap: { flex: 1 },
   saveBtn: {
     alignItems:      'center',
     paddingVertical: spacing.md,
     borderRadius:    radius.lg,
   },
   saveBtnText: { color: '#fff', fontSize: fontSize.base, fontWeight: '800' },
+
+  // Cancel button (summary step)
+  cancelBtnWrap: {
+    alignItems:        'center',
+    paddingVertical:   spacing.md,
+    borderRadius:      radius.lg,
+    borderWidth:       1,
+    borderColor:       'rgba(28,31,38,0.2)',
+  },
+  cancelBtnText: { color: C.muted, fontSize: fontSize.base, fontWeight: '700' },
+
+  // Header Next button (captain step)
+  headerNextWrap: { width: 70 },
+  headerNext: {
+    alignItems:        'center',
+    paddingVertical:   spacing.xs + 2,
+    paddingHorizontal: spacing.sm,
+    borderRadius:      radius.md,
+  },
+  headerNextDisabled: { opacity: 0.35 },
+  headerNextText: { color: '#fff', fontSize: fontSize.sm, fontWeight: '700' },
 });

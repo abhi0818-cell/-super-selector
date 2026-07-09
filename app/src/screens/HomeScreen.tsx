@@ -350,11 +350,11 @@ function CountdownBanner({ match }: { match: NextMatch }) {
 function PickTeamButton({ onPress, teamReady }: { onPress: () => void; teamReady: boolean }) {
   return (
     <Pressable onPress={onPress} style={({ pressed }) => pressed && { opacity: 0.82 }}>
-      <LinearGradient colors={teamReady ? G.btnReady : G.btnPick} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.pickBtn}>
+      <LinearGradient colors={G.btnPick} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.pickBtn}>
         <Text style={styles.pickBtnIcon}>🏏</Text>
         <View style={styles.pickBtnMeta}>
           <Text style={styles.pickBtnTitle}>{teamReady ? 'Edit Your XI' : 'Pick Your XI'}</Text>
-          <Text style={styles.pickBtnSub}>{teamReady ? 'XI complete — tap to adjust' : 'Select your 11 players'}</Text>
+          {!teamReady && <Text style={styles.pickBtnSub}>Select your 11 players</Text>}
         </View>
         <Text style={styles.pickBtnArrow}>→</Text>
       </LinearGradient>
@@ -574,6 +574,9 @@ export default function HomeScreen() {
 
   const firstName        = user?.email?.split('@')[0] ?? 'Player';
   const teamReady        = validation.valid;
+  // xiReady is DB-backed — true even on first load before teamStore hydrates.
+  // validation.valid only becomes true after loadSavedXI runs (on MyXI tab).
+  // Combining both means the pill shows correctly on cold start AND mid-session.
   const activeTournament = tournaments.find(t => t.id === selectedTournamentId);
   const nextMatch        = useNextMatch(selectedTournamentId);
 
@@ -698,21 +701,26 @@ export default function HomeScreen() {
         {nextMatch && <CountdownBanner match={nextMatch} />}
 
         {/* ── Team status pill ───────────────────────────────────────────── */}
-        {selected.length > 0 && (
-          <Pressable onPress={() => navigation.navigate('MyXI')}>
-            <LinearGradient
-              colors={teamReady ? G.pillGood : G.pillWarn}
-              start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-              style={[styles.statusPill, teamReady ? styles.pillBorderGood : styles.pillBorderWarn]}
-            >
-              <Text style={styles.statusIcon}>{teamReady ? '✓' : '⚡'}</Text>
-              <Text style={[styles.statusText, teamReady ? styles.statusTextGood : styles.statusTextWarn]}>
-                {teamReady ? 'XI complete — tap to review' : `${selected.length}/11 players · finish your XI`}
-              </Text>
-              <Text style={styles.statusArrow}>›</Text>
-            </LinearGradient>
-          </Pressable>
-        )}
+        {(() => {
+          const xiReady  = slXIReady || dailyXIReady || teamReady;
+          const showPill = xiReady || selected.length > 0;
+          if (!showPill) return null;
+          return (
+            <Pressable onPress={() => navigation.navigate('MyXI')}>
+              <LinearGradient
+                colors={xiReady ? G.btnPick : G.pillWarn}
+                start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                style={[styles.statusPill, xiReady ? styles.pillBorderDark : styles.pillBorderWarn]}
+              >
+                <Text style={[styles.statusIcon, xiReady && { color: '#fff' }]}>{xiReady ? '✓' : '⚡'}</Text>
+                <Text style={[styles.statusText, xiReady ? styles.statusTextDark : styles.statusTextWarn]}>
+                  {xiReady ? 'View Your XI' : `${selected.length}/11 players · finish your XI`}
+                </Text>
+                <Text style={[styles.statusArrow, xiReady && { color: 'rgba(255,255,255,0.5)' }]}>›</Text>
+              </LinearGradient>
+            </Pressable>
+          );
+        })()}
 
         {/* ── Section label ──────────────────────────────────────────────── */}
         {contestsLoading ? (
@@ -865,10 +873,12 @@ const styles = StyleSheet.create({
 
   statusPill: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, padding: spacing.md, borderRadius: radius.lg, borderWidth: 1 },
   pillBorderGood:  { borderColor: 'rgba(45,106,53,0.4)' },
+  pillBorderDark:  { borderColor: 'transparent' },
   pillBorderWarn:  { borderColor: 'rgba(201,168,76,0.5)' },
   statusIcon:      { fontSize: 14 },
-  statusText:      { flex: 1, fontSize: fontSize.sm, fontWeight: '600' },
+  statusText:      { flex: 1, fontSize: fontSize.base, fontWeight: '800', letterSpacing: 0.2 },
   statusTextGood:  { color: '#2D6A35' },
+  statusTextDark:  { color: '#fff' },
   statusTextWarn:  { color: '#92650A' },
   statusArrow:     { color: C.muted, fontSize: 20 },
 
