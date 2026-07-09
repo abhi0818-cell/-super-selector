@@ -1,6 +1,7 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Text } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RootTabParamList } from '../types';
 import HomeScreen        from '../screens/HomeScreen';
 import MyXIScreen        from '../screens/MyXIScreen';
@@ -23,6 +24,7 @@ export default function TabNavigator() {
   const { selected, validation } = useTeamStore();
   const { user }                 = useAuthStore();
   const isAdmin                  = user?.email === ADMIN_EMAIL;
+  const insets                   = useSafeAreaInsets();
 
   return (
     <Tab.Navigator
@@ -33,8 +35,8 @@ export default function TabNavigator() {
           backgroundColor: '#F5F0E0',
           borderTopColor:  '#D6CFA8',
           borderTopWidth:  1,
-          height:          64,
-          paddingBottom:   8,
+          height:          64 + insets.bottom,
+          paddingBottom:   8 + insets.bottom,
           paddingTop:      6,
         },
         tabBarActiveTintColor:   '#C9A84C',
