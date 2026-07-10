@@ -731,7 +731,7 @@ const styles = StyleSheet.create({
     paddingTop:        spacing.lg,
     paddingBottom:     spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: C.border,
+    borderBottomColor: 'rgba(28,31,38,0.1)',
     flexDirection:     'row',
     alignItems:        'center',
   },
@@ -766,7 +766,7 @@ const styles = StyleSheet.create({
   tabsScroll: {
     flexShrink:        0,
     borderBottomWidth: 1,
-    borderBottomColor: C.border,
+    borderBottomColor: 'rgba(28,31,38,0.1)',
   },
   tabs: {
     flexDirection:     'row',
@@ -804,7 +804,7 @@ const styles = StyleSheet.create({
     ...shadow.card,
   },
   highlightLabel: {
-    color:         C.accent,
+    color:         C.muted,
     fontSize:      fontSize.xs,
     fontWeight:    '700',
     textTransform: 'uppercase',
@@ -814,7 +814,7 @@ const styles = StyleSheet.create({
   highlightRank: { fontSize: 28 },
   highlightMeta: { gap: 2 },
   highlightTeam: { color: C.text, fontSize: fontSize.base, fontWeight: '700' },
-  highlightPts:  { color: C.accent, fontSize: fontSize.sm, fontWeight: '600' },
+  highlightPts:  { color: C.text, fontSize: fontSize.sm, fontWeight: '600' },
 
   // Section divider
   divider: {
@@ -827,7 +827,7 @@ const styles = StyleSheet.create({
   dividerLine: {
     flex:            1,
     height:          1,
-    backgroundColor: C.border,
+    backgroundColor: 'rgba(28,31,38,0.1)',
   },
   dividerText: {
     color:         C.muted,
@@ -868,7 +868,7 @@ const styles = StyleSheet.create({
   rankBoxTop: { backgroundColor: 'transparent' },
   rankMedal:  { fontSize: 22 },
   rankNum:    { color: C.muted, fontSize: fontSize.sm, fontWeight: '700' },
-  rankNumMe:  { color: C.accent },
+  rankNumMe:  { color: C.text },
 
   avatar:   { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.06)', borderWidth: 1, borderColor: C.border, alignItems: 'center', justifyContent: 'center' },
   avatarMe: { backgroundColor: 'rgba(201,168,76,0.18)', borderColor: 'rgba(201,168,76,0.5)' },
@@ -876,17 +876,17 @@ const styles = StyleSheet.create({
 
   nameBlock:     { flex: 1, gap: 2 },
   displayName:   { color: C.text, fontSize: fontSize.sm, fontWeight: '600' },
-  displayNameMe: { color: C.accent },
-  youBadge:      { color: C.accent, fontSize: fontSize.xs, fontWeight: '500' },
+  displayNameMe: { color: C.text, fontWeight: '800' },
+  youBadge:      { color: C.muted, fontSize: fontSize.xs, fontWeight: '500' },
   teamName:      { color: C.muted, fontSize: fontSize.xs },
 
   // SL/private-only Booster/Xfer pills — mirrors web's leaderboard columns
   slColsRow:     { flexDirection: 'row', gap: spacing.sm, marginTop: 2 },
-  slColText:     { color: C.muted, fontSize: 10, fontWeight: '600' },
-  slColTextOnHighlight: { color: C.gold, fontSize: fontSize.xs, fontWeight: '700' },
+  slColText:     { color: C.muted, fontSize: fontSize.xs, fontWeight: '600' },
+  slColTextOnHighlight: { color: C.muted, fontSize: fontSize.xs, fontWeight: '700' },
 
   pts:           { color: C.text, fontSize: fontSize.base, fontWeight: '700' },
-  ptsMe:         { color: C.accent },
+  ptsMe:         { color: C.text, fontWeight: '800' },
   ptsSuffix:     { color: C.muted, fontSize: fontSize.xs, fontWeight: '400' },
   rowArrow:      { color: C.muted, fontSize: fontSize.lg, fontWeight: '400', marginLeft: -4 },
 
@@ -924,8 +924,8 @@ const styles = StyleSheet.create({
   modalName:      { color: C.text, fontSize: fontSize.base, fontWeight: '800' },
   modalTeamName:  { color: C.muted, fontSize: fontSize.xs },
   modalTotalBox:  { alignItems: 'flex-end' },
-  modalTotalPts:  { color: C.accent, fontSize: fontSize.lg, fontWeight: '800' },
-  modalTotalSub:  { color: C.muted, fontSize: 8, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
+  modalTotalPts:  { color: C.text, fontSize: fontSize.lg, fontWeight: '800' },
+  modalTotalSub:  { color: C.muted, fontSize: fontSize.xs, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
 
   // Matchweek tabs
   mwTabsScroll: {
@@ -954,11 +954,11 @@ const styles = StyleSheet.create({
   },
   mwTabActive:       { borderColor: C.borderA },
   mwTabLabel:        { color: C.text, fontSize: fontSize.xs, fontWeight: '800' },
-  mwTabLabelActive:  { color: C.accent },
-  mwTabMatch:        { color: C.muted, fontSize: 8 },
-  mwTabMatchActive:  { color: C.accent },
-  mwTabPts:          { color: C.muted, fontSize: 8, fontWeight: '700' },
-  mwTabPtsActive:    { color: C.accent },
+  mwTabLabelActive:  { color: C.text },
+  mwTabMatch:        { color: C.muted, fontSize: fontSize.xs },
+  mwTabMatchActive:  { color: C.muted },
+  mwTabPts:          { color: C.muted, fontSize: fontSize.xs, fontWeight: '700' },
+  mwTabPtsActive:    { color: C.text },
 
   // Body
   teamBody: {
@@ -979,7 +979,7 @@ const styles = StyleSheet.create({
   },
   boosterBarLabel: {
     color:         C.muted,
-    fontSize:      9,
+    fontSize:      fontSize.xs,
     fontWeight:    '700',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
@@ -1011,7 +1011,7 @@ const styles = StyleSheet.create({
   },
   colHdr: {
     color:         C.muted,
-    fontSize:      8,
+    fontSize:      fontSize.xs,
     fontWeight:    '700',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -1024,7 +1024,7 @@ const styles = StyleSheet.create({
     paddingRight:    spacing.md,
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(201,168,76,0.12)',
+    borderBottomColor: 'rgba(28,31,38,0.08)',
     backgroundColor:   'transparent',
   },
   playerRowAlt: {
@@ -1062,7 +1062,7 @@ const styles = StyleSheet.create({
   },
   playerTeamText: {
     color:    C.muted,
-    fontSize: 9,
+    fontSize: fontSize.xs,
   },
 
   capBadge: {
@@ -1083,7 +1083,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     paddingVertical:   1,
   },
-  rolePillText: { fontSize: 8, fontWeight: '700', letterSpacing: 0.4 },
+  rolePillText: { fontSize: fontSize.xs, fontWeight: '700', letterSpacing: 0.4 },
 
   multBadge: {
     paddingHorizontal: 5,
@@ -1093,7 +1093,7 @@ const styles = StyleSheet.create({
   },
   multC:    { borderColor: '#C9A84C44', backgroundColor: 'rgba(201,168,76,0.15)' },
   multVC:   { borderColor: '#7A706044', backgroundColor: 'rgba(122,112,96,0.15)' },
-  multText: { color: C.text, fontSize: 8, fontWeight: '800' },
+  multText: { color: C.text, fontSize: fontSize.xs, fontWeight: '800' },
 
   statCol: {
     width:      30,
@@ -1131,7 +1131,7 @@ const styles = StyleSheet.create({
     borderColor:       C.border,
   },
   mwFooterMatch: { color: C.muted, fontSize: fontSize.xs },
-  mwFooterPts:   { color: C.accent, fontSize: fontSize.base, fontWeight: '800' },
+  mwFooterPts:   { color: C.text, fontSize: fontSize.base, fontWeight: '800' },
 
   noData:      { flex: 1, alignItems: 'center', justifyContent: 'center' },
   noDataText:  { color: C.muted, fontSize: fontSize.base },

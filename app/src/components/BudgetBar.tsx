@@ -73,7 +73,7 @@ const styles = StyleSheet.create({
     flex:          1,
   },
   value: {
-    color:      C.accent,
+    color:      C.text,
     fontSize:   fontSize.sm,
     fontWeight: '700',
   },

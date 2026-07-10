@@ -83,7 +83,7 @@ const styles = StyleSheet.create({
   },
   label: {
     color:         C.muted,
-    fontSize:      8,
+    fontSize:      11,
     textTransform: 'uppercase',
     letterSpacing: 0.4,
     fontWeight:    '600',
@@ -97,6 +97,6 @@ const styles = StyleSheet.create({
   valueBad: { color: C.bad },
   range: {
     color:    C.muted,
-    fontSize: 8,
+    fontSize: 11,
   },
 });

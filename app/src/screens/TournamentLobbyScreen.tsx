@@ -10,6 +10,7 @@
 import React, { useEffect } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -137,10 +138,13 @@ export default function TournamentLobbyScreen() {
             <Text style={styles.greeting}>Hey {firstName} 👋</Text>
           </View>
           <Pressable
-            style={({ pressed }) => [styles.signOutBtn, pressed && { opacity: 0.7 }]}
-            onPress={signOut}
+            style={({ pressed }) => pressed && { opacity: 0.7 }}
+            onPress={() => Alert.alert('Sign Out', 'Are you sure?', [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Sign Out', style: 'destructive', onPress: signOut },
+            ])}
           >
-            <Text style={styles.signOutText}>Sign out</Text>
+            <Text style={styles.signOutLink}>Sign out</Text>
           </Pressable>
         </View>
 
@@ -195,14 +199,12 @@ const styles = StyleSheet.create({
     fontSize:   fontSize.base,
     marginTop:  2,
   },
-  signOutBtn: {
-    paddingHorizontal: spacing.md,
-    paddingVertical:   6,
-    borderWidth:       1,
-    borderColor:       colors.border,
-    borderRadius:      radius.full,
+  signOutLink: {
+    color:              colors.muted,
+    fontSize:           fontSize.xs,
+    fontWeight:         '600',
+    textDecorationLine: 'underline',
   },
-  signOutText: { color: colors.muted, fontSize: fontSize.sm, fontWeight: '600' },
 
   // Section
   sectionLabel: {
