@@ -502,7 +502,7 @@ const styles = StyleSheet.create({
     justifyContent:  'flex-end',
   },
   sheetCard: {
-    backgroundColor: '#fff',
+    backgroundColor: '#F5F0E0',
     borderTopLeftRadius:  20,
     borderTopRightRadius: 20,
     paddingTop:      20,
@@ -535,7 +535,7 @@ const styles = StyleSheet.create({
   },
   sheetBtnText: {
     fontSize:   16,
-    color:      '#00897B',
+    color:      '#2D6A35',
     fontWeight: '600',
     textAlign:  'center',
   },
