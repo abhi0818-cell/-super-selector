@@ -347,13 +347,13 @@ function CountdownBanner({ match }: { match: NextMatch }) {
 
 // ─── Pick Team button ─────────────────────────────────────────────────────────
 
-function PickTeamButton({ onPress, teamReady }: { onPress: () => void; teamReady: boolean }) {
+function PickTeamButton({ onPress, onView, teamReady }: { onPress: () => void; onView: () => void; teamReady: boolean }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => pressed && { opacity: 0.82 }}>
+    <Pressable onPress={teamReady ? onView : onPress} style={({ pressed }) => pressed && { opacity: 0.82 }}>
       <LinearGradient colors={G.btnPick} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.pickBtn}>
         <Text style={styles.pickBtnIcon}>🏏</Text>
         <View style={styles.pickBtnMeta}>
-          <Text style={styles.pickBtnTitle}>{teamReady ? 'Edit Your XI' : 'Pick Your XI'}</Text>
+          <Text style={styles.pickBtnTitle}>{teamReady ? 'View Your XI' : 'Pick Your XI'}</Text>
           {!teamReady && <Text style={styles.pickBtnSub}>Select your 11 players</Text>}
         </View>
         <Text style={styles.pickBtnArrow}>→</Text>
@@ -381,15 +381,15 @@ function LiveScorePill({ scoreLine, onPress }: { scoreLine: string | null; onPre
 }
 
 function ActionBlock({
-  onPickTeam, teamReady, liveScoreLine, onOpenLiveScore,
+  onPickTeam, onViewTeam, teamReady, liveMatchLabel, onOpenLiveScore,
 }: {
-  onPickTeam: () => void; teamReady: boolean;
-  liveScoreLine: string | null; onOpenLiveScore: () => void;
+  onPickTeam: () => void; onViewTeam: () => void; teamReady: boolean;
+  liveMatchLabel: string | null; onOpenLiveScore: () => void;
 }) {
   return (
     <View style={styles.actionBlock}>
-      <PickTeamButton onPress={onPickTeam} teamReady={teamReady} />
-      <LiveScorePill scoreLine={liveScoreLine} onPress={onOpenLiveScore} />
+      <PickTeamButton onPress={onPickTeam} onView={onViewTeam} teamReady={teamReady} />
+      <LiveScorePill scoreLine={liveMatchLabel} onPress={onOpenLiveScore} />
     </View>
   );
 }
@@ -588,6 +588,10 @@ export default function HomeScreen() {
   const liveMatchTitle    = liveMatch
     ? `${liveMatch.homeTeamId ?? '?'} vs ${liveMatch.awayTeamId ?? '?'}${liveMatch.matchNumber != null ? ` · M${liveMatch.matchNumber}` : ''}`
     : undefined;
+  // Pill label — match name only, no score (e.g. "M24 · LAKR vs WF")
+  const liveMatchPillLabel = liveMatch
+    ? `M${liveMatch.matchNumber != null ? liveMatch.matchNumber : '?'} · ${liveMatch.homeTeamId ?? '?'} vs ${liveMatch.awayTeamId ?? '?'}`
+    : null;
 
   // Derive contest categories from real data
   const dailyContest    = contests.find(c => c.contestType === 'daily' && !c.isPrivate) ?? null;
@@ -700,23 +704,22 @@ export default function HomeScreen() {
         {/* ── Next match countdown ──────────────────────────────────────── */}
         {nextMatch && <CountdownBanner match={nextMatch} />}
 
-        {/* ── Team status pill ───────────────────────────────────────────── */}
+        {/* ── Team status pill — incomplete warning only ─────────────────── */}
         {(() => {
-          const xiReady  = slXIReady || dailyXIReady || teamReady;
-          const showPill = xiReady || selected.length > 0;
-          if (!showPill) return null;
+          const xiReady = slXIReady || dailyXIReady || teamReady;
+          if (xiReady || selected.length === 0) return null;
           return (
             <Pressable onPress={() => navigation.navigate('MyXI')}>
               <LinearGradient
-                colors={xiReady ? G.btnPick : G.pillWarn}
+                colors={G.pillWarn}
                 start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                style={[styles.statusPill, xiReady ? styles.pillBorderDark : styles.pillBorderWarn]}
+                style={[styles.statusPill, styles.pillBorderWarn]}
               >
-                <Text style={[styles.statusIcon, xiReady && { color: '#fff' }]}>{xiReady ? '✓' : '⚡'}</Text>
-                <Text style={[styles.statusText, xiReady ? styles.statusTextDark : styles.statusTextWarn]}>
-                  {xiReady ? 'View Your XI' : `${selected.length}/11 players · finish your XI`}
+                <Text style={styles.statusIcon}>⚡</Text>
+                <Text style={[styles.statusText, styles.statusTextWarn]}>
+                  {selected.length}/11 players · finish your XI
                 </Text>
-                <Text style={[styles.statusArrow, xiReady && { color: 'rgba(255,255,255,0.5)' }]}>›</Text>
+                <Text style={styles.statusArrow}>›</Text>
               </LinearGradient>
             </Pressable>
           );
@@ -748,8 +751,9 @@ export default function HomeScreen() {
             <MatchHeroCard match={nextMatch} />
             <ActionBlock
               onPickTeam={() => handlePickContest(dailyContest)}
+              onViewTeam={() => navigation.navigate('MyXI')}
               teamReady={dailyXIReady}
-              liveScoreLine={liveScoreLine || null}
+              liveMatchLabel={liveMatchPillLabel}
               onOpenLiveScore={() => setLiveModalVisible(true)}
             />
           </ContestTile>
@@ -784,8 +788,9 @@ export default function HomeScreen() {
 
             <ActionBlock
               onPickTeam={() => handlePickContest(slContest)}
+              onViewTeam={() => navigation.navigate('MyXI')}
               teamReady={slXIReady}
-              liveScoreLine={liveScoreLine || null}
+              liveMatchLabel={liveMatchPillLabel}
               onOpenLiveScore={() => setLiveModalVisible(true)}
             />
 
