@@ -453,6 +453,12 @@ export const useTeamStore = create<TeamState>((set, get) => ({
 
     if (selected.length >= RULES.total) return;
 
+    // Overseas cap guard — prevents adding OS players beyond the format/tournament limit
+    if (player.overseas) {
+      const maxOS = RULES.maxOverseas[format] ?? 11;
+      if (selected.filter(p => p.overseas).length >= maxOS) return;
+    }
+
     const next: SelectedPlayer[] = [...selected, { ...player, captaincy: 'normal' }];
     set({ selected: next, ...deriveStats(next, format, budgetCapSuspended) });
   },

@@ -8567,6 +8567,9 @@ p31,Sample Player,MI,bat,9.0,false
       if (!state.db) { toast('Connect a database first (Settings).'); return; }
       if (state.selected.length !== 11) { toast('Pick 11 players first.'); return; }
       if (!state.captain || !state.viceCaptain) { toast('Pick Captain and Vice-Captain.'); return; }
+      const _osCap = getOverseasCap();
+      const _osCount = state.selected.filter(id => playerById(id)?.overseas).length;
+      if (_osCount > _osCap) { toast(`Too many overseas players — ${_osCount} selected, max ${_osCap}.`); return; }
       const m = saveTargetMatch();
       if (!m) { toast('Select a match first — XI must be tied to a match.'); return; }
 

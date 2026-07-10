@@ -223,8 +223,10 @@ export default function PlayerPickerScreen() {
 
   const isDisabled = useCallback((player: Player): boolean => {
     if (selectedIds.has(player.id)) return false;
-    return selected.length >= 11;
-  }, [selectedIds, selected.length]);
+    if (selected.length >= 11) return true;
+    if (player.overseas && osSelected >= osCap) return true;
+    return false;
+  }, [selectedIds, selected.length, osSelected, osCap]);
 
   // Current match label e.g. "M25 · MNY vs SO" — derived from the current match
   const currentMatchLabel = useMemo(() => {
