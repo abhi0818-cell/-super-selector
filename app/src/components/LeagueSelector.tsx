@@ -170,7 +170,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(201,168,76,0.3)',
   },
   rankText: {
-    color: colors.accent,
+    color: colors.text,
     fontSize: fontSize.sm,
     fontWeight: '700',
   },

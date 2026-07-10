@@ -458,7 +458,7 @@ const styles = StyleSheet.create({
   },
   infoEmph: {
     fontWeight: '700',
-    color:      colors.accent,
+    color:      colors.text,
   },
 
   // Rule table

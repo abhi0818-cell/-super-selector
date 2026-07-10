@@ -871,7 +871,7 @@ const styles = StyleSheet.create({
   tournamentIcon: { fontSize: 14 },
   tournamentName: { color: C.text, fontSize: fontSize.sm, fontWeight: '700', flex: 1 },
   tournamentFormatBadge: { paddingHorizontal: spacing.sm, paddingVertical: 2, backgroundColor: 'rgba(201,168,76,0.15)', borderRadius: radius.full, borderWidth: 1, borderColor: 'rgba(201,168,76,0.3)' },
-  tournamentFormatText: { color: C.gold, fontSize: fontSize.xs, fontWeight: '700' },
+  tournamentFormatText: { color: C.muted, fontSize: fontSize.xs, fontWeight: '700' },
   switchBtn: { paddingHorizontal: spacing.md, paddingVertical: 4, backgroundColor: 'rgba(28,31,38,0.07)', borderRadius: radius.full, borderWidth: 1.5, borderColor: 'rgba(28,31,38,0.22)', marginLeft: spacing.sm },
   switchBtnText: { color: C.text, fontSize: fontSize.sm, fontWeight: '700' },
 

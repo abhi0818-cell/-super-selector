@@ -473,7 +473,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.xl,
   },
   footerLink: {
-    color:      C.accent,
+    color:      C.text,
     fontWeight: '700',
   },
 });

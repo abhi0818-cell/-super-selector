@@ -143,11 +143,11 @@ const styles = StyleSheet.create({
     paddingVertical:   spacing.sm,
     backgroundColor:   'rgba(0,0,0,0.03)',
     borderBottomWidth: 1,
-    borderBottomColor: C.border,
+    borderBottomColor: 'rgba(28,31,38,0.1)',
   },
   boosterBarLabel: {
     color:         C.muted,
-    fontSize:      9,
+    fontSize:      fontSize.xs,
     fontWeight:    '700',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
@@ -175,11 +175,11 @@ const styles = StyleSheet.create({
     paddingVertical:   6,
     backgroundColor:   'rgba(0,0,0,0.03)',
     borderBottomWidth: 1,
-    borderBottomColor: C.border,
+    borderBottomColor: 'rgba(28,31,38,0.1)',
   },
   colHdr: {
     color:         C.muted,
-    fontSize:      8,
+    fontSize:      fontSize.xs,
     fontWeight:    '700',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -192,7 +192,7 @@ const styles = StyleSheet.create({
     paddingRight:    spacing.md,
     paddingVertical: 8,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(201,168,76,0.12)',
+    borderBottomColor: 'rgba(28,31,38,0.08)',
     backgroundColor:   'transparent',
   },
   playerRowAlt: {
@@ -230,7 +230,7 @@ const styles = StyleSheet.create({
   },
   playerTeamText: {
     color:    C.muted,
-    fontSize: 9,
+    fontSize: fontSize.xs,
   },
 
   capBadge: {
@@ -251,7 +251,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     paddingVertical:   1,
   },
-  rolePillText: { fontSize: 8, fontWeight: '700', letterSpacing: 0.4 },
+  rolePillText: { fontSize: fontSize.xs, fontWeight: '700', letterSpacing: 0.4 },
 
   multBadge: {
     paddingHorizontal: 5,
@@ -261,7 +261,7 @@ const styles = StyleSheet.create({
   },
   multC:    { borderColor: '#C9A84C44', backgroundColor: 'rgba(201,168,76,0.15)' },
   multVC:   { borderColor: '#7A706044', backgroundColor: 'rgba(122,112,96,0.15)' },
-  multText: { color: C.text, fontSize: 8, fontWeight: '800' },
+  multText: { color: C.text, fontSize: fontSize.xs, fontWeight: '800' },
 
   statCol: {
     width:      30,
@@ -296,8 +296,8 @@ const styles = StyleSheet.create({
     paddingVertical:   spacing.sm,
     borderRadius:      radius.lg,
     borderWidth:       1,
-    borderColor:       C.border,
+    borderColor:       'rgba(28,31,38,0.12)',
   },
   mwFooterMatch: { color: C.muted, fontSize: fontSize.xs, flexShrink: 1, marginRight: spacing.sm },
-  mwFooterPts:   { color: C.accent, fontSize: fontSize.base, fontWeight: '800' },
+  mwFooterPts:   { color: C.text, fontSize: fontSize.base, fontWeight: '800' },
 });

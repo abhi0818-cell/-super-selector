@@ -171,7 +171,7 @@ const styles = StyleSheet.create({
   sectionLabel: {
     color: C.text, fontSize: fontSize.base, fontWeight: '800',
   },
-  sectionPts: { color: C.accent, fontSize: fontSize.base, fontWeight: '800' },
+  sectionPts: { color: C.text, fontSize: fontSize.base, fontWeight: '800' },
   sectionPanel: {
     borderTopWidth: 1, borderTopColor: C.border,
     borderBottomWidth: 1, borderBottomColor: C.border,

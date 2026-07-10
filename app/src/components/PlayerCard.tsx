@@ -165,9 +165,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5,
     paddingVertical:   1,
     borderRadius:      radius.sm - 2,
-    backgroundColor:   'rgba(201,168,76,0.12)',
+    backgroundColor:   'rgba(0,0,0,0.05)',
     borderWidth:       1,
-    borderColor:       'rgba(201,168,76,0.30)',
+    borderColor:       'rgba(0,0,0,0.12)',
     overflow:          'hidden',
   },
   osText: {
@@ -178,7 +178,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
   },
   credits: {
-    color:      C.gold,
+    color:      C.text,
     fontSize:   fontSize.base,
     fontWeight: '700',
   },
@@ -234,11 +234,11 @@ const styles = StyleSheet.create({
     borderColor:     'rgba(122,112,96,0.22)',
   },
   playsBadgeText: {
-    fontSize:   10,
+    fontSize:   fontSize.xs,
     fontWeight: '600',
     letterSpacing: 0.1,
   },
-  playsBadgeTextNext:  { color: C.accent },
+  playsBadgeTextNext:  { color: C.good },
   playsBadgeTextAfter: { color: C.muted },
 
   checkBadge: {

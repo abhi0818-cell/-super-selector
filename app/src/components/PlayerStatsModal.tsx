@@ -171,5 +171,5 @@ const styles = StyleSheet.create({
   },
   cellPrimary: { color: C.text, fontSize: fontSize.sm, lineHeight: 17 },
   cellMuted:   { color: C.muted, fontSize: fontSize.xs, marginTop: 1 },
-  cellPts:     { color: C.gold, fontSize: fontSize.sm, fontWeight: '700' },
+  cellPts:     { color: C.text, fontSize: fontSize.sm, fontWeight: '700' },
 });
