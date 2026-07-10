@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -675,8 +676,14 @@ export default function HomeScreen() {
             </View>
             <Text style={styles.welcomeText}>Hey {firstName} 👋</Text>
           </View>
-          <Pressable style={({ pressed }) => [styles.signOutBtn, pressed && { opacity: 0.7 }]} onPress={signOut}>
-            <Text style={styles.signOutText}>Sign out</Text>
+          <Pressable
+            style={({ pressed }) => pressed && { opacity: 0.7 }}
+            onPress={() => Alert.alert('Sign Out', 'Are you sure?', [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Sign Out', style: 'destructive', onPress: signOut },
+            ])}
+          >
+            <Text style={styles.signOutLinkText}>Sign out</Text>
           </Pressable>
         </View>
 
@@ -857,10 +864,9 @@ const styles = StyleSheet.create({
   brandText:     { fontSize: fontSize.xl, letterSpacing: 0.2 },
   brandSuper:    { color: '#1C1F26', fontFamily: 'PlayfairDisplay_700Bold' },
   welcomeText: { color: C.muted, fontSize: fontSize.base, letterSpacing: 0.1, marginLeft: 18 },
-  signOutBtn: { paddingHorizontal: spacing.md, paddingVertical: 6, borderWidth: 1.5, borderColor: 'rgba(28,31,38,0.30)', borderRadius: radius.full },
-  signOutText: { color: C.text, fontSize: fontSize.sm, fontWeight: '600' },
+  signOutLinkText: { color: C.muted, fontSize: fontSize.xs, fontWeight: '600', textDecorationLine: 'underline' },
 
-  tournamentBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.lg, borderWidth: 1, borderColor: 'rgba(201,168,76,0.3)', backgroundColor: 'rgba(201,168,76,0.07)', marginBottom: spacing.xs },
+  tournamentBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.lg, borderWidth: 1, borderColor: 'rgba(28,31,38,0.1)', backgroundColor: 'rgba(0,0,0,0.03)', marginBottom: spacing.xs },
   tournamentInfo: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, flex: 1 },
   tournamentIcon: { fontSize: 14 },
   tournamentName: { color: C.text, fontSize: fontSize.sm, fontWeight: '700', flex: 1 },
@@ -888,29 +894,29 @@ const styles = StyleSheet.create({
   statusArrow:     { color: C.muted, fontSize: 20 },
 
   sectionRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginVertical: 4 },
-  sectionLine:  { flex: 1, height: 1, backgroundColor: 'rgba(201,168,76,0.2)' },
+  sectionLine:  { flex: 1, height: 1, backgroundColor: 'rgba(28,31,38,0.1)' },
   sectionLabel: { color: C.muted, fontSize: fontSize.xs, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1.2 },
 
   tile: { borderWidth: 1, borderColor: C.border, borderRadius: radius.xl, overflow: 'hidden', backgroundColor: 'rgba(255,255,255,0.75)', ...shadow.card },
   tileOpen: { borderColor: C.borderA, shadowColor: '#C9A84C', shadowOpacity: 0.35, shadowRadius: 16, elevation: 12 },
   tileHeader: { flexDirection: 'row', alignItems: 'center', padding: spacing.lg, gap: spacing.md },
   tileHeaderOpen: { borderBottomWidth: 1, borderBottomColor: 'rgba(201,168,76,0.15)' },
-  tileIconWrap: { width: 42, height: 42, borderRadius: radius.lg, backgroundColor: 'rgba(201,168,76,0.1)', borderWidth: 1, borderColor: 'rgba(201,168,76,0.25)', alignItems: 'center', justifyContent: 'center' },
-  tileIconWrapOpen: { backgroundColor: 'rgba(201,168,76,0.2)', borderColor: 'rgba(201,168,76,0.5)' },
+  tileIconWrap: { width: 42, height: 42, borderRadius: radius.lg, backgroundColor: 'rgba(0,0,0,0.05)', borderWidth: 1, borderColor: 'rgba(0,0,0,0.1)', alignItems: 'center', justifyContent: 'center' },
+  tileIconWrapOpen: { backgroundColor: 'rgba(0,0,0,0.08)', borderColor: 'rgba(0,0,0,0.18)' },
   tileIcon:   { fontSize: 22 },
   tileTitles: { flex: 1, gap: 3 },
   tileName:   { color: C.text, fontSize: fontSize.base, fontWeight: '700', letterSpacing: 0.1 },
   tileMeta:   { color: C.muted, fontSize: fontSize.sm },
   chevronWrap: { width: 28, height: 28, borderRadius: radius.full, backgroundColor: 'rgba(0,0,0,0.04)', alignItems: 'center', justifyContent: 'center' },
-  chevronWrapOpen: { backgroundColor: 'rgba(201,168,76,0.15)' },
+  chevronWrapOpen: { backgroundColor: 'rgba(28,31,38,0.08)' },
   chevronText: { color: C.muted, fontSize: 18, fontWeight: '600' },
   tileBody:    { paddingHorizontal: spacing.lg, paddingBottom: spacing.lg, gap: spacing.md },
 
   heroCard: { borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm, borderWidth: 1, borderColor: 'rgba(201,168,76,0.28)', overflow: 'hidden' },
   heroTeamsRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.xs },
   heroTeam: { color: C.text, fontSize: fontSize.xl, fontWeight: '800', letterSpacing: 0.3, flex: 1 },
-  heroVsBadge: { paddingHorizontal: spacing.md, paddingVertical: 4, backgroundColor: 'rgba(201,168,76,0.12)', borderRadius: radius.full, borderWidth: 1, borderColor: 'rgba(201,168,76,0.35)', marginHorizontal: spacing.sm },
-  heroVs: { color: C.accent, fontSize: fontSize.xs, fontWeight: '800', letterSpacing: 1.5 },
+  heroVsBadge: { paddingHorizontal: spacing.md, paddingVertical: 4, backgroundColor: 'rgba(28,31,38,0.08)', borderRadius: radius.full, borderWidth: 1, borderColor: 'rgba(28,31,38,0.18)', marginHorizontal: spacing.sm },
+  heroVs: { color: C.muted, fontSize: fontSize.xs, fontWeight: '800', letterSpacing: 1.5 },
   heroDetailText: { color: 'rgba(28,31,38,0.65)', fontSize: fontSize.sm },
 
   actionBlock: { gap: spacing.sm },
@@ -928,11 +934,11 @@ const styles = StyleSheet.create({
   liveScoreLabelActive: { color: C.text, fontSize: fontSize.sm, fontWeight: '700', flex: 1 },
   liveScoreArrow: { color: C.muted, fontSize: fontSize.lg, fontWeight: '600' },
 
-  slHeaderStats: { flexDirection: 'row', alignItems: 'center', gap: 4, marginRight: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: 4, backgroundColor: 'rgba(201,168,76,0.1)', borderRadius: radius.md, borderWidth: 1, borderColor: 'rgba(201,168,76,0.2)' },
-  slHeaderPts:     { color: C.accent, fontSize: fontSize.sm, fontWeight: '800' },
-  slHeaderPtsSub:  { color: C.muted, fontSize: 9, fontWeight: '600' },
+  slHeaderStats: { flexDirection: 'row', alignItems: 'center', gap: 4, marginRight: spacing.xs, paddingHorizontal: spacing.sm, paddingVertical: 4, backgroundColor: 'rgba(0,0,0,0.04)', borderRadius: radius.md, borderWidth: 1, borderColor: 'rgba(28,31,38,0.12)' },
+  slHeaderPts:     { color: C.text, fontSize: fontSize.sm, fontWeight: '800' },
+  slHeaderPtsSub:  { color: C.muted, fontSize: fontSize.xs, fontWeight: '600' },
   slHeaderDivider: { width: 1, height: 12, backgroundColor: 'rgba(0,0,0,0.1)', marginHorizontal: 2 },
-  slHeaderXfer:    { color: C.gold, fontSize: fontSize.sm, fontWeight: '800' },
+  slHeaderXfer:    { color: C.text, fontSize: fontSize.sm, fontWeight: '800' },
   slHeaderXferWarn:{ color: '#C0392B' },
 
   // Wraps to a 2x2 layout — now that there are 4 SL tiles (Points/Rank/
@@ -951,9 +957,9 @@ const styles = StyleSheet.create({
   notJoinedText: { color: C.muted, fontSize: fontSize.sm },
 
   nestedDivider: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
-  dividerLine:   { flex: 1, height: 1, backgroundColor: 'rgba(201,168,76,0.2)' },
+  dividerLine:   { flex: 1, height: 1, backgroundColor: 'rgba(28,31,38,0.1)' },
   dividerLabel:  { color: C.muted, fontSize: fontSize.xs, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
-  nestedRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md, borderRadius: radius.lg, borderWidth: 1, borderColor: 'rgba(201,168,76,0.2)', overflow: 'hidden' },
+  nestedRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, padding: spacing.md, borderRadius: radius.lg, borderWidth: 1, borderColor: 'rgba(28,31,38,0.1)', overflow: 'hidden' },
   nestedIcon:  { fontSize: 16 },
   nestedInfo:  { flex: 1, gap: 2 },
   nestedName:  { color: C.text, fontSize: fontSize.base, fontWeight: '600' },
