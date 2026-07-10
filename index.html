@@ -174,7 +174,7 @@
     .player-card {
       background: rgba(255,255,255,0.72); border: 1px solid rgba(201,168,76,0.15); border-radius: 10px;
       padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px;
-      cursor: pointer; transition: all 0.15s;
+      cursor: pointer; transition: all 0.15s; position: relative;
       /* Prevent the card from inflating its grid track beyond the allocated fr unit.
          Without min-width:0, CSS Grid tracks default to min-content sizing, so long
          white-space:nowrap badge text ("Plays Next Match") pushes cards wider than
@@ -183,15 +183,16 @@
     }
     /* The left (text) child of each card is a flex item — also needs min-width:0
        so it doesn't push the card beyond its grid cell. */
-    .player-card > div:first-child { min-width: 0; overflow: hidden; }
+    .player-card .pc-left { min-width: 0; overflow: hidden; flex: 1; }
     .player-card:hover { border-color: var(--accent); transform: translateY(-1px); }
     .player-card.selected { border: 2px solid var(--accent); background: rgba(201,168,76,0.22); box-shadow: 0 1px 6px rgba(201,168,76,0.18); }
-    .player-card .sel-tick { display:none; }
-    .player-card.selected .sel-tick { display:flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; background:var(--accent); color:#1C1F26; font-size:11px; font-weight:700; flex-shrink:0; }
+    .player-card .sel-tick { display:none; position:absolute; top:-7px; right:-7px; }
+    .player-card.selected .sel-tick { display:flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:50%; background:var(--accent); color:#1C1F26; font-size:11px; font-weight:700; }
     .player-card.disabled { opacity: 0.4; cursor: not-allowed; }
     .player-card .name { font-weight: 600; font-size: 14px; line-height: 1.2; }
     .player-card .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
     .player-card .credit { font-size: 13px; font-weight: 700; color: var(--accent-2); }
+    .player-card .credit-label { font-size: 9px; color: var(--muted); letter-spacing: 0.5px; }
     .plays-badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 99px; margin-top: 4px; white-space: nowrap; letter-spacing: 0.1px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
     .plays-badge.plays-next  { background: rgba(201,168,76,0.18); color: var(--accent); border: 1px solid rgba(201,168,76,0.4); }
     .plays-badge.plays-after { background: rgba(120,120,120,0.1); color: var(--muted); border: 1px solid rgba(120,120,120,0.2); }
@@ -8008,11 +8009,10 @@ p31,Sample Player,MI,bat,9.0,false
         const isCap = isSL && p.id === state.sl.xiCaptain;
         const isVc  = isSL && p.id === state.sl.xiVc;
         const capVcBtns = isSL && sel ? `
-          <div class="cap-vc-btns" style="display:flex;gap:3px;margin-top:3px;">
+          <div class="cap-vc-btns" style="display:flex;gap:5px;flex-shrink:0;">
             <button class="cap-btn ${isCap?'captain':''}" data-slcap="${p.id}" title="Captain">C</button>
             <button class="cap-btn ${isVc?'vc':''}"       data-slvc="${p.id}"  title="Vice-C">V</button>
           </div>` : '';
-        const nameSuffix = isCap ? ' <span class="cap-badge">C</span>' : isVc ? ' <span class="vc-badge">VC</span>' : '';
         const tm = teamByCode(p.team);
         // Show the team code on the jersey instead of the player's initials —
         // the card's name/role text already identifies the player, so the
@@ -8025,25 +8025,26 @@ p31,Sample Player,MI,bat,9.0,false
         const playsLabel = getPlaysAfterLabel(p.team);
         return `
           <div class="player-card ${sel?'selected':''} ${disabled?'disabled':''}" data-id="${p.id}">
-            <div>
-              <div class="name">${p.name}${nameSuffix}${badge}</div>
+            ${jersey}
+            <div class="pc-left">
+              <div class="name">${p.name}${badge}</div>
               <div class="meta">
                 <span class="role-tag role-${p.role}">${roleLabel[p.role]}</span>
                 ${p.team}
                 ${p.overseas ? '<span class="os-tag" title="Overseas player">✈️</span>' : ''}
               </div>
               ${playsLabel}
-              ${capVcBtns}
             </div>
+            ${capVcBtns}
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
-              <span class="sel-tick">✓</span>
-              ${jersey}
               <div class="credit">${p.credits.toFixed(1)}</div>
-              <div style="display:flex;align-items:center;gap:4px;">
+              <div class="credit-label">CR</div>
+              <div style="display:flex;align-items:center;gap:4px;margin-top:2px;">
                 ${formStripHtml(p.id)}
                 <button class="stats-icon-btn" data-stats="${p.id}" title="Match-by-match history">📊</button>
               </div>
             </div>
+            <span class="sel-tick">✓</span>
           </div>
         `;
       }).join('');
