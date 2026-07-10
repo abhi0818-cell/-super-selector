@@ -477,17 +477,21 @@ export const useBoosterStore = create<BoosterState>((set, get) => ({
   },
 
   discardPending: () => {
+    // Must use buildBoosterList, not a manual .map() — the manual version only
+    // reset 'pending'→'available' but left boosters that were 'used' because
+    // of the anotherActive flag (every non-selected booster when one is staged)
+    // stuck as 'used' after the discard. buildBoosterList recomputes all
+    // statuses correctly from the reverted pending === committed baseline.
     set(s => ({
       _pendingId: s._committedId,
       isUnsaved:  false,
-      boosters: s.boosters.map(b => ({
-        ...b,
-        status: (b.id === s._committedId
-          ? 'active'
-          : b.status === 'pending' || b.status === 'active'
-            ? 'available'
-            : b.status) as BoosterStatus,
-      })),
+      boosters: buildBoosterList(
+        Object.fromEntries(s.boosters.map(b => [b.id, b.totalUses])),
+        Object.fromEntries(s.boosters.map(b => [b.id, b.usedInOther])),
+        s._committedId,
+        s._committedId, // pendingId === committedId after discard
+        s._transfersUnlimited,
+      ),
     }));
   },
 
