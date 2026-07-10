@@ -443,21 +443,18 @@ export default function MyXIScreen({ route }: Props) {
                 onPress={() => setContext(null as any)}
               >
                 <Text style={styles.contextChipText} numberOfLines={1}>
-                  {activeContext.leagueName} ⇄
+                  {activeContext.leagueName} ▾
                 </Text>
               </Pressable>
             )}
           </View>
-          <View style={styles.topBarRight}>
-            {user && (
-              <Text style={styles.userEmail} numberOfLines={1}>
-                {teamName || user.email}
+          {user && (
+            <Pressable style={styles.profileChip} onPress={handleSignOut}>
+              <Text style={styles.profileChipText} numberOfLines={1}>
+                {teamName ?? user.email?.split('@')[0] ?? ''}
               </Text>
-            )}
-            <Pressable style={styles.signOutBtn} onPress={handleSignOut}>
-              <Text style={styles.signOutText}>Sign Out</Text>
             </Pressable>
-          </View>
+          )}
         </LinearGradient>
 
         {/* ── Info strip: countdown + transfers ────────────────────────── */}
@@ -467,7 +464,7 @@ export default function MyXIScreen({ route }: Props) {
             {currentMatchLabel ? (
               <View style={styles.infoPill}>
                 <Text style={styles.infoPillIcon}>🏏</Text>
-                <Text style={[styles.infoPillValue, { color: C.accent }]} numberOfLines={1}>{currentMatchLabel}</Text>
+                <Text style={styles.infoPillValue} numberOfLines={1}>{currentMatchLabel}</Text>
               </View>
             ) : null}
 
@@ -708,7 +705,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical:  spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(201,168,76,0.25)',
+    borderBottomColor: 'rgba(28,31,38,0.1)',
   },
   topBarLeft: {
     flexDirection: 'row',
@@ -746,26 +743,18 @@ const styles = StyleSheet.create({
     fontSize:   fontSize.xs,
     fontWeight: '700',
   },
-  topBarRight: {
-    flexDirection: 'row',
-    alignItems:    'center',
-    gap:           spacing.sm,
-  },
-  userEmail: {
-    color:    C.muted,
-    fontSize: fontSize.xs,
-    maxWidth: 120,
-  },
-  signOutBtn: {
-    paddingHorizontal: spacing.md,
-    paddingVertical:   spacing.xs + 2,
-    borderWidth:       1.5,
-    borderColor:       'rgba(28,31,38,0.30)',
+  profileChip: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical:   spacing.xs,
     borderRadius:      radius.md,
+    backgroundColor:   'rgba(28,31,38,0.06)',
+    borderWidth:       1,
+    borderColor:       'rgba(28,31,38,0.15)',
+    maxWidth:          130,
   },
-  signOutText: {
-    color:      C.text,
-    fontSize:   fontSize.sm,
+  profileChipText: {
+    color:      C.muted,
+    fontSize:   fontSize.xs,
     fontWeight: '600',
   },
 
@@ -820,15 +809,15 @@ const styles = StyleSheet.create({
     paddingVertical:  spacing.sm,
     paddingHorizontal: spacing.lg,
     borderTopWidth:   1,
-    borderTopColor:   'rgba(201,168,76,0.2)',
+    borderTopColor:   'rgba(28,31,38,0.1)',
   },
   actionPill: {
     backgroundColor:   '#1C1F26',
     borderRadius:      radius.full,
-    paddingHorizontal: spacing.md,
-    paddingVertical:   5,
+    paddingHorizontal: spacing.lg,
+    paddingVertical:   spacing.sm + 2,
   },
-  actionPillText: { color: '#fff', fontSize: fontSize.xs, fontWeight: '800', letterSpacing: 0.3 },
+  actionPillText: { color: '#fff', fontSize: fontSize.base, fontWeight: '800', letterSpacing: 0.3 },
   resetBtn: {
     paddingHorizontal: spacing.md,
     paddingVertical:   4,
@@ -894,7 +883,7 @@ const styles = StyleSheet.create({
   },
   modalHeaderLeft: { gap: 2 },
   modalTitle:    { color: C.text, fontSize: fontSize.lg, fontWeight: '800' },
-  modalSubtitle: { color: C.accent, fontSize: fontSize.sm },
+  modalSubtitle: { color: C.muted, fontSize: fontSize.sm },
   cancelBtn: {
     width:           34,
     height:          34,
@@ -919,17 +908,17 @@ const styles = StyleSheet.create({
   },
   doneBtnText: { color: '#fff', fontSize: fontSize.base, fontWeight: '700' },
 
-  // Info strip (countdown + transfers) — single row, no wrap
+  // Info strip (countdown + transfers) — wraps when there are 4+ pills
   infoStrip: {
     flexDirection:     'row',
     alignItems:        'center',
-    flexWrap:          'nowrap',
+    flexWrap:          'wrap',
     gap:               spacing.xs,
     paddingHorizontal: spacing.sm,
     paddingVertical:   spacing.xs,
-    backgroundColor:   'rgba(201,168,76,0.07)',
+    backgroundColor:   'rgba(0,0,0,0.03)',
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(201,168,76,0.18)',
+    borderBottomColor: 'rgba(28,31,38,0.08)',
   },
   infoPill: {
     flexDirection:     'row',
@@ -937,7 +926,7 @@ const styles = StyleSheet.create({
     flexShrink:        1,
     backgroundColor:   'rgba(255,255,255,0.6)',
     borderWidth:       1,
-    borderColor:       'rgba(201,168,76,0.25)',
+    borderColor:       'rgba(28,31,38,0.12)',
     borderRadius:      radius.full,
     paddingHorizontal: 6,
     paddingVertical:   2,
@@ -945,14 +934,14 @@ const styles = StyleSheet.create({
   },
   infoPillIcon:  { fontSize: 10 },
   infoPillLabel: { fontSize: fontSize.xs, color: C.muted },
-  infoPillValue: { fontSize: fontSize.xs, fontWeight: '700', color: C.accent },
+  infoPillValue: { fontSize: fontSize.xs, fontWeight: '700', color: C.text },
 
   pendingNote: {
     paddingHorizontal: spacing.lg,
     paddingVertical:   4,
-    backgroundColor:   'rgba(201,168,76,0.05)',
+    backgroundColor:   'transparent',
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(201,168,76,0.12)',
+    borderBottomColor: 'rgba(28,31,38,0.08)',
   },
   pendingNoteText: {
     fontSize: fontSize.xs,
