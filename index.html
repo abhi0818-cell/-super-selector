@@ -5290,6 +5290,11 @@ p31,Sample Player,MI,bat,9.0,false
       let draft = null;
       try { draft = await state.db.getDraft(squadId); } catch (_) {}
       state.sl.draft = draft;
+      // Seed lastSavedXI from the loaded draft so "Revert to Saved" is
+      // available on a fresh page load without needing a Save XI in-session.
+      if (draft?.playerIds?.length === 11) {
+        state.sl.lastSavedXI = { playerIds: [...draft.playerIds], captainId: draft.captainId ?? null, vcId: draft.vcId ?? null };
+      }
 
       // 2. Last locked XI = transfer baseline (independent of pool dropdown)
       const lastLocked = await state.db.getLastLockedXI(squadId, state.matches);
@@ -5639,10 +5644,10 @@ p31,Sample Player,MI,bat,9.0,false
       // via the click-to-pick Captain/Vice-C tile (renderSlCapVcPicker below).
       renderSlPitchView();
 
-      // ── Revert button — show only when a locked XI exists to revert to ────
+      // ── Revert button — show only when a previously saved XI exists ────────
       const revertBtn = $('#slRevertBtn');
       if (revertBtn) {
-        revertBtn.style.display = state.sl.lastLockedXI?.playerIds?.length ? '' : 'none';
+        revertBtn.style.display = state.sl.lastSavedXI?.playerIds?.length ? '' : 'none';
       }
 
       // ── Save button ───────────────────────────────────────────────────────
@@ -10933,21 +10938,14 @@ p31,Sample Player,MI,bat,9.0,false
     $('#slSaveXiBtn').addEventListener('click', saveSlXiHandler);
 
     $('#slRevertBtn').addEventListener('click', async () => {
-      const lastLocked = state.sl.lastLockedXI;
-      if (!lastLocked?.playerIds?.length) return;
-      const matchNum = lastLocked.matchNumber ?? '?';
+      const lastSaved = state.sl.lastSavedXI;
+      if (!lastSaved?.playerIds?.length) return;
 
-      // "Revert to Saved" rolls everything for the next match back to the
-      // state as of the last lock — XI draft AND booster alike. A booster
-      // for the next match is a change made since that lock whether it's
-      // already committed (via a prior Save XI) or just staged-but-unsaved
-      // in this session (see state.sl.pendingBooster), so both go away on
-      // revert. Discarding the in-memory pending pick never needs a DB
-      // call; an already-committed activation does. Without the DB call,
-      // reverting the XI would leave a now-orphaned booster active for the
-      // next match (wasting a use / leaving bypassTransfers wrongly true at
-      // lock time) even though the confirm dialog below already promises to
-      // discard pending changes for that match.
+      // "Revert to Saved" rolls the next-match XI back to the last explicitly
+      // saved draft — mirroring mobile's behaviour. A booster for the next
+      // match is a change made since that save (committed via Save XI or just
+      // staged in memory), so both go away on revert. Discarding the in-memory
+      // pending pick never needs a DB call; an already-committed activation does.
       let boosterCtx = null;
       try { boosterCtx = await getSlBoosterContext(); } catch (_) {}
       const activeBoosterLabel = boosterCtx?.activeForNext
@@ -10957,9 +10955,9 @@ p31,Sample Player,MI,bat,9.0,false
       const boosterNote = activeBoosterLabel
         ? `\n\n${activeBoosterLabel} is currently active for the next match and will also be removed.`
         : '';
-      if (!confirm(`Revert to your last saved XI (M${matchNum})?\n\nThis will discard any pending changes for the next match.${boosterNote}`)) return;
+      if (!confirm(`Revert to your last saved XI?\n\nThis will discard any unsaved changes.${boosterNote}`)) return;
       try {
-        const draft = { playerIds: lastLocked.playerIds, captainId: lastLocked.captainId, vcId: lastLocked.vcId };
+        const draft = { playerIds: lastSaved.playerIds, captainId: lastSaved.captainId, vcId: lastSaved.vcId };
         if (state.sl.squad) await state.db.saveDraft(state.sl.squad.id, draft);
 
         if (boosterCtx?.activeForNext && boosterCtx.nextMatch && state.sl.squad) {
