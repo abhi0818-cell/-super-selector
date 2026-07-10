@@ -175,7 +175,15 @@
       background: rgba(255,255,255,0.72); border: 1px solid rgba(201,168,76,0.15); border-radius: 10px;
       padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px;
       cursor: pointer; transition: all 0.15s;
+      /* Prevent the card from inflating its grid track beyond the allocated fr unit.
+         Without min-width:0, CSS Grid tracks default to min-content sizing, so long
+         white-space:nowrap badge text ("Plays Next Match") pushes cards wider than
+         the column, causing page-level horizontal scroll when the pool is open. */
+      min-width: 0;
     }
+    /* The left (text) child of each card is a flex item — also needs min-width:0
+       so it doesn't push the card beyond its grid cell. */
+    .player-card > div:first-child { min-width: 0; overflow: hidden; }
     .player-card:hover { border-color: var(--accent); transform: translateY(-1px); }
     .player-card.selected { border: 2px solid var(--accent); background: rgba(201,168,76,0.22); box-shadow: 0 1px 6px rgba(201,168,76,0.18); }
     .player-card .sel-tick { display:none; }
@@ -184,7 +192,7 @@
     .player-card .name { font-weight: 600; font-size: 14px; line-height: 1.2; }
     .player-card .meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
     .player-card .credit { font-size: 13px; font-weight: 700; color: var(--accent-2); }
-    .plays-badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 99px; margin-top: 4px; white-space: nowrap; letter-spacing: 0.1px; }
+    .plays-badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 99px; margin-top: 4px; white-space: nowrap; letter-spacing: 0.1px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
     .plays-badge.plays-next  { background: rgba(201,168,76,0.18); color: var(--accent); border: 1px solid rgba(201,168,76,0.4); }
     .plays-badge.plays-after { background: rgba(120,120,120,0.1); color: var(--muted); border: 1px solid rgba(120,120,120,0.2); }
     .form-strip { display: flex; gap: 3px; align-items: center; }
