@@ -432,7 +432,7 @@ const styles = StyleSheet.create({
   headerBackText: { color: C.text, fontSize: 18, fontWeight: '700' },
   headerCenter:   { flex: 1, gap: 1, alignItems: 'center' },
   headerTitle:    { color: C.text, fontSize: fontSize.lg, fontWeight: '800', textAlign: 'center' },
-  headerSub:      { color: C.accent, fontSize: fontSize.xs, textAlign: 'center' },
+  headerSub:      { color: C.muted, fontSize: fontSize.xs, textAlign: 'center' },
   stepPill: {
     backgroundColor:   'rgba(201,168,76,0.12)',
     borderWidth:       1,
@@ -492,11 +492,11 @@ const styles = StyleSheet.create({
   },
   assignBadgeC:    { backgroundColor: '#C9A84C' },
   assignBadgeVC:   { backgroundColor: '#7A7060' },
-  assignBadgeText: { color: '#1C1F26', fontSize: 10, fontWeight: '900' },
+  assignBadgeText: { color: '#1C1F26', fontSize: fontSize.xs, fontWeight: '900' },
   assignSlotBody:  { flex: 1 },
   assignSlotLabel: {
     color:         C.muted,
-    fontSize:      9,
+    fontSize:      fontSize.xs,
     fontWeight:    '700',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -512,7 +512,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(201,168,76,0.15)',
   },
-  modeHintText: { color: C.accent, fontSize: fontSize.xs, textAlign: 'center' },
+  modeHintText: { color: C.text, fontSize: fontSize.xs, textAlign: 'center' },
 
   // Player grid
   gridScroll: { flex: 1 },
@@ -550,7 +550,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     zIndex:          10,
   },
-  capTileBadgeText: { color: '#1C1F26', fontSize: 9, fontWeight: '900' },
+  capTileBadgeText: { color: '#1C1F26', fontSize: fontSize.xs, fontWeight: '900' },
 
   capTileAvatar: {
     alignItems:     'center',
@@ -570,7 +570,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical:   1,
   },
-  capTileRoleText: { fontSize: 9, fontWeight: '700', letterSpacing: 0.5 },
+  capTileRoleText: { fontSize: fontSize.xs, fontWeight: '700', letterSpacing: 0.5 },
 
   // ── Summary step ─────────────────────────────────────────────────────────────
 
@@ -590,7 +590,7 @@ const styles = StyleSheet.create({
   },
   summaryChangesPanelTitle: {
     color:         C.muted,
-    fontSize:      9,
+    fontSize:      fontSize.xs,
     fontWeight:    '700',
     textTransform: 'uppercase',
     letterSpacing: 1,
@@ -612,7 +612,7 @@ const styles = StyleSheet.create({
   },
   boosterBannerIcon: { fontSize: 20 },
   boosterBannerName: { color: C.gold, fontSize: fontSize.sm, fontWeight: '800' },
-  boosterBannerNote: { color: C.muted, fontSize: 9, fontWeight: '600', marginTop: 1 },
+  boosterBannerNote: { color: C.muted, fontSize: fontSize.xs, fontWeight: '600', marginTop: 1 },
 
   changeItem: {
     flexDirection:     'row',
@@ -633,7 +633,7 @@ const styles = StyleSheet.create({
   changeItemName: { fontSize: fontSize.sm, fontWeight: '700' },
   changeItemMeta: {
     color:         C.muted,
-    fontSize:      9,
+    fontSize:      fontSize.xs,
     fontWeight:    '600',
     letterSpacing: 0.5,
     marginTop:     1,
