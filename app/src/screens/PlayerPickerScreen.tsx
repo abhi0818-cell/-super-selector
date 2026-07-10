@@ -608,13 +608,13 @@ const styles = StyleSheet.create({
     gap:               spacing.sm,
     paddingHorizontal: spacing.lg,
     paddingVertical:   spacing.sm + 2,
-    backgroundColor:   'rgba(201,168,76,0.07)',
+    backgroundColor:   'rgba(0,0,0,0.03)',
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(201,168,76,0.2)',
+    borderBottomColor: C.border,
   },
   contextIcon: { fontSize: 14 },
   contextText: { color: C.muted, fontSize: fontSize.sm, flex: 1 },
-  contextName: { color: C.accent, fontWeight: '700' },
+  contextName: { color: C.text, fontWeight: '700' },
   customBadge: {
     backgroundColor:   'rgba(201,168,76,0.12)',
     borderRadius:      radius.full,
@@ -805,8 +805,8 @@ const styles = StyleSheet.create({
     borderColor:       C.border,
   },
   pillActive: {
-    backgroundColor: C.accent,
-    borderColor:     C.accent,
+    backgroundColor: C.active,
+    borderColor:     C.active,
   },
   pillText: {
     color:      C.muted,
@@ -814,7 +814,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   pillTextActive: {
-    color:      C.active,
+    color:      '#fff',
     fontWeight: '800',
   },
 
@@ -849,7 +849,7 @@ const styles = StyleSheet.create({
   chipCount:       { fontWeight: '700' },
   chipCountActive: { color: 'rgba(255,255,255,0.8)' },
   osChip: {
-    borderColor: 'rgba(201,168,76,0.35)',
+    borderColor: C.border,
   },
   osChipActive: {
     backgroundColor: C.accent,
