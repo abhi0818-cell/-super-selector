@@ -139,6 +139,7 @@ function CaptainStep({ players, onAssign }: CaptainStepProps) {
         style={styles.gridScroll}
         contentContainerStyle={styles.grid}
         showsVerticalScrollIndicator={false}
+        bounces={false}
       >
         {sorted.map(p => {
           const isCap = p.captaincy === 'captain';
@@ -238,7 +239,7 @@ function SummaryStep({ current, previous, activeBoosterId, onBack, onSave, onCan
           </Text>
 
           {hasChanges ? (
-            <ScrollView showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
+            <ScrollView showsVerticalScrollIndicator={false} bounces={false} style={{ flex: 1 }}>
               {removed.map(p => (
                 <View key={p.id} style={styles.changeItem}>
                   <View style={[styles.changeItemDot, { backgroundColor: C.bad }]} />
@@ -326,7 +327,7 @@ export default function ConfirmXIModal({
     <Modal
       visible={visible}
       animationType="none"
-      presentationStyle="pageSheet"
+      presentationStyle="fullScreen"
       onRequestClose={step === 'summary' ? () => setStep('captain') : onEditMore}
     >
       <View style={styles.root}>

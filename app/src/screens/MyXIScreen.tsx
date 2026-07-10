@@ -90,6 +90,7 @@ export default function MyXIScreen({ route }: Props) {
     removePlayer,
     setCaptaincy,
     resetXI,
+    restoreXI,
     loadSavedXI,
     saveXI,
     saveError,
@@ -130,6 +131,25 @@ export default function MyXIScreen({ route }: Props) {
     setConfirmOpen(false);
     setPickerOpen(true);
   };
+
+  // Reverts the XI to the last saved draft (DB), or the last locked XI if no
+  // draft exists, or the snapshot from when the picker was opened as a last resort.
+  const revertXI = useCallback(async () => {
+    if (activeContext && currentMatchId) {
+      const err = await loadSavedXI(currentMatchId, activeContext.contestId, activeContext.contestType);
+      if (err) {
+        if (previousLockedXI.length > 0) restoreXI(previousLockedXI);
+        else restoreXI(snapshot);
+      }
+    } else {
+      restoreXI(snapshot);
+    }
+  }, [activeContext, currentMatchId, loadSavedXI, previousLockedXI, restoreXI, snapshot]);
+
+  const handlePickerCancel = useCallback(async () => {
+    setPickerOpen(false);
+    await revertXI();
+  }, [revertXI]);
 
   const currentMatchId = useTeamStore(s => s.currentMatchId);
   const nextMatchTime  = useTeamStore(s => s.nextMatchTime);
@@ -604,9 +624,10 @@ export default function MyXIScreen({ route }: Props) {
             onRemove={(id) => removePlayer(id)}
             onConfirm={handleConfirm}
             onEditMore={handleEditMore}
-            onCancel={() => {
+            onCancel={async () => {
               setConfirmOpen(false);
               setPickerOpen(false);
+              await revertXI();
               navigation.navigate('Home');
             }}
           />
@@ -623,7 +644,7 @@ export default function MyXIScreen({ route }: Props) {
         <Modal
           visible={pickerOpen}
           animationType="none"
-          presentationStyle="pageSheet"
+          presentationStyle="fullScreen"
           onRequestClose={handlePickerDone}
         >
           <View style={styles.modalRoot}>
@@ -631,7 +652,7 @@ export default function MyXIScreen({ route }: Props) {
             <SafeAreaView style={styles.modalSafe} edges={['top']}>
               {/* Modal header */}
               <LinearGradient colors={G.modalHdr} style={styles.modalHeader}>
-                <Pressable onPress={() => setPickerOpen(false)} style={styles.cancelBtn}>
+                <Pressable onPress={handlePickerCancel} style={styles.cancelBtn}>
                   <Text style={styles.cancelBtnText}>✕</Text>
                 </Pressable>
                 <View style={styles.modalHeaderLeft}>

@@ -71,11 +71,11 @@ export default function PlayerCard({ player, selected, disabled, onPress, recent
         {!!playsAfterLabel && (
           <View style={[
             styles.playsBadge,
-            playsAfterLabel === 'Plays next' ? styles.playsBadgeNext : styles.playsBadgeAfter,
+            playsAfterLabel === 'Plays Next Match' ? styles.playsBadgeNext : styles.playsBadgeAfter,
           ]}>
             <Text style={[
               styles.playsBadgeText,
-              playsAfterLabel === 'Plays next' ? styles.playsBadgeTextNext : styles.playsBadgeTextAfter,
+              playsAfterLabel === 'Plays Next Match' ? styles.playsBadgeTextNext : styles.playsBadgeTextAfter,
             ]}>
               {playsAfterLabel}
             </Text>

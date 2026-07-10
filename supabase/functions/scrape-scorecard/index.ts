@@ -785,6 +785,29 @@ function resolveFielderName(
 }
 
 // ─── XI scoring distribution ─────────────────────────────────────────────────
+//
+// Multiplier logic mirrors poll-cricapi's captaincyMultiplier/boosterMultiplier
+// (MULTIPLIERS: captain=2, triple_captain=3, vice_captain=1.5, normal=1, plus
+// team_double/os_double/indian_double). This function used to hardcode
+// captain=2x/vc=1.5x and never looked at user_booster_activations at all, so
+// any squad running triple_captain (or dual_captain / the *_double boosters)
+// would still be scored/stored as a plain 2x whenever the scraper (rather than
+// poll-cricapi) was the one to write user_match_xi_scores for that match —
+// silently clobbering the correct multiplier on the very next scrape.
+const XI_MULTIPLIERS: Record<string, number> = { captain: 2, triple_captain: 3, vice_captain: 1.5, normal: 1 }
+
+function xiCaptaincyMultiplier(captaincy: 'captain' | 'vice_captain' | 'normal', booster: string | null): number {
+  const key = (booster === 'triple_captain' && captaincy === 'captain') ? 'triple_captain'
+    : (booster === 'dual_captain' && captaincy === 'vice_captain') ? 'captain'
+      : captaincy
+  return XI_MULTIPLIERS[key] ?? 1
+}
+function xiBoosterMultiplier(booster: string | null, isOverseas: boolean): number {
+  if (booster === 'team_double') return 2
+  if (booster === 'os_double' && isOverseas) return 2
+  if (booster === 'indian_double' && !isOverseas) return 2
+  return 1
+}
 
 async function scoreXIForMatch(matchId: string, pointsMap: Map<string, number>) {
   // Get all locked XIs for this match
@@ -795,9 +818,27 @@ async function scoreXIForMatch(matchId: string, pointsMap: Map<string, number>) 
 
   if (error || !xiRows?.length) return
 
+  // Active boosters for every squad in this match, one query (mirrors
+  // poll-cricapi's scoreSLForMatch / getAllBoostersForMatch).
+  const { data: boosterRows } = await sb
+    .from('user_booster_activations')
+    .select('squad_id, booster')
+    .eq('match_id', matchId)
+  const boosterMap = new Map<string, string>()
+  for (const b of boosterRows ?? []) boosterMap.set(b.squad_id, b.booster)
+
+  // Overseas flag per player — needed for os_double / indian_double.
+  const playerIds = Array.from(new Set(xiRows.map((r: any) => r.player_id)))
+  const { data: playerRows } = await sb.from('players').select('id, is_overseas').in('id', playerIds)
+  const overseasMap = new Map<string, boolean>()
+  for (const p of playerRows ?? []) overseasMap.set(p.id, !!p.is_overseas)
+
   const scoreRows = xiRows.map((xi: any) => {
-    const raw   = pointsMap.get(xi.player_id) ?? 0
-    const mult  = xi.is_captain ? 2 : xi.is_vc ? 1.5 : 1
+    const raw       = pointsMap.get(xi.player_id) ?? 0
+    const booster   = boosterMap.get(xi.squad_id) ?? null
+    const captaincy: 'captain' | 'vice_captain' | 'normal' = xi.is_captain ? 'captain' : xi.is_vc ? 'vice_captain' : 'normal'
+    const isOverseas = overseasMap.get(xi.player_id) ?? false
+    const mult = xiCaptaincyMultiplier(captaincy, booster) * xiBoosterMultiplier(booster, isOverseas)
     return {
       squad_id    : xi.squad_id,
       match_id    : matchId,

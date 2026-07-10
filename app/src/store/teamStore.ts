@@ -154,6 +154,7 @@ interface TeamState {
   setCaptaincy:  (playerId: string, role: CaptaincyRole) => void;
   removePlayer:  (playerId: string) => void;
   resetXI:       () => void;
+  restoreXI:     (players: SelectedPlayer[]) => void;
   loadSavedXI:   (matchId: string, contestId: string, contestType?: 'daily' | 'sl' | 'private') => Promise<string | null>;
   saveXI:        (opts: SaveXIOpts) => Promise<string | null>;
 }
@@ -469,6 +470,11 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   resetXI: () => {
     const { format, budgetCapSuspended } = get();
     set({ selected: [], ...deriveStats([], format, budgetCapSuspended) });
+  },
+
+  restoreXI: (players) => {
+    const { format, budgetCapSuspended } = get();
+    set({ selected: players, ...deriveStats(players, format, budgetCapSuspended) });
   },
 
   // ── 3. Load last saved XI (user_match_xi primary, user_teams fallback) ────────

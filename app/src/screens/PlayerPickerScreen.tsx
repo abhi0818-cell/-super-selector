@@ -244,8 +244,8 @@ export default function PlayerPickerScreen() {
     allTeams.forEach(team => {
       const idx = upcoming.findIndex(m => m.homeTeamId === team || m.awayTeamId === team);
       if (idx < 0) return;
-      if (idx === 0) { map.set(team, 'Plays next'); return; }
-      map.set(team, `After ${idx} match${idx > 1 ? 'es' : ''}`);
+      if (idx === 0) { map.set(team, 'Plays Next Match'); return; }
+      map.set(team, `Plays After ${idx} match${idx > 1 ? 'es' : ''}`);
     });
     return map;
   }, [matches]);
@@ -552,6 +552,7 @@ export default function PlayerPickerScreen() {
           contentContainerStyle={styles.list}
           ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
           keyboardShouldPersistTaps="handled"
+          bounces={false}
           ListEmptyComponent={
             <Text style={styles.empty}>
               {matchesLoading ? 'Loading matches…' : 'No players match your filter'}

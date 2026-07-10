@@ -2297,7 +2297,7 @@ export function createDb(cfg = {}) {
     async getTeamMatchPlayers(teamId, matchId) {
       const sb = await getClient();
       const [{ data: team }, { data: tp }] = await Promise.all([
-        sb.from('user_teams').select('name, captain_id, vice_captain_id').eq('id', teamId).single(),
+        sb.from('user_teams').select('name, captain_id, vice_captain_id, squad_id').eq('id', teamId).single(),
         sb.from('user_team_players').select('player_id').eq('user_team_id', teamId),
       ]);
       const pids = (tp || []).map(r => r.player_id);
@@ -2315,15 +2315,40 @@ export function createDb(cfg = {}) {
       ]);
       const playerMap = Object.fromEntries((players || []).map(p => [p.id, p]));
       const statsMap  = Object.fromEntries((stats  || []).map(s => [s.player_id, s]));
+
+      // Teams linked to a squad (Season Long XIs — squad_id is set per
+      // migration_v4) are the ones eligible for boosters (triple_captain,
+      // dual_captain, etc. — see user_booster_activations). The authoritative
+      // per-player base/multiplier/total for those already live in
+      // user_match_xi_scores, computed by the scoring cron with full booster
+      // awareness. Recomputing from scratch here with a hardcoded
+      // captain=2x/vc=1.5x (as this used to do) silently ignored any active
+      // booster, so e.g. triple_captain (3x) would still display as 2X.
+      // Ad-hoc daily teams (squad_id IS NULL) have no booster support at all,
+      // so they keep the simple hardcoded multiplier.
+      let xiScoreMap = {};
+      if (team?.squad_id) {
+        const { data: xiScores } = await sb
+          .from('user_match_xi_scores')
+          .select('player_id, base_points, multiplier, total_points')
+          .eq('squad_id', team.squad_id)
+          .eq('match_id', matchId)
+          .in('player_id', pids);
+        xiScoreMap = Object.fromEntries((xiScores || []).map(s => [s.player_id, s]));
+      }
+
       let totalPoints = 0;
       const playerRows = pids.map(pid => {
         const p = playerMap[pid] || {};
         const s = statsMap[pid]  || {};
         const isCaptain = pid === base.captainId;
         const isVc      = pid === base.viceCaptainId;
-        const raw        = s.raw_points != null ? Number(s.raw_points) : null;
-        const multiplier = isCaptain ? 2 : isVc ? 1.5 : 1;
-        const totalPts   = raw != null ? Math.round(raw * multiplier * 10) / 10 : null;
+        const xiScore   = xiScoreMap[pid];
+        const raw        = xiScore ? Number(xiScore.base_points)
+          : (s.raw_points != null ? Number(s.raw_points) : null);
+        const multiplier = xiScore ? Number(xiScore.multiplier) : (isCaptain ? 2 : isVc ? 1.5 : 1);
+        const totalPts   = xiScore ? Number(xiScore.total_points)
+          : (raw != null ? Math.round(raw * multiplier * 10) / 10 : null);
         if (totalPts != null) totalPoints += totalPts;
         return {
           player_id   : pid,
