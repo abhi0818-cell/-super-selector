@@ -135,6 +135,8 @@ export default function MyXIScreen({ route }: Props) {
   // Reverts the XI to the last saved draft (DB), or the last locked XI if no
   // draft exists, or the snapshot from when the picker was opened as a last resort.
   const revertXI = useCallback(async () => {
+    // Always discard any staged (not-yet-saved) booster pick on cancel
+    discardPending();
     if (activeContext && currentMatchId) {
       const err = await loadSavedXI(currentMatchId, activeContext.contestId, activeContext.contestType);
       if (err) {
@@ -144,16 +146,17 @@ export default function MyXIScreen({ route }: Props) {
     } else {
       restoreXI(snapshot);
     }
-  }, [activeContext, currentMatchId, loadSavedXI, previousLockedXI, restoreXI, snapshot]);
+  }, [activeContext, currentMatchId, discardPending, loadSavedXI, previousLockedXI, restoreXI, snapshot]);
 
   const handlePickerCancel = useCallback(async () => {
     setPickerOpen(false);
     await revertXI();
   }, [revertXI]);
 
-  const currentMatchId = useTeamStore(s => s.currentMatchId);
-  const nextMatchTime  = useTeamStore(s => s.nextMatchTime);
-  const isFirstMatch   = useTeamStore(s => s.isFirstMatch);
+  const currentMatchId    = useTeamStore(s => s.currentMatchId);
+  const currentMatchLabel = useTeamStore(s => s.currentMatchLabel);
+  const nextMatchTime     = useTeamStore(s => s.nextMatchTime);
+  const isFirstMatch      = useTeamStore(s => s.isFirstMatch);
   const setBudgetCapSuspended = useTeamStore(s => s.setBudgetCapSuspended);
 
   // Suspend the 100cr budget cap while Free Hit is the effective (staged-or-
@@ -458,8 +461,16 @@ export default function MyXIScreen({ route }: Props) {
         </LinearGradient>
 
         {/* ── Info strip: countdown + transfers ────────────────────────── */}
-        {(countdown || (activeContext && activeContext.contestType !== 'daily')) && (
+        {(countdown || currentMatchLabel || (activeContext && activeContext.contestType !== 'daily')) && (
           <View style={styles.infoStrip}>
+            {/* Match label — shown first */}
+            {currentMatchLabel ? (
+              <View style={styles.infoPill}>
+                <Text style={styles.infoPillIcon}>🏏</Text>
+                <Text style={[styles.infoPillValue, { color: C.accent }]} numberOfLines={1}>{currentMatchLabel}</Text>
+              </View>
+            ) : null}
+
             {/* Countdown */}
             {countdown ? (
               <View style={styles.infoPill}>
@@ -478,7 +489,7 @@ export default function MyXIScreen({ route }: Props) {
             {activeContext && activeContext.contestType !== 'daily' && (
               <View style={styles.infoPill}>
                 <Text style={styles.infoPillIcon}>⇄</Text>
-                <Text style={styles.infoPillLabel}>Transfers left </Text>
+                <Text style={styles.infoPillLabel}>Xfers </Text>
                 <Text style={styles.infoPillValue}>
                   {isFirstMatch
                     ? '∞'
@@ -497,9 +508,8 @@ export default function MyXIScreen({ route }: Props) {
             {activeContext && activeContext.contestType !== 'daily' && pendingTransfers > 0 && (
               <View style={styles.infoPill}>
                 <Text style={styles.infoPillIcon}>🔄</Text>
-                <Text style={styles.infoPillLabel}>Pending </Text>
                 <Text style={styles.infoPillValue}>
-                  {pendingTransfers} transfer{pendingTransfers !== 1 ? 's' : ''}
+                  {pendingTransfers} pending
                 </Text>
               </View>
             )}
@@ -526,19 +536,19 @@ export default function MyXIScreen({ route }: Props) {
 
         {activeContext && <>
 
-          {/* Budget bar */}
-          <BudgetBar
-            creditsSpent={creditsSpent}
-            creditsLeft={creditsLeft}
-            playerCount={selected.length}
-          />
-
           {/* Boosters — SL / private leagues only */}
           <BoostersBar
             contestType={activeContext?.contestType}
             squadId={squadId}
             matchId={currentMatchId}
             onStaged={showToast}
+          />
+
+          {/* Budget bar */}
+          <BudgetBar
+            creditsSpent={creditsSpent}
+            creditsLeft={creditsLeft}
+            playerCount={selected.length}
           />
 
           {/* Role stats */}
@@ -644,7 +654,7 @@ export default function MyXIScreen({ route }: Props) {
         <Modal
           visible={pickerOpen}
           animationType="none"
-          presentationStyle="fullScreen"
+          presentationStyle="pageSheet"
           onRequestClose={handlePickerDone}
         >
           <View style={styles.modalRoot}>
@@ -909,32 +919,33 @@ const styles = StyleSheet.create({
   },
   doneBtnText: { color: '#fff', fontSize: fontSize.base, fontWeight: '700' },
 
-  // Info strip (countdown + transfers)
+  // Info strip (countdown + transfers) — single row, no wrap
   infoStrip: {
     flexDirection:     'row',
     alignItems:        'center',
-    gap:               spacing.sm,
-    paddingHorizontal: spacing.lg,
+    flexWrap:          'nowrap',
+    gap:               spacing.xs,
+    paddingHorizontal: spacing.sm,
     paddingVertical:   spacing.xs,
     backgroundColor:   'rgba(201,168,76,0.07)',
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(201,168,76,0.18)',
-    flexWrap:          'wrap',
   },
   infoPill: {
-    flexDirection:  'row',
-    alignItems:     'center',
-    backgroundColor: 'rgba(255,255,255,0.6)',
-    borderWidth:    1,
-    borderColor:    'rgba(201,168,76,0.25)',
-    borderRadius:   radius.full,
-    paddingHorizontal: spacing.sm,
-    paddingVertical:   3,
-    gap:            3,
+    flexDirection:     'row',
+    alignItems:        'center',
+    flexShrink:        1,
+    backgroundColor:   'rgba(255,255,255,0.6)',
+    borderWidth:       1,
+    borderColor:       'rgba(201,168,76,0.25)',
+    borderRadius:      radius.full,
+    paddingHorizontal: 6,
+    paddingVertical:   2,
+    gap:               3,
   },
-  infoPillIcon:  { fontSize: 11 },
-  infoPillLabel: { fontSize: fontSize.sm, color: C.muted },
-  infoPillValue: { fontSize: fontSize.sm, fontWeight: '700', color: C.accent },
+  infoPillIcon:  { fontSize: 10 },
+  infoPillLabel: { fontSize: fontSize.xs, color: C.muted },
+  infoPillValue: { fontSize: fontSize.xs, fontWeight: '700', color: C.accent },
 
   pendingNote: {
     paddingHorizontal: spacing.lg,

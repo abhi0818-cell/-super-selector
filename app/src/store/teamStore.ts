@@ -126,9 +126,10 @@ interface TeamState {
 
   // Tournament / match context (loaded on sign-in)
   tournamentId:    string | null;
-  currentMatchId:  string | null;
-  nextMatchTime:   string | null;   // ISO start_time of next match (for countdown)
-  isFirstMatch:    boolean;         // true until the first match of the season locks
+  currentMatchId:    string | null;
+  currentMatchLabel: string | null;  // e.g. "M25 · MNY vs SO"
+  nextMatchTime:     string | null;  // ISO start_time of next match (for countdown)
+  isFirstMatch:      boolean;        // true until the first match of the season locks
 
   // True while Free Hit is the effective (staged-or-committed) booster for
   // the match being drafted — suspends the 100cr budget cap. Set by
@@ -258,7 +259,8 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   saveError:      null,
   recentForm:     {},
   tournamentId:   null,
-  currentMatchId: null,
+  currentMatchId:    null,
+  currentMatchLabel: null,
   nextMatchTime:  null,
   isFirstMatch:   true,
   budgetCapSuspended: false,
@@ -310,13 +312,16 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       // user is meant to be picking (mirrors web's findNextScheduledMatch()).
       const { data: candidateMatches } = await supabase
         .from('matches')
-        .select('id, start_time, lock_time, match_number, status')
+        .select('id, start_time, lock_time, match_number, home_team_id, away_team_id, status')
         .eq('tournament_id', tournamentId)
         .neq('status', 'completed');
 
       const nextMatch = findNextUnlockedMatch(candidateMatches ?? []);
-      const currentMatchId: string | null = nextMatch?.id ?? null;
-      const nextMatchTime:  string | null = nextMatch?.start_time ?? null;
+      const currentMatchId:    string | null = nextMatch?.id ?? null;
+      const nextMatchTime:     string | null = nextMatch?.start_time ?? null;
+      const currentMatchLabel: string | null = nextMatch
+        ? `M${nextMatch.match_number ?? '?'} · ${nextMatch.home_team_id || '—'} vs ${nextMatch.away_team_id || '—'}`
+        : null;
 
       // Determine if any match has already locked (first match played = not isFirstMatch)
       const { count } = await supabase
@@ -335,6 +340,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       set({
         tournamentId,
         currentMatchId,
+        currentMatchLabel,
         nextMatchTime,
         isFirstMatch,
         // Clear the picked XI when switching tournaments so the previous

@@ -13,7 +13,10 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.superselector.app"
+      "bundleIdentifier": "com.superselector.app",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {

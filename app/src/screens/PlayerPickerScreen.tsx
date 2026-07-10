@@ -226,6 +226,13 @@ export default function PlayerPickerScreen() {
     return selected.length >= 11;
   }, [selectedIds, selected.length]);
 
+  // Current match label e.g. "M25 · MNY vs SO" — derived from the current match
+  const currentMatchLabel = useMemo(() => {
+    const m = matches.find(mx => mx.id === currentMatchId);
+    if (!m) return null;
+    return `M${m.matchNumber ?? '?'} · ${m.homeTeamId || '—'} vs ${m.awayTeamId || '—'}`;
+  }, [matches, currentMatchId]);
+
   // "Plays next" / "After X matches" label per team — derived from the upcoming
   // match schedule. Only truly upcoming matches are counted (in_progress is excluded
   // so locked-match teams recalculate to their next future game automatically).
@@ -284,17 +291,23 @@ export default function PlayerPickerScreen() {
   return (
     <View style={styles.container}>
 
-      {/* League context banner */}
-      {activeContext && (
+      {/* Match + league context banner */}
+      {(activeContext || currentMatchLabel) && (
         <View style={styles.contextBanner}>
           <Text style={styles.contextIcon}>
-            {activeContext.contestType === 'daily' ? '📅' : activeContext.contestType === 'sl' ? '🏅' : '🔒'}
+            {activeContext?.contestType === 'daily' ? '📅' : activeContext?.contestType === 'sl' ? '🏅' : '🔒'}
           </Text>
-          <Text style={styles.contextText}>
-            Picking for:{' '}
-            <Text style={styles.contextName}>{activeContext.leagueName}</Text>
-          </Text>
-          {activeContext.ruleType === 'custom' && (
+          <View style={{ flex: 1, gap: 2 }}>
+            {currentMatchLabel && (
+              <Text style={[styles.contextName, { fontSize: 13 }]}>{currentMatchLabel}</Text>
+            )}
+            {activeContext && (
+              <Text style={styles.contextText} numberOfLines={1}>
+                {activeContext.leagueName}
+              </Text>
+            )}
+          </View>
+          {activeContext?.ruleType === 'custom' && (
             <View style={styles.customBadge}>
               <Text style={styles.customBadgeText}>Custom rules</Text>
             </View>

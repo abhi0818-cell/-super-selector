@@ -327,7 +327,7 @@ export default function ConfirmXIModal({
     <Modal
       visible={visible}
       animationType="none"
-      presentationStyle="fullScreen"
+      presentationStyle="pageSheet"
       onRequestClose={step === 'summary' ? () => setStep('captain') : onEditMore}
     >
       <View style={styles.root}>
