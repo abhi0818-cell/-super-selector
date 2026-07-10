@@ -5940,13 +5940,16 @@ p31,Sample Player,MI,bat,9.0,false
       const committedMeta = ctx.activeForNext  ? BOOSTER_META[ctx.activeForNext]  : null;
       const pendingMeta    = ctx.pendingForNext ? BOOSTER_META[ctx.pendingForNext] : null;
       const isUnsaved      = ctx.pendingForNext !== ctx.activeForNext;
-      const boosterTotal   = Object.keys(ctx.available).length;
+      // Total allowed = sum of per-type counts (e.g. 3 triple captains + 2 wildcards + 2 free hits = 7)
+      const boosterTotal   = Object.values(ctx.available).reduce((s, n) => s + Number(n || 0), 0);
+      // Used = activations on matches that have already locked (truly spent, irreversible)
+      const boostersUsed   = ctx.activations.filter(a => ctx.lockedMatchIds.has(a.match_id)).length;
 
       if (tile) {
         tile.style.display = '';
         const valueLabel = pendingMeta
           ? escapeHtml(pendingMeta.icon + ' ' + pendingMeta.label) + (isUnsaved ? ' <span style="color:var(--accent);font-weight:700;">*</span>' : '')
-          : `0/${boosterTotal}`;
+          : `${boostersUsed}/${boosterTotal}`;
         tile.querySelector('.value').innerHTML = `${valueLabel} <i class="cap-vc-chev">▾</i>`;
         tile.className = 'stat stat-pick' + (pendingMeta ? ' ok' : '');
         tile.title = isUnsaved ? 'Booster selection not saved yet — press Save XI to confirm.' : '';
