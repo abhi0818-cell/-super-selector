@@ -3606,7 +3606,7 @@ export function createDb(cfg = {}) {
       const sb = await getClient();
       const { data, error } = await sb
         .from('squad_draft_xi')
-        .select('player_ids, captain_id, vc_id')
+        .select('player_ids, captain_id, vc_id, pending_booster, pending_booster_match_id, target_match_id')
         .eq('squad_id', squadId)
         .maybeSingle();
       if (error) throw error;
@@ -3615,24 +3615,60 @@ export function createDb(cfg = {}) {
         playerIds: data.player_ids ?? [],
         captainId: data.captain_id ?? null,
         vcId:      data.vc_id      ?? null,
+        // Booster staged for pendingBoosterMatchId — durable across reloads/
+        // devices (see migration_v34). null/null just means "nothing staged".
+        pendingBooster:        data.pending_booster            ?? null,
+        pendingBoosterMatchId: data.pending_booster_match_id    ?? null,
+        // The match this playerIds/captainId/vcId snapshot was explicitly
+        // Saved for (see migration_v35). null means "not confirmed for any
+        // specific match" — lockMatchXI treats that as untrustworthy for
+        // locking and carries the previous locked XI forward instead.
+        targetMatchId: data.target_match_id ?? null,
       };
     },
 
     /**
      * Persist the squad's current editable draft XI.
      * No transfer counting — this is just a free save.
+     *
+     * pendingBooster/pendingBoosterMatchId (both optional) durably record
+     * "this squad wants `pendingBooster` applied to `pendingBoosterMatchId`" —
+     * written alongside the XI so a staged pick can never be silently lost
+     * even if the immediate activateBooster attempt in the caller fails or
+     * races. lockMatchXI reconciles this into a real user_booster_activations
+     * row at lock time if it isn't there already.
+     *
+     * targetMatchId (optional) durably records "this exact playerIds/
+     * captainId/vcId snapshot was explicitly Saved for this match" — the
+     * guarantee lockMatchXI relies on to never lock in a stale/unconfirmed
+     * draft (see migration_v35 / ShooterXI-class incidents where a shared,
+     * un-matched draft got consumed by whichever match's auto-lock catch-up
+     * happened to run next).
+     *
+     * IMPORTANT: all three of pendingBooster/pendingBoosterMatchId/
+     * targetMatchId are only written when the caller explicitly passes them
+     * (checked via `!== undefined`, not just truthiness) — callers that
+     * don't know/care about booster staging or match-targeting (mobile-XI
+     * promotion, free_hit's post-match revert, etc.) must never silently
+     * wipe out a currently-staged pick or a confirmed target match just by
+     * re-saving playerIds/captainId/vcId. To genuinely clear either, pass
+     * them explicitly as null.
      */
-    async saveDraft(squadId, { playerIds, captainId, vcId }) {
+    async saveDraft(squadId, { playerIds, captainId, vcId, pendingBooster, pendingBoosterMatchId, targetMatchId }) {
       const sb = await getClient();
+      const row = {
+        squad_id  : squadId,
+        player_ids: playerIds,
+        captain_id: captainId ?? null,
+        vc_id     : vcId      ?? null,
+        updated_at: new Date().toISOString(),
+      };
+      if (pendingBooster        !== undefined) row.pending_booster          = pendingBooster;
+      if (targetMatchId         !== undefined) row.target_match_id          = targetMatchId;
+      if (pendingBoosterMatchId !== undefined) row.pending_booster_match_id = pendingBoosterMatchId;
       await withRlsRetry(sb, () => sb
         .from('squad_draft_xi')
-        .upsert({
-          squad_id  : squadId,
-          player_ids: playerIds,
-          captain_id: captainId ?? null,
-          vc_id     : vcId      ?? null,
-          updated_at: new Date().toISOString(),
-        }, { onConflict: 'squad_id' }),
+        .upsert(row, { onConflict: 'squad_id' }),
         'saving your draft XI');
     },
 
@@ -3695,10 +3731,47 @@ export function createDb(cfg = {}) {
       }
       const baselinePlayerIds = isFirstActiveLock ? [] : prev.playerIds;
 
+      // GUARANTEE: only ever lock in a draft that was explicitly Saved for
+      // THIS match. squad_draft_xi is one shared row per squad with no
+      // inherent match association beyond targetMatchId — without this
+      // check, whichever match's auto-lock catch-up (slCheckAutoLock) fires
+      // next just grabs "whatever's currently in the draft" and locks it,
+      // with no way to tell whether it was actually meant for this match or
+      // is stale/intended-for-a-different-match content that never got
+      // confirmed here. (Real incident: a squad saved 3 minutes before a
+      // match's lock time, but the save's target ended up mismatched, and
+      // by the time the user next checked, that same draft had carried
+      // forward into the NEXT match's editing session — meaning the
+      // original match's lock either used stale content or never reflected
+      // what was actually saved for it.)
+      //
+      // If the draft doesn't match, we do NOT guess — carry the previous
+      // locked XI forward unchanged (0 transfers), exactly what a real
+      // fantasy app does when a user makes no confirmed change for a given
+      // match. Only throws if there's also no previous locked XI to fall
+      // back on (i.e. genuinely nothing valid to lock at all).
+      let xiPlayerIds = draft.playerIds, xiCaptainId = draft.captainId, xiVcId = draft.vcId;
+      if (draft.targetMatchId !== matchId) {
+        if (prev.playerIds?.length === 11) {
+          xiPlayerIds = prev.playerIds;
+          xiCaptainId = prev.captainId;
+          xiVcId      = prev.vcId;
+          console.warn(
+            `[lockMatchXI] squad ${squadId}: draft.targetMatchId (${draft.targetMatchId}) does not match ` +
+            `the match being locked (${matchId}) — carrying forward the previous locked XI (match ${prev.matchId}) ` +
+            `instead of trusting an unconfirmed draft.`
+          );
+        } else {
+          throw new Error(
+            'No XI was explicitly saved for this match, and there is no previous locked XI to carry forward — save your team before it locks.'
+          );
+        }
+      }
+
       // Write XI + transfers
       const result = await this.saveMatchXI(
         squadId, matchId,
-        draft.playerIds, draft.captainId, draft.vcId,
+        xiPlayerIds, xiCaptainId, xiVcId,
         baselinePlayerIds,
         contestConfig
       );

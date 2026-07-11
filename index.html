@@ -5348,13 +5348,18 @@ p31,Sample Player,MI,bat,9.0,false
             state.sl.xiPlayers = [...mobileXI.playerIds];
             state.sl.xiCaptain = mobileXI.captainId      ?? null;
             state.sl.xiVc      = mobileXI.viceCaptainId  ?? null;
-            // Promote to squad_draft_xi so web edits stick immediately
+            // Promote to squad_draft_xi so web edits stick immediately.
+            // This came from an actual mobile-locked user_match_xi row for
+            // nextUpcoming, so it's fully confirmed — tag targetMatchId
+            // accordingly so lockMatchXI trusts it outright instead of
+            // falling back to carry-forward for that match.
             if (state.sl.squad?.id) {
               try {
                 await state.db.saveDraft(state.sl.squad.id, {
                   playerIds: mobileXI.playerIds,
                   captainId: mobileXI.captainId     ?? null,
                   vcId:      mobileXI.viceCaptainId ?? null,
+                  targetMatchId: nextUpcoming?.id ?? null,
                 });
               } catch (_) {}
             }
@@ -5386,7 +5391,16 @@ p31,Sample Player,MI,bat,9.0,false
                 [...currentDraftIds].every(id => lockedIds.has(id));
               if (draftMatchesLocked) {
                 const revertDraft = { playerIds: snapshot.playerIds, captainId: snapshot.captainId, vcId: snapshot.vcId };
-                await state.db.saveDraft(squadId, revertDraft);
+                // Tag targetMatchId with whatever match is next up — this
+                // restored snapshot IS the confirmed team going forward
+                // (that's the entire point of free_hit reverting). Without
+                // this, lockMatchXI's guarantee check would see no matching
+                // target for the next match and fall back to "carry the
+                // previous locked XI forward" — which for a just-completed
+                // free_hit match IS the temporary free_hit team, silently
+                // undoing the revert this code exists to perform.
+                const nextForRevert = findNextScheduledMatch();
+                await state.db.saveDraft(squadId, { ...revertDraft, targetMatchId: nextForRevert?.id ?? null });
                 state.sl.draft     = revertDraft;
                 state.sl.xiPlayers = [...revertDraft.playerIds];
                 state.sl.xiCaptain = revertDraft.captainId ?? null;
@@ -5872,16 +5886,33 @@ p31,Sample Player,MI,bat,9.0,false
         ? (activations.find(a => a.match_id === nextMatch.id)?.booster ?? null)
         : null;
 
-      // Sync the staged pending choice to this match. Only resets when the
-      // pending choice belongs to a different match (or hasn't been
-      // initialized yet) — an in-flight, not-yet-saved choice for THIS match
-      // must survive across re-renders, which is the entire point of staging.
+      // Sync the staged pending choice to this match. Reset key is
+      // state.activeMatchId (the match the user is actually looking at) —
+      // NOT nextMatch.id. nextMatch is derived via slSaveTargetMatch(), which
+      // is clock-sensitive: hasMatchStarted() can flip true for the
+      // currently-viewed match purely because wall-clock time passed while
+      // the user sat on this screen deciding, which silently swapped
+      // nextMatch out from under an in-flight, not-yet-saved booster pick —
+      // wiping it (reset to activeForNext, usually null) before Save XI was
+      // ever clicked. That's what happened to ShooterXI's M25 Team Double:
+      // staged correctly, then M25's lock time arrived mid-session and this
+      // reset silently cleared the pick before the user hit Save.
+      // pendingBoosterMatchId still tracks nextMatch.id on every call (so
+      // doSaveSlXi/lockMatchXI always commit against the current resolution)
+      // — only the staged CHOICE (pendingBooster) is protected from being
+      // wiped by a same-screen clock flip; a genuine navigation
+      // (activeMatchId change) still resets it as before.
+      const viewKey = state.activeMatchId ?? null;
       if (!nextMatch) {
+        state.sl.pendingBoosterViewKey = viewKey;
         state.sl.pendingBoosterMatchId = null;
         state.sl.pendingBooster = null;
-      } else if (state.sl.pendingBoosterMatchId !== nextMatch.id) {
+      } else {
         state.sl.pendingBoosterMatchId = nextMatch.id;
-        state.sl.pendingBooster = activeForNext;
+        if (state.sl.pendingBoosterViewKey !== viewKey) {
+          state.sl.pendingBoosterViewKey = viewKey;
+          state.sl.pendingBooster = activeForNext;
+        }
       }
       const pendingForNext = state.sl.pendingBooster;
 
@@ -6249,33 +6280,49 @@ p31,Sample Player,MI,bat,9.0,false
       const cap = state.sl.xiCaptain;
       const vc  = state.sl.xiVc;
       try {
-        // 1. Persist draft (no match association, no transfers)
-        await state.db.saveDraft(state.sl.squad.id, { playerIds: xi, captainId: cap, vcId: vc });
+        // Resolve the match this draft's booster choice applies to — same
+        // resolution getSlBoosterContext() uses to track pendingBoosterMatchId.
+        const boosterMatchId = slSaveTargetMatch()?.id ?? null;
+        const pending = (boosterMatchId && state.sl.pendingBoosterMatchId === boosterMatchId)
+          ? state.sl.pendingBooster
+          : null;
+
+        // 1. Persist draft AND explicitly tag it with targetMatchId =
+        // boosterMatchId — "this exact XI was Saved for this match" — plus
+        // the pending booster choice, all in one upsert. targetMatchId is
+        // what lockMatchXI checks before ever trusting this draft for a lock
+        // (see migration_v35_draft_target_match.sql): without it, a shared,
+        // un-matched draft can get consumed by whichever match's auto-lock
+        // catch-up happens to run next, locking in content that was never
+        // actually confirmed for that specific match. Booster staging is
+        // durable the same way — see migration_v34_draft_pending_booster.sql
+        // — so even if the immediate commit attempt below fails or the
+        // target shifts again later, slLockForMatch reconciles it at lock
+        // time; a staged pick can never be silently lost the way
+        // ShooterXI's M25 Team Double was.
+        await state.db.saveDraft(state.sl.squad.id, {
+          playerIds: xi, captainId: cap, vcId: vc,
+          pendingBooster: pending, pendingBoosterMatchId: boosterMatchId,
+          targetMatchId: boosterMatchId,
+        });
 
         // 2. Update in-memory draft state
         state.sl.draft = { playerIds: [...xi], captainId: cap, vcId: vc };
         state.sl.lastSavedXI = { playerIds: [...xi], captainId: cap, vcId: vc };
 
-        // 2b. Commit the staged booster choice (if any) for the match this
-        // draft applies to. Picking a booster pill never wrote to
+        // 2b. Best-effort IMMEDIATE commit, purely for instant UI feedback
+        // ("Team Double activated" right in this toast instead of waiting
+        // for lock). Picking a booster pill never wrote to
         // user_booster_activations directly — see renderSlBoosterGrid's
-        // click handler — so this is the one place that turns a pending
-        // pick into a real activation/deactivation. Only acts when the
-        // pending slot actually targets this draft's match and differs from
-        // what's already committed; otherwise there's nothing to do.
-        //
-        // Must match getSlBoosterContext()'s resolution exactly (slSaveTargetMatch(),
-        // not raw state.activeMatchId) — otherwise, whenever the active match
-        // has already started (so saves redirect to the next match) this
-        // matched state.sl.pendingBoosterMatchId against the WRONG id and
-        // silently skipped the commit: the pill looked selected and Save XI
-        // reported success, but nothing was ever written to
-        // user_booster_activations.
-        const boosterMatchId = slSaveTargetMatch()?.id ?? null;
+        // click handler — so this is the first place that turns a pending
+        // pick into a real activation/deactivation. If this fails for any
+        // reason (network blip, stale session, etc.), it's non-fatal: step 1
+        // above already durably recorded the intent on the draft, and
+        // slLockForMatch's reconciliation step is the real safety net that
+        // guarantees it still gets applied when the match locks.
         let boosterNote = '';
-        if (boosterMatchId && state.sl.pendingBoosterMatchId === boosterMatchId) {
+        if (boosterMatchId) {
           const committed = getCachedBoosterForMatch(boosterMatchId);
-          const pending    = state.sl.pendingBooster;
           if (pending !== committed) {
             try {
               if (committed) {
@@ -6291,7 +6338,8 @@ p31,Sample Player,MI,bat,9.0,false
                 ? ` ${BOOSTER_META[pending]?.label ?? pending} activated.`
                 : ` ${BOOSTER_META[committed]?.label ?? committed} removed.`;
             } catch (e) {
-              toast('Booster save failed: ' + e.message, 4500);
+              boosterNote = ` (Booster will apply automatically when the match locks.)`;
+              console.warn('[SL save] immediate booster commit failed, relying on lock-time reconciliation:', e.message);
             }
           }
         }
@@ -6358,6 +6406,24 @@ p31,Sample Player,MI,bat,9.0,false
         // are free for this match (no deduction, no count against the season budget).
         let activeBooster = null;
         try { activeBooster = await state.db.getActiveBoosterForMatch(squadId, matchId); } catch {}
+
+        // Safety net: doSaveSlXi's immediate booster commit can fail or race
+        // (see its comments) — if that happened, the intent is still sitting
+        // right here on the draft, durably tied to this exact match. Lock is
+        // the one moment "which match" is no longer ambiguous, so reconcile
+        // now: if nothing's activated yet but the draft says this match
+        // should have `pendingBooster`, activate it for real. Non-fatal —
+        // never let a booster reconciliation problem block the XI lock
+        // itself (freshDraft may be null if the getDraft() fetch above failed).
+        if (!activeBooster && freshDraft?.pendingBooster && freshDraft?.pendingBoosterMatchId === matchId) {
+          try {
+            await state.db.activateBooster(squadId, matchId, freshDraft.pendingBooster, contest, null);
+            activeBooster = freshDraft.pendingBooster;
+            console.warn(`[SL lock] Reconciled a missed booster commit at lock time: ${freshDraft.pendingBooster} for match ${matchId}`);
+          } catch (e) {
+            console.warn('[SL lock] booster reconciliation failed (non-fatal):', e.message);
+          }
+        }
         const bypassTransfers = activeBooster === 'wildcard' || activeBooster === 'free_hit';
 
         // Free Hit: snapshot the current draft BEFORE locking so it can be restored afterwards.
@@ -10962,7 +11028,14 @@ p31,Sample Player,MI,bat,9.0,false
       if (!confirm(`Revert to your last saved XI?\n\nThis will discard any unsaved changes.${boosterNote}`)) return;
       try {
         const draft = { playerIds: lastSaved.playerIds, captainId: lastSaved.captainId, vcId: lastSaved.vcId };
-        if (state.sl.squad) await state.db.saveDraft(state.sl.squad.id, draft);
+        // Explicitly clear the durable pending-booster fields too (not just
+        // the in-memory state below) — revert means discard everything,
+        // including whatever's persisted on the draft row, so a later
+        // slLockForMatch reconciliation can't resurrect a pick the user just
+        // told the app to throw away.
+        if (state.sl.squad) await state.db.saveDraft(state.sl.squad.id, {
+          ...draft, pendingBooster: null, pendingBoosterMatchId: null,
+        });
 
         if (boosterCtx?.activeForNext && boosterCtx.nextMatch && state.sl.squad) {
           try {
@@ -10979,6 +11052,12 @@ p31,Sample Player,MI,bat,9.0,false
         // or whatever activeForNext was above) next time it's called.
         state.sl.pendingBooster        = null;
         state.sl.pendingBoosterMatchId = null;
+        // Force getSlBoosterContext's next call to resync from the DB rather
+        // than trusting the (now-stale) view key — otherwise, since
+        // activeMatchId hasn't changed, its clock-flip guard would skip
+        // re-deriving pendingBooster and leave it stuck at null even if
+        // something else gets committed for this match later.
+        state.sl.pendingBoosterViewKey = null;
 
         state.sl.draft     = draft;
         state.sl.xiPlayers = [...draft.playerIds];
