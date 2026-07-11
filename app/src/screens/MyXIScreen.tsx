@@ -723,13 +723,20 @@ export default function MyXIScreen({ route }: Props) {
                       onPress={handleReset}
                       disabled={!hasUnsavedChanges}
                     >
-                      <Text style={[styles.revertPillText, !hasUnsavedChanges && styles.revertPillTextDisabled]}>
+                      <Text
+                        style={[styles.revertPillText, !hasUnsavedChanges && styles.revertPillTextDisabled]}
+                        numberOfLines={1}
+                        adjustsFontSizeToFit
+                        minimumFontScale={0.8}
+                      >
                         Revert to saved
                       </Text>
                     </Pressable>
                     {showRevertLocked && (
                       <Pressable style={styles.revertPill} onPress={handleRevertToLocked}>
-                        <Text style={styles.revertPillText}>Revert to locked</Text>
+                        <Text style={styles.revertPillText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                          Revert to locked
+                        </Text>
                       </Pressable>
                     )}
                   </View>
@@ -969,9 +976,14 @@ const styles = StyleSheet.create({
   resetBtnText: { color: C.bad, fontSize: fontSize.xs, fontWeight: '700' },
 
   // Two-column status strip (SL/private, when there's something to revert):
-  // Make Transfers stretches to fill the left column's full height, matching
-  // whatever height the stacked revert pills on the right end up needing —
-  // 1 pill tall when only one applies, 2 when both do. Never a 3rd row.
+  // Each revert pill sizes to its OWN content (fixed paddingVertical, no
+  // flex:1) instead of dividing whatever height Make Transfers happens to
+  // need — that flex:1-divides-an-undetermined-height setup was the bug:
+  // with only a single-line action button on the left driving the row's
+  // height, two flex:1 pills on the right were squeezed to ~19px each,
+  // clipping the text. Now the pills set their own comfortable height via
+  // padding, the column's height is just whatever that adds up to, and
+  // Make Transfers (alignItems:'stretch' below) grows to match it instead.
   statusStripSplit: {
     flexWrap:   'nowrap',
     alignItems: 'stretch',
@@ -985,15 +997,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
   },
   revertColumn: {
-    flex:          1,
-    flexDirection: 'column',
-    gap:           6,
+    flex:           1,
+    flexDirection:  'column',
+    gap:            6,
+    justifyContent: 'center',
   },
   revertPill: {
-    flex:              1,
     alignItems:        'center',
     justifyContent:    'center',
     paddingHorizontal: spacing.sm,
+    paddingVertical:   7,
+    minHeight:         30,
     borderWidth:       1.5,
     borderColor:       'rgba(192,57,43,0.65)',
     borderRadius:      radius.md,
@@ -1002,7 +1016,7 @@ const styles = StyleSheet.create({
     borderColor:     'rgba(122,112,96,0.3)',
     backgroundColor: 'rgba(122,112,96,0.06)',
   },
-  revertPillText: { color: C.bad, fontSize: fontSize.xs, fontWeight: '700', textAlign: 'center' },
+  revertPillText: { color: C.bad, fontSize: fontSize.sm, fontWeight: '700', textAlign: 'center' },
   revertPillTextDisabled: { color: C.muted },
   transferBar: {
     paddingHorizontal: spacing.md,
