@@ -7945,6 +7945,15 @@ p31,Sample Player,MI,bat,9.0,false
       // fit on the jersey instead of overflowing or getting clipped.
       const txt      = (label || '??').toUpperCase().slice(0, 6);
       const fontSize = txt.length <= 2 ? 36 : txt.length <= 3 ? 30 : txt.length <= 4 ? 24 : 19;
+      // Luminance-aware label color, same formula as pitchJerseyHtml() — this
+      // used to hardcode white unconditionally, which is unreadable against
+      // light jersey colors (e.g. TSK): the pitch/Pick 11 view already got
+      // this right, the player pool didn't. Same formula here now so a
+      // team's jersey text color is consistent everywhere it's shown.
+      const r = parseInt((bodyColor+'000000').replace('#','').substr(0,2),16);
+      const g = parseInt((bodyColor+'000000').replace('#','').substr(2,2),16);
+      const b = parseInt((bodyColor+'000000').replace('#','').substr(4,2),16);
+      const textColor = (r*299+g*587+b*114)/1000 > 145 ? '#111' : '#fff';
       const bodyPath   = 'M 48,8 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 L 82,8 L 90,18 L 115,32 L 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 105,165 L 65.5,166.3 L 25,166 L 31.5,59.8 L 21.5,78.3 L 3,65 L 14,32 L 42,16 Z';
       const lSleeve    = 'M 3,65 L 21.5,78.3 L 31.5,59.8 L 42,16 L 14,32 Z';
       const rSleeve    = 'M 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 90,18 L 115,32 Z';
@@ -7957,7 +7966,7 @@ p31,Sample Player,MI,bat,9.0,false
         <path d="${bodyPath}"   fill="none" stroke="#11111133" stroke-width="2" stroke-linejoin="round"/>
         <text x="65" y="118" text-anchor="middle" dominant-baseline="middle"
           font-family="Arial Black,Arial,sans-serif" font-size="${fontSize}" font-weight="900"
-          fill="white" opacity="0.92">${txt}</text>
+          fill="${textColor}" opacity="0.92">${txt}</text>
       </svg>`;
     }
 

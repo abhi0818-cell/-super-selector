@@ -7,12 +7,14 @@
  * length-based font auto-shrink, same `-W` suffix-stripping rule for
  * women's team codes on the overlaid label.
  *
- * Two variants:
- *   - 'pool'  — player pool rows & the C/VC picker grid. Fixed white label
- *               text, larger base font. Mirrors jerseyHtml().
- *   - 'pitch' — the pitch map. Luminance-aware label color (readable against
- *               light jersey colors) and an optional thick gold ring when a
- *               booster is active on this tile. Mirrors pitchJerseyHtml().
+ * Two variants (both use the same luminance-aware label color — readable
+ * against light jersey colors like TSK's, not just dark ones; 'pool' used
+ * to hardcode white unconditionally, which is the bug this fixed):
+ *   - 'pool'  — player pool rows & the C/VC picker grid. Larger base font.
+ *               Mirrors jerseyHtml().
+ *   - 'pitch' — the pitch map. Smaller base font, plus an optional thick
+ *               gold ring when a booster is active on this tile.
+ *               Mirrors pitchJerseyHtml().
  */
 
 import React from 'react';
@@ -70,7 +72,13 @@ export default function Jersey({
     ? label.length <= 2 ? 36 : label.length <= 3 ? 30 : label.length <= 4 ? 24 : 19
     : label.length <= 2 ? 26 : label.length <= 3 ? 22 : label.length <= 4 ? 18 : 14;
 
-  const textColor   = isPool ? '#ffffff' : readableTextColor(bodyColor);
+  // Luminance-aware label color for both variants — this used to hardcode
+  // white for 'pool' unconditionally (mirroring web's old jerseyHtml()),
+  // which is unreadable against light jersey colors (e.g. TSK): the pitch
+  // view already computed this correctly, the pool view didn't. Same
+  // formula everywhere now so a team's jersey text color is consistent
+  // between the player pool and Pick 11.
+  const textColor   = readableTextColor(bodyColor);
   const boostActive = !isPool && boosted;
   const strokeColor = boostActive ? '#FFD23F' : 'rgba(17,17,17,0.2)';
   const strokeWidth = boostActive ? 6 : 1.5;
