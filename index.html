@@ -5703,24 +5703,31 @@ p31,Sample Player,MI,bat,9.0,false
       renderSlPitchView();
 
       // ── Revert buttons ──────────────────────────────────────────────────────
-      // "Revert to Locked" — only when there's an actual saved-but-not-yet-
-      // locked transfer to undo (lastSavedXI differs from lastLockedXI).
-      // Shown regardless of further unsaved on-screen edits — it always rolls
-      // all the way back to what's currently scored.
+      // Both buttons are shown whenever "applicable" — i.e. whenever there's
+      // a baseline to revert to at all — and DISABLED (not hidden) when
+      // reverting would be a no-op. Previously these toggled display:none
+      // based on a live diff check, which meant the button could vanish and
+      // reappear as the user made/undid edits — same "toggling" complaint as
+      // mobile's original hide-based Revert to Saved. Mirrors the fix
+      // already applied there: always visible, greyed out via the ordinary
+      // disabled state when there's nothing to actually revert.
       const revertLockedBtn = $('#slRevertLockedBtn');
-      const showRevertLocked = !!state.sl.lastLockedXI?.playerIds?.length &&
-        !slXiEquals(state.sl.lastSavedXI, state.sl.lastLockedXI);
-      if (revertLockedBtn) revertLockedBtn.style.display = showRevertLocked ? '' : 'none';
+      const lockedApplicable = !!state.sl.lastLockedXI?.playerIds?.length;
+      if (revertLockedBtn) {
+        revertLockedBtn.style.display = lockedApplicable ? '' : 'none';
+        revertLockedBtn.disabled = !lockedApplicable ||
+          slXiEquals(state.sl.lastSavedXI, state.sl.lastLockedXI);
+      }
 
-      // "Revert to Saved" — only when the on-screen draft actually differs
-      // from what's saved. If they match, reverting would be a no-op (this is
-      // a tightening from "show whenever any lastSavedXI exists" — avoids a
-      // dead button sitting next to a live "Revert to Locked").
+      // "Revert to Saved" — applicable whenever anything's ever been saved;
+      // disabled when the on-screen draft already matches it (nothing to
+      // discard).
       const revertBtn = $('#slRevertBtn');
       const currentXi = { playerIds: xi, captainId: cap, vcId: vc };
+      const savedApplicable = !!state.sl.lastSavedXI?.playerIds?.length;
       if (revertBtn) {
-        revertBtn.style.display = (state.sl.lastSavedXI?.playerIds?.length &&
-          !slXiEquals(currentXi, state.sl.lastSavedXI)) ? '' : 'none';
+        revertBtn.style.display = savedApplicable ? '' : 'none';
+        revertBtn.disabled = !savedApplicable || slXiEquals(currentXi, state.sl.lastSavedXI);
       }
 
       // ── Save button ───────────────────────────────────────────────────────
