@@ -430,7 +430,17 @@ export default function MyXIScreen({ route }: Props) {
   // "Revert to Saved": only a real change to discard. Shown greyed out
   // rather than hidden when it would be a no-op, alongside Revert to
   // Locked, per the agreed two-pill layout.
-  const hasUnsavedChanges = isSL && snapshotsEqual(snapshotFromSelected(selected), savedSnapshot) === false;
+  //
+  // Requires savedSnapshot !== null explicitly — snapshotsEqual() treats
+  // either side being null as "different" (by design, so showRevertLocked
+  // doesn't fire on an unloaded previousLockedXI), which meant this flag
+  // read `true` for the one render between mount and the load effect's
+  // setSavedSnapshot() call, since savedSnapshot starts null. That's the
+  // "lights up, then deactivates immediately" flash: real bug, not a
+  // rendering glitch — this condition was live and enabled for a frame
+  // before the actual saved baseline arrived to correct it.
+  const hasUnsavedChanges = isSL && savedSnapshot !== null &&
+    !snapshotsEqual(snapshotFromSelected(selected), savedSnapshot);
   const showRevertColumn  = isSL && (showRevertLocked || hasUnsavedChanges);
 
   const fabLabel = (() => {
