@@ -1627,8 +1627,11 @@
             <div class="save-bar">
               <span style="flex:1; font-size:12px; color:var(--muted);" id="slXiSaveLabel">Pick 11 from the pool.</span>
               <button id="slRevertBtn" class="danger" style="display:none;">Revert to Saved</button>
-              <!-- Pick / Edit Team button — same style as Save XI, sits to its left -->
-              <button id="editTeamBtn" class="primary" style="display:none;">✏️ Edit Team</button>
+              <!-- Pick / Make Transfers button — same style as Save XI, sits to its left.
+                   Labeled "Make Transfers" (not "Edit Team") to match mobile's SL/private
+                   terminology — this is a season-long squad, composition changes here are
+                   transfers, not a one-off team pick like Daily. -->
+              <button id="editTeamBtn" class="primary" style="display:none;">⇄ Make Transfers</button>
               <button id="slSaveXiBtn" class="primary" disabled>Save XI</button>
             </div>
           </div>
@@ -5709,7 +5712,7 @@ p31,Sample Player,MI,bat,9.0,false
                 : noSlChangesYet
                   ? ''
                   : ready
-                    ? 'Open Edit Team to change your XI, then save.'
+                    ? 'Open Make Transfers to change your XI, then save.'
                     : !state.activeMatchId ? 'Select a match above to save.'
                     : xi.length < 11 ? 'Pick ' + (11 - xi.length) + ' more from the pool.'
                     : !cap ? 'Set a captain (tap C).' : !vc ? 'Set a vice-captain (tap V).' : 'C and VC must differ.';
@@ -10102,9 +10105,11 @@ p31,Sample Player,MI,bat,9.0,false
       const btnDy = $('#editTeamBtnDaily');
       pool.style.display = open ? '' : 'none';
       main.classList.toggle('pool-open', open);
-      const label = open ? '✕ Close' : '✏️ Edit Team';
-      if (btnSL) btnSL.textContent = label;
-      if (btnDy) btnDy.textContent = label;
+      // SL uses "Make Transfers" (matches mobile's terminology for season-long/
+      // private squads — composition changes here are transfers). Daily keeps
+      // "Edit Team" since it has no transfer concept.
+      if (btnSL) btnSL.textContent = open ? '✕ Close' : '⇄ Make Transfers';
+      if (btnDy) btnDy.textContent = open ? '✕ Close' : '✏️ Edit Team';
 
       // When pool is open, hide sub-tab navigation and force-show Pick XI only.
       // Live Score / History / Season / Leagues are irrelevant while picking.
