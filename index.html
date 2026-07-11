@@ -6745,9 +6745,23 @@ p31,Sample Player,MI,bat,9.0,false
         const pen  = penMap[m.match_id] || 0;
         const net  = m.xi_total - pen;
         running   += net;
+        // Booster for this match, resolved up front — Wildcard/Free Hit
+        // transfers are free of cost and don't draw against the season cap
+        // (lock-matches bypasses transfer-count logging entirely for
+        // either), so they must not: (a) be added to cumXfer, which would
+        // wrongly shrink the running "Xfers left" countdown for transfers
+        // that were never actually charged, or (b) be labeled "xfer" as if
+        // they were a normal capped transfer. Same class of bug as the Pick
+        // XI info bar/stat box fix — this view just never got it.
+        const matchBooster    = getCachedBoosterForMatch(m.match_id);
+        const bypassedThisMatch = matchBooster === 'wildcard' || matchBooster === 'free_hit';
         const xferCount = (data.transfers || []).filter(t => t.match_id === m.match_id).length;
-        cumXfer += xferCount;
-        const xferTxt = xferCount ? ' <span style="font-size:10px;color:var(--muted);">×' + xferCount + ' xfer</span>' : '';
+        if (!bypassedThisMatch) cumXfer += xferCount;
+        const xferTxt = xferCount
+          ? ' <span style="font-size:10px;color:var(--muted);">' +
+            (bypassedThisMatch ? '⚡×' + xferCount + ' free' : '×' + xferCount + ' xfer') +
+            '</span>'
+          : '';
         const detailId    = 'slDetail_' + m.match_id.replace(/-/g, '');
         const pitchPanelId = detailId + '_pitch';
         // Running countdown of the season transfer budget through this match
@@ -6778,7 +6792,7 @@ p31,Sample Player,MI,bat,9.0,false
         const vcId      = vc?.player_id ?? null;
         const matchFmt  = (state.matches || []).find(x => x.id === m.match_id)?.format;
         const fmt       = (matchFmt || state.format || 'T20').toUpperCase();
-        const matchBooster = getCachedBoosterForMatch(m.match_id);
+        // matchBooster already resolved above (needed early for cumXfer/xferTxt).
         const pitchTeam = { players: pitchPlayers, captain_id: captainId, vice_captain_id: vcId, total_points: m.xi_total, booster: matchBooster };
         const pitchDetailHtml = histTeamPanelHtml(pitchTeam, fmt);
 
@@ -10749,8 +10763,19 @@ p31,Sample Player,MI,bat,9.0,false
         running = +(running + net).toFixed(1);
         const matchNum = m.match_number ?? (i + 1);
         if (net > bestPts) { bestPts = net; bestMatchLabel = `M${matchNum}`; }
+        // Resolved early (also reused below for pitchTeam/boostCell) — a
+        // Wildcard/Free Hit match's transfers are free of cost and were
+        // never actually charged, so the count needs to read differently
+        // from a normal capped transfer. Same fix as the My Team > History
+        // sub-tab (renderSlSeasonTab) just above.
+        const matchBooster      = getCachedBoosterForMatch(m.match_id);
+        const bypassedThisMatch = matchBooster === 'wildcard' || matchBooster === 'free_hit';
         const xferCount = (data.transfers || []).filter(t => t.match_id === m.match_id).length;
-        const xferCell   = xferCount || '<span style="color:var(--muted);">0</span>';
+        const xferCell   = !xferCount
+          ? '<span style="color:var(--muted);">0</span>'
+          : bypassedThisMatch
+            ? `<span title="Free of cost — ${escapeHtml(BOOSTER_META[matchBooster]?.label || matchBooster)} active">⚡${xferCount}</span>`
+            : xferCount;
 
         const detailId    = 'pageSeasonDetail_' + (m.match_id || '').replace(/-/g, '');
         const pitchPanelId = detailId + '_pitch';
@@ -10772,7 +10797,7 @@ p31,Sample Player,MI,bat,9.0,false
         const vcId      = vc?.player_id ?? null;
         const matchFmt  = (state.matches || []).find(x => x.id === m.match_id)?.format;
         const fmt       = (matchFmt || state.format || 'T20').toUpperCase();
-        const matchBooster = getCachedBoosterForMatch(m.match_id);
+        // matchBooster already resolved above (needed early for xferCell).
         const pitchTeam = { players: pitchPlayers, captain_id: captainId, vice_captain_id: vcId, total_points: m.xi_total, booster: matchBooster };
         const pitchDetailHtml = histTeamPanelHtml(pitchTeam, fmt);
 
