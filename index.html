@@ -6275,6 +6275,35 @@ p31,Sample Player,MI,bat,9.0,false
       });
     }
 
+    /**
+     * Compute the "pre-free-hit baseline" snapshot for a squad + match: the
+     * team they'd carry forward into `matchId` had they NOT used free_hit —
+     * i.e. their last actually-locked XI before this match. Free Hit's whole
+     * point is auto-reverting to this once the match completes (see
+     * slLoadDraft's "3b Free Hit revert"), so every place that activates
+     * free_hit must capture this real baseline — NOT the free-hit team
+     * itself. (Bug found in review: slLockForMatch's "re-activate with
+     * snapshot" step used to pass the about-to-be-locked draft — the
+     * free-hit team — as the "snapshot", which would make Free Hit's revert
+     * restore the free-hit team back onto itself: a no-op, defeating the
+     * entire feature. Mirrors mobile's boosterStore.commitPending, which
+     * already did this correctly via getPreviousMatchXI.)
+     * Returns null if there's no valid 11-player baseline (e.g. season opener).
+     */
+    async function computeFreeHitSnapshot(squadId, matchId) {
+      try {
+        const prevXI = await state.db.getPreviousMatchXI(
+          squadId, matchId, state.matches, state.sl.seasonContest?.start_match_number ?? null
+        );
+        if (prevXI?.playerIds?.length === 11) {
+          return { playerIds: prevXI.playerIds, captainId: prevXI.captainId, vcId: prevXI.vcId };
+        }
+      } catch (e) {
+        console.warn('[free_hit] baseline snapshot failed (non-fatal):', e.message);
+      }
+      return null;
+    }
+
     async function doSaveSlXi() {
       const xi  = state.sl.xiPlayers;
       const cap = state.sl.xiCaptain;
@@ -6329,8 +6358,16 @@ p31,Sample Player,MI,bat,9.0,false
                 await state.db.deactivateBooster(state.sl.squad.id, boosterMatchId, committed);
               }
               if (pending) {
+                // Free Hit needs the pre-free-hit baseline snapshot so its
+                // auto-revert works — see computeFreeHitSnapshot. Every other
+                // booster passes null (no snapshot needed). Previously this
+                // always passed null unconditionally, meaning Free Hit's
+                // revert never had a real baseline captured here at all.
+                const snapshotXI = pending === 'free_hit'
+                  ? await computeFreeHitSnapshot(state.sl.squad.id, boosterMatchId)
+                  : null;
                 await state.db.activateBooster(
-                  state.sl.squad.id, boosterMatchId, pending, state.sl.seasonContest, null
+                  state.sl.squad.id, boosterMatchId, pending, state.sl.seasonContest, snapshotXI
                 );
               }
               // Verification read-back — confirm user_booster_activations
@@ -6428,7 +6465,12 @@ p31,Sample Player,MI,bat,9.0,false
         // itself (freshDraft may be null if the getDraft() fetch above failed).
         if (!activeBooster && freshDraft?.pendingBooster && freshDraft?.pendingBoosterMatchId === matchId) {
           try {
-            await state.db.activateBooster(squadId, matchId, freshDraft.pendingBooster, contest, null);
+            // Free Hit needs its pre-free-hit baseline snapshot here too —
+            // see computeFreeHitSnapshot. Every other booster passes null.
+            const snapshotXI = freshDraft.pendingBooster === 'free_hit'
+              ? await computeFreeHitSnapshot(squadId, matchId)
+              : null;
+            await state.db.activateBooster(squadId, matchId, freshDraft.pendingBooster, contest, snapshotXI);
             // Verification read-back, same principle as doSaveSlXi's
             // immediate commit — don't just assume the insert above landed.
             const verified = await state.db.getActiveBoosterForMatch(squadId, matchId);
@@ -6443,17 +6485,25 @@ p31,Sample Player,MI,bat,9.0,false
         }
         const bypassTransfers = activeBooster === 'wildcard' || activeBooster === 'free_hit';
 
-        // Free Hit: snapshot the current draft BEFORE locking so it can be restored afterwards.
+        // Free Hit safety net: re-activate with the correct pre-free-hit
+        // baseline snapshot right before locking, in case the activation
+        // above (whether from doSaveSlXi's immediate commit or the
+        // reconciliation just above) somehow landed without one — e.g. an
+        // older activation from before this fix existed, or a snapshot
+        // computation that failed non-fatally at the time. This used to
+        // snapshot `draft` (the free-hit team about to be locked) instead of
+        // the actual previous XI — a real bug: reverting to "the free-hit
+        // team itself" after the match is a no-op, defeating Free Hit's
+        // entire point. Only overwrites when a valid baseline now resolves;
+        // never replaces a real snapshot with nothing.
         if (activeBooster === 'free_hit') {
-          const draft = freshDraft ?? state.sl.draft ?? {};
-          if (draft.playerIds?.length === 11) {
-            try {
-              // Re-activate with snapshot (overwrite the placeholder row saved at activation time)
+          try {
+            const snapshotXI = await computeFreeHitSnapshot(squadId, matchId);
+            if (snapshotXI) {
               await state.db.deactivateBooster(squadId, matchId, 'free_hit');
-              await state.db.activateBooster(squadId, matchId, 'free_hit',
-                contest, { playerIds: draft.playerIds, captainId: draft.captainId, vcId: draft.vcId });
-            } catch (e) { console.warn('[SL lock] free_hit snapshot update failed:', e.message); }
-          }
+              await state.db.activateBooster(squadId, matchId, 'free_hit', contest, snapshotXI);
+            }
+          } catch (e) { console.warn('[SL lock] free_hit snapshot update failed:', e.message); }
         }
 
         // Lock the draft → user_match_xi + user_transfers
