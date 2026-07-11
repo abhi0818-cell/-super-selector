@@ -325,6 +325,18 @@ export async function checkAndLogTransfers(opts: CheckAndLogTransfersOpts): Prom
 
   let transfersMade = 0;
 
+  // Clear this match's prior transfer log unconditionally, before the
+  // bypass check below — a save always represents the current, complete
+  // diff state. Previously this delete only ran inside the
+  // !bypassTransfers branch, so activating Wildcard/Free Hit *after* an
+  // earlier normal save left that save's rows sitting in user_transfers
+  // indefinitely (until a future non-boosted save, or the match locking)
+  // — inflating the "N pending"/"N free" badge and the season cap's
+  // "used" count even though the booster makes those rows moot. This is
+  // exactly what made "Revert to Locked" disappear after applying Free
+  // Hit on a squad that already had a real (non-boosted) transfer saved.
+  await supabase.from('user_transfers').delete().eq('squad_id', squadId).eq('match_id', matchId);
+
   if (!bypassTransfers && previousPlayerIds.length > 0) {
     const prevSet = new Set(previousPlayerIds);
     const currSet = new Set(playerIds);
@@ -357,9 +369,6 @@ export async function checkAndLogTransfers(opts: CheckAndLogTransfersOpts): Prom
           );
         }
       }
-
-      // Clear prior transfer log for this match (re-save), then log fresh.
-      await supabase.from('user_transfers').delete().eq('squad_id', squadId).eq('match_id', matchId);
 
       const freePerMatch = config.free_transfers_per_match ?? null;
       const extraCost    = Number(config.extra_transfer_point_cost ?? 4);

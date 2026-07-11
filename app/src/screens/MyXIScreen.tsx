@@ -417,10 +417,16 @@ export default function MyXIScreen({ route }: Props) {
 
   // ── Revert button gating (SL/private only) ────────────────────────────────
   // "Revert to Locked": there's an actual saved-but-not-yet-locked transfer
-  // to undo. pendingTransfers is read straight from user_transfers rows
-  // logged at save time (see loadTransfers above), so this is DB-truth, not
-  // a UI diff — matches web's lastSavedXI-vs-lastLockedXI check.
-  const showRevertLocked = isSL && pendingTransfers > 0;
+  // to undo — compare the SAVED snapshot directly against previousLockedXI
+  // (matches web's lastSavedXI-vs-lastLockedXI check), rather than trusting
+  // pendingTransfers (a count of user_transfers rows). That table is
+  // deliberately left unwritten when Wildcard/Free Hit is active — those
+  // transfers are free, so checkAndLogTransfers skips logging them — which
+  // made this pill vanish under either booster even though the squad still
+  // genuinely differed from what's locked. Direct snapshot comparison has
+  // no such blind spot.
+  const showRevertLocked = isSL && !!savedSnapshot && previousLockedXI.length > 0 &&
+    !snapshotsEqual(savedSnapshot, snapshotFromSelected(previousLockedXI));
   // "Revert to Saved": only a real change to discard. Shown greyed out
   // rather than hidden when it would be a no-op, alongside Revert to
   // Locked, per the agreed two-pill layout.

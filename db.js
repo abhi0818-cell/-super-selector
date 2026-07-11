@@ -3382,6 +3382,19 @@ export function createDb(cfg = {}) {
       // transfers are counted, logged, or deducted for this match.
       const bypassTransfers = !!(contestConfig.bypassTransfers);
 
+      // Clear this match's prior transfer log unconditionally, before the
+      // bypass check — a save always represents the current, complete diff
+      // state. Previously this delete only ran inside the !bypassTransfers
+      // branch below, so activating Wildcard/Free Hit *after* an earlier
+      // normal save left that save's rows sitting in user_transfers
+      // indefinitely (until a future non-boosted save, or the match
+      // locking) — inflating "pending transfers" displays and the season
+      // cap's "used" count even though the booster makes those rows moot.
+      await sb.from('user_transfers')
+        .delete()
+        .eq('squad_id', squadId)
+        .eq('match_id', matchId);
+
       if (!bypassTransfers && previousPlayerIds.length > 0) {
         const prevSet = new Set(previousPlayerIds);
         const currSet = new Set(playerIds);
@@ -3396,7 +3409,7 @@ export function createDb(cfg = {}) {
               .from('user_transfers')
               .select('id', { count: 'exact', head: true })
               .eq('squad_id', squadId)
-              .neq('match_id', matchId);   // exclude current match (will be rewritten)
+              .neq('match_id', matchId);   // exclude current match (already cleared above)
             if (phaseMatchIds) {
               const phaseIds = [...phaseMatchIds].filter(id => id !== matchId);
               usedQuery = usedQuery.in('match_id', phaseIds.length ? phaseIds : ['__none__']);
@@ -3413,12 +3426,6 @@ export function createDb(cfg = {}) {
                 `(budget: ${activeCap}). Reduce changes to ${remaining} or fewer.`
               );
           }
-
-          // Clear prior transfer log for this match (re-save)
-          await sb.from('user_transfers')
-            .delete()
-            .eq('squad_id', squadId)
-            .eq('match_id', matchId);
 
           // Determine which transfers are free vs. paid.
           // free_transfers_per_match = how many changes are free per match window.
