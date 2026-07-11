@@ -1626,6 +1626,11 @@
             </div>
             <div class="save-bar">
               <span style="flex:1; font-size:12px; color:var(--muted);" id="slXiSaveLabel">Pick 11 from the pool.</span>
+              <!-- Revert to Locked: undoes an already-saved-but-not-yet-locked transfer
+                   entirely, rolling all the way back to the currently scored team. Distinct
+                   from Revert to Saved, which only discards further unsaved edits on top of
+                   a save. Only shown when lastSavedXI actually differs from lastLockedXI. -->
+              <button id="slRevertLockedBtn" class="danger" style="display:none;">Revert to Locked</button>
               <button id="slRevertBtn" class="danger" style="display:none;">Revert to Saved</button>
               <!-- Pick / Make Transfers button — same style as Save XI, sits to its left.
                    Labeled "Make Transfers" (not "Edit Team") to match mobile's SL/private
@@ -5478,6 +5483,22 @@ p31,Sample Player,MI,bat,9.0,false
       return state.sl.xiPlayers.filter(id => !prev.has(id)).length;
     }
 
+    /**
+     * Compares two {playerIds, captainId, vcId} XI snapshots for equality
+     * (composition + C/VC), ignoring player order. Used to gate "Revert to
+     * Saved" (current on-screen vs lastSavedXI) and "Revert to Locked"
+     * (lastSavedXI vs lastLockedXI) so each button only shows when it would
+     * actually change something — no dead/no-op reverts cluttering the bar.
+     */
+    function slXiEquals(a, b) {
+      if (!a?.playerIds?.length || !b?.playerIds?.length) return false;
+      if (a.playerIds.length !== b.playerIds.length) return false;
+      const bSet = new Set(b.playerIds);
+      if (!a.playerIds.every(id => bSet.has(id))) return false;
+      return (a.captainId ?? null) === (b.captainId ?? null) &&
+             (a.vcId      ?? null) === (b.vcId      ?? null);
+    }
+
     function renderSlXiTab() {
       const xi   = state.sl.xiPlayers;
       const cap  = state.sl.xiCaptain;
@@ -5665,10 +5686,25 @@ p31,Sample Player,MI,bat,9.0,false
       // via the click-to-pick Captain/Vice-C tile (renderSlCapVcPicker below).
       renderSlPitchView();
 
-      // ── Revert button — show only when a previously saved XI exists ────────
+      // ── Revert buttons ──────────────────────────────────────────────────────
+      // "Revert to Locked" — only when there's an actual saved-but-not-yet-
+      // locked transfer to undo (lastSavedXI differs from lastLockedXI).
+      // Shown regardless of further unsaved on-screen edits — it always rolls
+      // all the way back to what's currently scored.
+      const revertLockedBtn = $('#slRevertLockedBtn');
+      const showRevertLocked = !!state.sl.lastLockedXI?.playerIds?.length &&
+        !slXiEquals(state.sl.lastSavedXI, state.sl.lastLockedXI);
+      if (revertLockedBtn) revertLockedBtn.style.display = showRevertLocked ? '' : 'none';
+
+      // "Revert to Saved" — only when the on-screen draft actually differs
+      // from what's saved. If they match, reverting would be a no-op (this is
+      // a tightening from "show whenever any lastSavedXI exists" — avoids a
+      // dead button sitting next to a live "Revert to Locked").
       const revertBtn = $('#slRevertBtn');
+      const currentXi = { playerIds: xi, captainId: cap, vcId: vc };
       if (revertBtn) {
-        revertBtn.style.display = state.sl.lastSavedXI?.playerIds?.length ? '' : 'none';
+        revertBtn.style.display = (state.sl.lastSavedXI?.playerIds?.length &&
+          !slXiEquals(currentXi, state.sl.lastSavedXI)) ? '' : 'none';
       }
 
       // ── Save button ───────────────────────────────────────────────────────
@@ -11147,6 +11183,69 @@ p31,Sample Player,MI,bat,9.0,false
         renderSlActiveScreen(); renderPool();
         await renderSlBoosterBar();
         toast(activeBoosterLabel ? `Reverted to last saved XI · ${activeBoosterLabel} removed.` : 'Reverted to last saved XI.');
+      } catch (e) {
+        toast('Revert failed: ' + e.message, 4000);
+      }
+    });
+
+    $('#slRevertLockedBtn').addEventListener('click', async () => {
+      const lastLocked = state.sl.lastLockedXI;
+      if (!lastLocked?.playerIds?.length) return;
+
+      // "Revert to Locked" discards an already-saved transfer entirely —
+      // not just unsaved edits — rolling back to the team that's actually
+      // scoring right now. Any booster committed/staged for the next match
+      // was itself part of that transfer, so it goes away too, same as
+      // Revert to Saved.
+      let boosterCtx = null;
+      try { boosterCtx = await getSlBoosterContext(); } catch (_) {}
+      const activeBoosterLabel = boosterCtx?.activeForNext
+        ? (BOOSTER_META[boosterCtx.activeForNext]?.label ?? boosterCtx.activeForNext)
+        : null;
+
+      const boosterNote = activeBoosterLabel
+        ? `\n\n${activeBoosterLabel} is currently active for the next match and will also be removed.`
+        : '';
+      if (!confirm(`Revert to your currently locked XI?\n\nThis discards any saved transfer${activeBoosterLabel ? ' and the booster' : ''} for the next match.${boosterNote}`)) return;
+      try {
+        const draft = { playerIds: lastLocked.playerIds, captainId: lastLocked.captainId, vcId: lastLocked.vcId };
+        // Tag targetMatchId with the next scheduled match explicitly (rather
+        // than leaving it whatever it was) — this restored draft IS the
+        // confirmed team going forward, same reasoning as the free_hit
+        // auto-revert above. Without this, a stale/mismatched targetMatchId
+        // would just make lockMatchXI's guarantee check fall back to
+        // carry-forward — which happens to be correct here too, but there's
+        // no reason to rely on the fallback when we can just say so directly.
+        const nextForRevert = findNextScheduledMatch();
+        if (state.sl.squad) await state.db.saveDraft(state.sl.squad.id, {
+          ...draft, pendingBooster: null, pendingBoosterMatchId: null,
+          targetMatchId: nextForRevert?.id ?? null,
+        });
+
+        if (boosterCtx?.activeForNext && boosterCtx.nextMatch && state.sl.squad) {
+          try {
+            await state.db.deactivateBooster(state.sl.squad.id, boosterCtx.nextMatch.id, boosterCtx.activeForNext);
+            state.sl.boosterActivations = null; // invalidate cache
+          } catch (e) {
+            console.warn('[revert-locked] booster deactivate failed:', e.message);
+          }
+        }
+        state.sl.pendingBooster        = null;
+        state.sl.pendingBoosterMatchId = null;
+        state.sl.pendingBoosterViewKey = null;
+
+        state.sl.draft     = draft;
+        state.sl.xiPlayers = [...draft.playerIds];
+        state.sl.xiCaptain = draft.captainId ?? null;
+        state.sl.xiVc      = draft.vcId      ?? null;
+        // The locked team is now also the saved team — the transfer never
+        // happened as far as the draft is concerned. Without this, "Revert
+        // to Saved" would immediately reappear pointing at the transfer we
+        // just discarded.
+        state.sl.lastSavedXI = { playerIds: [...draft.playerIds], captainId: draft.captainId, vcId: draft.vcId };
+        renderSlActiveScreen(); renderPool();
+        await renderSlBoosterBar();
+        toast(activeBoosterLabel ? `Reverted to locked XI · ${activeBoosterLabel} removed.` : 'Reverted to locked XI.');
       } catch (e) {
         toast('Revert failed: ' + e.message, 4000);
       }

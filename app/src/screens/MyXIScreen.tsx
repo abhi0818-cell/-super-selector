@@ -67,6 +67,28 @@ const C = {
   borderA: 'rgba(201,168,76,0.5)',
 } as const;
 
+// ─── Saved-XI snapshot comparison ─────────────────────────────────────────────
+// Used to gate "Revert to Saved" so it only arms when the on-screen XI
+// actually differs from what's saved — showing it greyed out otherwise
+// (rather than hiding it) reads clearer than a button that appears/
+// disappears, per the mobile status-strip design.
+type XISnapshot = { ids: string[]; cap: string | null; vc: string | null };
+
+function snapshotFromSelected(list: SelectedPlayer[]): XISnapshot {
+  return {
+    ids: list.map(p => p.id).slice().sort(),
+    cap: list.find(p => p.captaincy === 'captain')?.id ?? null,
+    vc:  list.find(p => p.captaincy === 'vice_captain')?.id ?? null,
+  };
+}
+
+function snapshotsEqual(a: XISnapshot | null, b: XISnapshot | null): boolean {
+  if (!a || !b) return false;
+  if (a.ids.length !== b.ids.length) return false;
+  for (let i = 0; i < a.ids.length; i++) if (a.ids[i] !== b.ids[i]) return false;
+  return a.cap === b.cap && a.vc === b.vc;
+}
+
 export default function MyXIScreen({ route }: Props) {
   const navigation = useNavigation<BottomTabNavigationProp<RootTabParamList>>();
   const { signOut, user }               = useAuthStore();
@@ -79,7 +101,7 @@ export default function MyXIScreen({ route }: Props) {
       .then(({ data }) => { if (data?.team_name) setTeamName(data.team_name); });
   }, [user?.id]);
   const { activeContext, setContext }   = useContestStore();
-  const { loadBoosters, commitPending, discardPending } = useBoosterStore();
+  const { loadBoosters, commitPending, discardPending, selectBooster } = useBoosterStore();
   const {
     players,
     selected,
@@ -100,6 +122,10 @@ export default function MyXIScreen({ route }: Props) {
   const [confirmOpen, setConfirmOpen]     = useState(false);
   const [snapshot, setSnapshot]           = useState<SelectedPlayer[]>([]);
   const autoOpenHandled = useRef(false);
+  // Baseline for "Revert to Saved" no-op detection — whatever's actually
+  // saved (loaded from DB, just-saved, or just-reverted-to) for the
+  // currently-viewed match. null until the first load resolves.
+  const [savedSnapshot, setSavedSnapshot] = useState<XISnapshot | null>(null);
 
   // ── Save-confirmation toast ────────────────────────────────────────────────
   const [toastMsg, setToastMsg]     = useState('');
@@ -239,7 +265,9 @@ export default function MyXIScreen({ route }: Props) {
     loadedForKey.current = key;
 
     resetXI();
-    loadSavedXI(currentMatchId, activeContext.contestId, activeContext.contestType);
+    loadSavedXI(currentMatchId, activeContext.contestId, activeContext.contestType).then(() => {
+      setSavedSnapshot(snapshotFromSelected(useTeamStore.getState().selected));
+    });
   }, [activeContext?.contestId, currentMatchId, players.length]);
 
   async function loadTransfers() {
@@ -340,6 +368,10 @@ export default function MyXIScreen({ route }: Props) {
       return;
     }
 
+    // What was just saved IS now the saved baseline — re-arm "Revert to
+    // Saved" as a no-op (greyed) until the user edits again.
+    setSavedSnapshot(snapshotFromSelected(selected));
+
     // Commit any staged booster pick now that the XI save succeeded — this
     // is the one place a booster choice actually gets written to
     // user_booster_activations (mirrors web's saveSlXiHandler step 2b).
@@ -371,6 +403,18 @@ export default function MyXIScreen({ route }: Props) {
   const isDaily  = activeContext?.contestType === 'daily';
   const isSL     = activeContext?.contestType === 'sl' || activeContext?.contestType === 'private';
   const hasSquad = selected.length > 0;
+
+  // ── Revert button gating (SL/private only) ────────────────────────────────
+  // "Revert to Locked": there's an actual saved-but-not-yet-locked transfer
+  // to undo. pendingTransfers is read straight from user_transfers rows
+  // logged at save time (see loadTransfers above), so this is DB-truth, not
+  // a UI diff — matches web's lastSavedXI-vs-lastLockedXI check.
+  const showRevertLocked = isSL && pendingTransfers > 0;
+  // "Revert to Saved": only a real change to discard. Shown greyed out
+  // rather than hidden when it would be a no-op, alongside Revert to
+  // Locked, per the agreed two-pill layout.
+  const hasUnsavedChanges = isSL && snapshotsEqual(snapshotFromSelected(selected), savedSnapshot) === false;
+  const showRevertColumn  = isSL && (showRevertLocked || hasUnsavedChanges);
 
   const fabLabel = (() => {
     if (isDaily)   return hasSquad ? '✎  Edit XI' : '+ Pick XI';
@@ -418,12 +462,73 @@ export default function MyXIScreen({ route }: Props) {
           text: 'Revert',
           onPress: async () => {
             const err = await loadSavedXI(currentMatchId, activeContext.contestId, activeContext.contestType);
-            if (err) Alert.alert('Could not revert', err);
-            else discardPending(); // also drop any staged-not-saved booster pick
+            if (err) {
+              Alert.alert('Could not revert', err);
+            } else {
+              discardPending(); // also drop any staged-not-saved booster pick
+              setSavedSnapshot(snapshotFromSelected(useTeamStore.getState().selected));
+            }
           },
         },
       ]);
     }
+  };
+
+  // "Revert to Locked" — discards an already-saved transfer entirely (not
+  // just unsaved on-screen edits), rolling back to the squad's currently
+  // scored/locked XI. Distinct from "Revert to Saved" above, which only
+  // undoes edits made since the last save. Mirrors web's #slRevertLockedBtn
+  // handler: restore previousLockedXI, stage-and-commit removal of any
+  // booster committed for this match, then persist via the normal saveXI
+  // path (mobile has no separate draft/lock step — save IS the write to
+  // user_match_xi — so "reverting" here means writing the locked team back
+  // over the saved-but-not-yet-locked one).
+  const handleRevertToLocked = () => {
+    if (!currentMatchId || !activeContext) return;
+    const committedBooster = boosters.find(b => b.status === 'active');
+    const boosterNote = committedBooster
+      ? `\n\n${committedBooster.name} is currently active for the next match and will also be removed.`
+      : '';
+    Alert.alert(
+      'Revert to Locked',
+      `Discard your saved transfer and roll back to your currently locked XI?${boosterNote}`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Revert',
+          style: 'destructive',
+          onPress: async () => {
+            restoreXI(previousLockedXI);
+            // Stage the committed booster's removal (selectBooster toggles an
+            // already-effective pick off) — nothing is written to Supabase
+            // until commitPending() below, same as a normal save.
+            if (committedBooster) selectBooster(committedBooster.id);
+
+            const saveResult = await saveXI({
+              matchId:     currentMatchId,
+              contestId:   activeContext.contestId,
+              contestType: activeContext.contestType,
+            });
+            if (saveResult.error) {
+              Alert.alert('Revert failed', saveResult.error);
+              return;
+            }
+
+            let boosterMsg = '';
+            try {
+              const result = await commitPending(saveResult.squadId ?? undefined, saveResult.matchId ?? undefined);
+              if (result?.changed) boosterMsg = ` ${result.message}`;
+            } catch (e: any) {
+              Alert.alert('Booster removal failed', e?.message ?? 'Please try again.');
+            }
+
+            setSavedSnapshot(snapshotFromSelected(previousLockedXI));
+            showToast(`Reverted to locked XI.${boosterMsg}`);
+            loadTransfers();
+          },
+        },
+      ],
+    );
   };
 
   const handleSignOut = () => {
@@ -602,18 +707,45 @@ export default function MyXIScreen({ route }: Props) {
                 onRemove={(id) => removePlayer(id)}
               />
 
-              {/* Status strip */}
-              <LinearGradient colors={G.statusBg} style={styles.statusStrip}>
-                {/* Edit / Transfer action */}
-                <Pressable onPress={openPicker} style={styles.actionPill}>
-                  <Text style={styles.actionPillText}>{fabLabel}</Text>
-                </Pressable>
-                <Pressable style={styles.resetBtn} onPress={handleReset}>
-                  <Text style={styles.resetBtnText}>
-                    {isDaily ? 'Reset XI' : 'Revert to Saved'}
-                  </Text>
-                </Pressable>
-              </LinearGradient>
+              {/* Status strip — SL/private splits into two columns (Make
+                  Transfers spans both rows on the left; Revert to Saved /
+                  Revert to Locked stack as small pills on the right, only
+                  when there's actually something to revert). Daily keeps the
+                  original single-row layout — it has no locked/saved split. */}
+              {isSL && showRevertColumn ? (
+                <LinearGradient colors={G.statusBg} style={[styles.statusStrip, styles.statusStripSplit]}>
+                  <Pressable onPress={openPicker} style={styles.actionPillTall}>
+                    <Text style={styles.actionPillText}>{fabLabel}</Text>
+                  </Pressable>
+                  <View style={styles.revertColumn}>
+                    <Pressable
+                      style={[styles.revertPill, !hasUnsavedChanges && styles.revertPillDisabled]}
+                      onPress={handleReset}
+                      disabled={!hasUnsavedChanges}
+                    >
+                      <Text style={[styles.revertPillText, !hasUnsavedChanges && styles.revertPillTextDisabled]}>
+                        Revert to saved
+                      </Text>
+                    </Pressable>
+                    {showRevertLocked && (
+                      <Pressable style={styles.revertPill} onPress={handleRevertToLocked}>
+                        <Text style={styles.revertPillText}>Revert to locked</Text>
+                      </Pressable>
+                    )}
+                  </View>
+                </LinearGradient>
+              ) : (
+                <LinearGradient colors={G.statusBg} style={styles.statusStrip}>
+                  <Pressable onPress={openPicker} style={styles.actionPill}>
+                    <Text style={styles.actionPillText}>{fabLabel}</Text>
+                  </Pressable>
+                  {isDaily && (
+                    <Pressable style={styles.resetBtn} onPress={handleReset}>
+                      <Text style={styles.resetBtnText}>Reset XI</Text>
+                    </Pressable>
+                  )}
+                </LinearGradient>
+              )}
             </View>
           )}
 
@@ -835,6 +967,43 @@ const styles = StyleSheet.create({
     borderRadius:      radius.full,
   },
   resetBtnText: { color: C.bad, fontSize: fontSize.xs, fontWeight: '700' },
+
+  // Two-column status strip (SL/private, when there's something to revert):
+  // Make Transfers stretches to fill the left column's full height, matching
+  // whatever height the stacked revert pills on the right end up needing —
+  // 1 pill tall when only one applies, 2 when both do. Never a 3rd row.
+  statusStripSplit: {
+    flexWrap:   'nowrap',
+    alignItems: 'stretch',
+  },
+  actionPillTall: {
+    flex:              1.4,
+    backgroundColor:   '#1C1F26',
+    borderRadius:      radius.md,
+    alignItems:        'center',
+    justifyContent:    'center',
+    paddingHorizontal: spacing.md,
+  },
+  revertColumn: {
+    flex:          1,
+    flexDirection: 'column',
+    gap:           6,
+  },
+  revertPill: {
+    flex:              1,
+    alignItems:        'center',
+    justifyContent:    'center',
+    paddingHorizontal: spacing.sm,
+    borderWidth:       1.5,
+    borderColor:       'rgba(192,57,43,0.65)',
+    borderRadius:      radius.md,
+  },
+  revertPillDisabled: {
+    borderColor:     'rgba(122,112,96,0.3)',
+    backgroundColor: 'rgba(122,112,96,0.06)',
+  },
+  revertPillText: { color: C.bad, fontSize: fontSize.xs, fontWeight: '700', textAlign: 'center' },
+  revertPillTextDisabled: { color: C.muted },
   transferBar: {
     paddingHorizontal: spacing.md,
     paddingVertical:   4,
