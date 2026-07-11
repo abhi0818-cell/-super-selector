@@ -6333,13 +6333,24 @@ p31,Sample Player,MI,bat,9.0,false
                   state.sl.squad.id, boosterMatchId, pending, state.sl.seasonContest, null
                 );
               }
+              // Verification read-back — confirm user_booster_activations
+              // actually reflects what we just tried to commit rather than
+              // assuming the calls above landed. Belt-and-suspenders: catches
+              // any failure mode beyond ones already anticipated (dropped
+              // request, RLS quietly filtering something, etc.) and routes it
+              // into the same non-fatal "lock will reconcile it" path below
+              // instead of falsely reporting success.
+              const verified = await state.db.getActiveBoosterForMatch(state.sl.squad.id, boosterMatchId);
+              if (verified !== pending) {
+                throw new Error(`commit could not be verified (expected "${pending ?? 'none'}", found "${verified ?? 'none'}")`);
+              }
               state.sl.boosterActivations = null; // invalidate cache — resynced on next getSlBoosterContext()
               boosterNote = pending
                 ? ` ${BOOSTER_META[pending]?.label ?? pending} activated.`
                 : ` ${BOOSTER_META[committed]?.label ?? committed} removed.`;
             } catch (e) {
               boosterNote = ` (Booster will apply automatically when the match locks.)`;
-              console.warn('[SL save] immediate booster commit failed, relying on lock-time reconciliation:', e.message);
+              console.warn('[SL save] immediate booster commit failed verification, relying on lock-time reconciliation:', e.message);
             }
           }
         }
@@ -6418,6 +6429,12 @@ p31,Sample Player,MI,bat,9.0,false
         if (!activeBooster && freshDraft?.pendingBooster && freshDraft?.pendingBoosterMatchId === matchId) {
           try {
             await state.db.activateBooster(squadId, matchId, freshDraft.pendingBooster, contest, null);
+            // Verification read-back, same principle as doSaveSlXi's
+            // immediate commit — don't just assume the insert above landed.
+            const verified = await state.db.getActiveBoosterForMatch(squadId, matchId);
+            if (verified !== freshDraft.pendingBooster) {
+              throw new Error(`reconciliation could not be verified (expected "${freshDraft.pendingBooster}", found "${verified ?? 'none'}")`);
+            }
             activeBooster = freshDraft.pendingBooster;
             console.warn(`[SL lock] Reconciled a missed booster commit at lock time: ${freshDraft.pendingBooster} for match ${matchId}`);
           } catch (e) {

@@ -329,14 +329,14 @@ export default function MyXIScreen({ route }: Props) {
       return;
     }
 
-    const err = await saveXI({
+    const saveResult = await saveXI({
       matchId:     currentMatchId,
       contestId:   activeContext.contestId,
       contestType: activeContext.contestType,
     });
 
-    if (err) {
-      Alert.alert('Save Failed', err);
+    if (saveResult.error) {
+      Alert.alert('Save Failed', saveResult.error);
       return;
     }
 
@@ -345,9 +345,18 @@ export default function MyXIScreen({ route }: Props) {
     // user_booster_activations (mirrors web's saveSlXiHandler step 2b).
     // Picking a booster pill never wrote to the DB directly; see
     // boosterStore.selectBooster.
+    //
+    // IMPORTANT: pass saveResult.squadId/matchId — the REAL ids saveXI just
+    // used, after any internal redirect (to the next unlocked match) or
+    // squad creation (first-ever save) — instead of letting commitPending
+    // fall back to boosterStore's own cached _squadId/_matchId. Those can be
+    // stale relative to what was just actually saved; trusting them instead
+    // of the fresh result is exactly what silently dropped ShooterXI's Team
+    // Double booster (looked picked, "XI saved" toast showed, nothing ever
+    // written to user_booster_activations for the match that really locked).
     let boosterNote = '';
     try {
-      const result = await commitPending();
+      const result = await commitPending(saveResult.squadId ?? undefined, saveResult.matchId ?? undefined);
       if (result?.changed) boosterNote = ` ${result.message}`;
     } catch (e: any) {
       Alert.alert('Booster save failed', e?.message ?? 'Please try again.');

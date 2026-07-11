@@ -157,13 +157,31 @@ interface TeamState {
   resetXI:       () => void;
   restoreXI:     (players: SelectedPlayer[]) => void;
   loadSavedXI:   (matchId: string, contestId: string, contestType?: 'daily' | 'sl' | 'private') => Promise<string | null>;
-  saveXI:        (opts: SaveXIOpts) => Promise<string | null>;
+  saveXI:        (opts: SaveXIOpts) => Promise<SaveXIResult>;
 }
 
 interface SaveXIOpts {
   matchId:     string;  // matches.id UUID
   contestId:   string;  // contests.id UUID
   contestType: 'daily' | 'sl' | 'private';
+}
+
+/**
+ * squadId/matchId here are the REAL values saveXI ended up using — after any
+ * internal redirect (matchId can move to the next unlocked match if the
+ * originally-requested one already locked) or squad creation (first-ever
+ * save for a contest). Callers that need to act on "whatever was just
+ * actually saved" (e.g. committing a staged booster pick) MUST use these,
+ * not a separately-cached matchId/squadId from elsewhere — trusting a
+ * decoupled, possibly-stale value here is exactly what silently dropped
+ * ShooterXI's Team Double booster: saveXI redirected to a different match
+ * internally, but nothing communicated that back out, so the booster commit
+ * that ran right after used the wrong (original, pre-redirect) match id.
+ */
+interface SaveXIResult {
+  error:   string | null;
+  squadId: string | null;
+  matchId: string | null;
 }
 
 // ── Mirror a saved XI into user_teams + user_team_players ─────────────────
@@ -664,7 +682,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     set({ saveError: null });
 
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return 'Not signed in';
+    if (!user) return { error: 'Not signed in', squadId: null, matchId: null };
 
     try {
       // 0a. Guard against matchId/contestId pointing at two different
@@ -722,9 +740,12 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         }
 
         if (!nextMatchId) {
-          return wrongTournament
-            ? 'Could not match this save to the right tournament. Please reopen Pick XI and try again.'
-            : 'This match has already locked and there is no upcoming match to save against.';
+          return {
+            error: wrongTournament
+              ? 'Could not match this save to the right tournament. Please reopen Pick XI and try again.'
+              : 'This match has already locked and there is no upcoming match to save against.',
+            squadId: null, matchId: null,
+          };
         }
         matchId = nextMatchId;
       }
@@ -758,7 +779,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         squadId = newSquad?.id ?? null;
       }
 
-      if (!squadId) return 'Could not create squad';
+      if (!squadId) return { error: 'Could not create squad', squadId: null, matchId: null };
 
       // 3a-bis. Season transfer-cap check (sl/private only). Mobile has no
       // separate draft/lock step — this save IS the lock — so the cap must be
@@ -794,7 +815,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         } catch (capErr: any) {
           const msg = capErr?.message ?? 'Transfer limit check failed';
           set({ saveError: msg });
-          return msg;
+          return { error: msg, squadId: null, matchId: null };
         }
       }
 
@@ -852,27 +873,34 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       // table in sync with a mobile save, mirroring db.js's saveDraft exactly.
       // Without this, web's slLoadDraft (draft > lastLocked > mobile XI) could
       // keep showing an older draft instead of what was just saved here.
-      // Best-effort: a failure here must not fail the save the user asked for.
+      // target_match_id = matchId (the REAL, post-redirect match this XI was
+      // just written for) — since this row came straight from a real,
+      // already-completed lock (mobile's save IS the lock), it's fully
+      // confirmed; tagging it lets web's lockMatchXI guarantee check (see
+      // migration_v35) trust it outright instead of falling back to
+      // carry-forward. Best-effort: a failure here must not fail the save
+      // the user asked for.
       if (contestType !== 'daily' && captainId && viceCaptainId) {
         try {
           await supabase.from('squad_draft_xi').upsert({
-            squad_id:   squadId,
-            player_ids: selected.map(p => p.id),
-            captain_id: captainId,
-            vc_id:      viceCaptainId,
-            updated_at: new Date().toISOString(),
+            squad_id:        squadId,
+            player_ids:      selected.map(p => p.id),
+            captain_id:      captainId,
+            vc_id:           viceCaptainId,
+            target_match_id: matchId,
+            updated_at:      new Date().toISOString(),
           }, { onConflict: 'squad_id' });
         } catch (draftErr) {
           console.warn('[teamStore] squad_draft_xi mirror failed (non-fatal, web may show a stale draft):', draftErr);
         }
       }
 
-      return null; // success
+      return { error: null, squadId, matchId }; // success — REAL ids used, post-redirect/creation
     } catch (err: any) {
       const msg = err?.message ?? 'Save failed';
       console.error('[teamStore] saveXI error:', err);
       set({ saveError: msg });
-      return msg;
+      return { error: msg, squadId: null, matchId: null };
     }
   },
 }));

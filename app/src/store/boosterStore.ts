@@ -290,8 +290,23 @@ interface BoosterState {
    * Commit the staged pick to user_booster_activations. Call this from the
    * same action that saves the XI (mirrors saveSlXiHandler's step 2b) — NOT
    * from the booster pill tap. No-op (returns null) if nothing changed.
+   *
+   * overrideSquadId/overrideMatchId: pass the REAL squadId/matchId that
+   * saveXI just used (its return value, after any internal redirect/
+   * creation) — NOT this store's own cached _squadId/_matchId, which can be
+   * stale (e.g. from before this squad existed, or from before saveXI
+   * redirected to a different match). This is exactly what silently dropped
+   * ShooterXI's Team Double: commitPending trusted a decoupled, possibly-
+   * stale cached context instead of verifying fresh against what was
+   * actually just saved. If omitted, falls back to the cached values (only
+   * safe when the caller genuinely has nothing fresher).
+   *
+   * Throws (does not silently return null) if there's a staged change but
+   * squadId/matchId can't be resolved, or if a post-commit read-back shows
+   * the DB doesn't actually reflect what was just attempted — callers must
+   * surface this to the user rather than assume success.
    */
-  commitPending: () => Promise<{ changed: boolean; message: string } | null>;
+  commitPending: (overrideSquadId?: string | null, overrideMatchId?: string | null) => Promise<{ changed: boolean; message: string } | null>;
 
   /** Boosters currently effective (committed-and-saved) for this match. */
   activeBoosters: () => Booster[];
@@ -495,10 +510,23 @@ export const useBoosterStore = create<BoosterState>((set, get) => ({
     }));
   },
 
-  commitPending: async () => {
+  commitPending: async (overrideSquadId, overrideMatchId) => {
     const s = get();
-    const { _squadId: squadId, _matchId: matchId, _committedId: committed, _pendingId: pending, _contestId: contestId } = s;
-    if (!squadId || !matchId) return null;
+    const squadId = overrideSquadId ?? s._squadId;
+    const matchId = overrideMatchId ?? s._matchId;
+    const { _committedId: committed, _pendingId: pending, _contestId: contestId } = s;
+
+    if (!squadId || !matchId) {
+      if (pending !== committed) {
+        // A staged change exists and the user expects it applied — missing
+        // squadId/matchId means we genuinely cannot commit it. Fail loudly
+        // instead of the old silent `return null`, which is exactly what
+        // made ShooterXI's Team Double look "saved" when nothing was ever
+        // written.
+        throw new Error('Could not confirm your squad or match — booster was not saved. Please reopen Pick XI and try again.');
+      }
+      return null; // genuinely nothing staged and nothing resolvable — fine
+    }
     if (pending === committed) return null; // nothing staged — nothing to commit
 
     try {
@@ -529,7 +557,26 @@ export const useBoosterStore = create<BoosterState>((set, get) => ({
 
       if (pending) await dbActivate(squadId, matchId, pending, snapshot);
 
-      set({ _committedId: pending, isUnsaved: false });
+      // Verification read-back — confirm user_booster_activations actually
+      // reflects what we just tried to commit, rather than assuming the
+      // writes above landed. Belt-and-suspenders: this catches any failure
+      // mode beyond the specific stale-context bug above (e.g. a dropped
+      // request, an RLS policy silently filtering the insert's return, etc.)
+      // and turns it into a visible error instead of a false "success".
+      const { data: verifyRow } = await supabase
+        .from('user_booster_activations')
+        .select('booster')
+        .eq('squad_id', squadId)
+        .eq('match_id', matchId)
+        .maybeSingle();
+      const actuallyCommitted = verifyRow?.booster ?? null;
+      if (actuallyCommitted !== pending) {
+        throw new Error(
+          `Booster commit could not be verified (expected "${pending ?? 'none'}", found "${actuallyCommitted ?? 'none'}") — please try again.`
+        );
+      }
+
+      set({ _committedId: pending, isUnsaved: false, _squadId: squadId, _matchId: matchId });
       // Refresh statuses against the new committed baseline.
       set(state => ({
         boosters: state.boosters.map(b => ({
