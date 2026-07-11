@@ -3047,17 +3047,33 @@ p31,Sample Player,MI,bat,9.0,false
       cell.innerHTML = '<div style="padding:10px 8px;color:var(--muted);font-size:12px;">Loading…</div>';
       try {
         const season = await state.db.getSquadSeason(squadId);
-        if (!season.matches.length) {
+
+        // Only show matches that have actually locked (started). user_match_xi/
+        // user_transfers/user_booster_activations can all have rows for a match
+        // BEFORE it locks — mobile's save model writes to these tables
+        // immediately on Save, not at actual lock time (unlike web, which only
+        // writes them via the cron-triggered lockMatchXI at the match's real
+        // start). Without this filter, the leaderboard exposed every squad's
+        // captain/VC, booster pick, and transfer count for an upcoming match
+        // the moment they saved on mobile — well before that match locked for
+        // everyone else, i.e. before anyone was supposed to see it at all.
+        const lockedMatchIds = new Set(
+          (state.matches || []).filter(hasMatchStarted).map(x => x.id)
+        );
+        const lockedMatches   = season.matches.filter(m => lockedMatchIds.has(m.match_id));
+        const lockedTransfers = (season.transfers || []).filter(t => lockedMatchIds.has(t.match_id));
+
+        if (!lockedMatches.length) {
           cell.innerHTML = '<div style="padding:10px 8px;color:var(--muted);font-size:12px;">No scored matches yet.</div>';
           return;
         }
         const penMap = {};
-        (season.transfers || []).forEach(t => {
+        lockedTransfers.forEach(t => {
           penMap[t.match_id] = (penMap[t.match_id] || 0) + Number(t.points_deducted ?? 0);
         });
         let running = 0;
         // Compute net + running totals in ascending order, then reverse for display
-        const matchRowData = [...season.matches]
+        const matchRowData = [...lockedMatches]
           .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0))
           .map(m => {
             const pen = penMap[m.match_id] || 0;
@@ -3069,15 +3085,17 @@ p31,Sample Player,MI,bat,9.0,false
         // Boosters used by this squad, keyed by match — one query for the whole
         // season rather than one per match row. Requires the
         // "booster_activations_read_all" RLS policy (migration_v31) when squadId
-        // isn't the viewer's own squad.
+        // isn't the viewer's own squad. Filtered to locked matches for the same
+        // reason as above — a booster committed for an upcoming match must not
+        // be visible until that match actually locks.
         const boosterRows = await state.db.getBoosterActivations(squadId).catch(() => []);
         const boosterByMatch = {};
-        (boosterRows || []).forEach(b => {
+        (boosterRows || []).filter(b => lockedMatchIds.has(b.match_id)).forEach(b => {
           (boosterByMatch[b.match_id] ??= []).push(b.booster);
         });
         // Per-match transfer count (distinct from the season-total penalty map above).
         const xferCountByMatch = {};
-        (season.transfers || []).forEach(t => {
+        lockedTransfers.forEach(t => {
           xferCountByMatch[t.match_id] = (xferCountByMatch[t.match_id] || 0) + 1;
         });
 
