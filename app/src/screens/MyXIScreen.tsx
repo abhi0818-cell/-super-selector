@@ -404,6 +404,17 @@ export default function MyXIScreen({ route }: Props) {
   const isSL     = activeContext?.contestType === 'sl' || activeContext?.contestType === 'private';
   const hasSquad = selected.length > 0;
 
+  // Wildcard OR Free Hit suspends the season transfer-count cap for this
+  // match — mirrors web's slTransferCapSuspended() (pending-or-committed,
+  // not just committed, so the messaging updates the instant you pick the
+  // booster, before Save XI). Transfers logged while either is active don't
+  // draw against the season budget, so showing them as "N pending" (which
+  // implies they'll count once locked) is actively misleading — the info
+  // pill/note below switch to "free of cost" wording when this is true.
+  const suspendingBooster  = boosters.find(b => (b.id === 'wildcard' || b.id === 'free_hit') &&
+    (b.status === 'active' || b.status === 'pending'));
+  const transferCapSuspended = isSL && !!suspendingBooster;
+
   // ── Revert button gating (SL/private only) ────────────────────────────────
   // "Revert to Locked": there's an actual saved-but-not-yet-locked transfer
   // to undo. pendingTransfers is read straight from user_transfers rows
@@ -604,23 +615,29 @@ export default function MyXIScreen({ route }: Props) {
                 <Text style={styles.infoPillValue}>
                   {isFirstMatch
                     ? '∞'
-                    : transferInfo === null
-                      ? '…'
-                      : transferInfo.total === null
-                        ? 'Unlimited'
-                        : `${Math.max(0, transferInfo.total - transferInfo.used)}/${transferInfo.total}`
+                    : transferCapSuspended
+                      ? `⚡ ${suspendingBooster?.name ?? 'Free'}`
+                      : transferInfo === null
+                        ? '…'
+                        : transferInfo.total === null
+                          ? 'Unlimited'
+                          : `${Math.max(0, transferInfo.total - transferInfo.used)}/${transferInfo.total}`
                   }
                 </Text>
               </View>
             )}
 
             {/* Pending — transfers already saved for the upcoming match that
-                haven't locked yet (i.e. made against the last locked XI). */}
+                haven't locked yet (i.e. made against the last locked XI).
+                Wording switches when Wildcard/Free Hit is active — those
+                transfers are free of cost and don't draw against the season
+                cap, so "pending" (implying they'll be charged) would be
+                misleading. */}
             {activeContext && activeContext.contestType !== 'daily' && pendingTransfers > 0 && (
               <View style={styles.infoPill}>
-                <Text style={styles.infoPillIcon}>🔄</Text>
+                <Text style={styles.infoPillIcon}>{transferCapSuspended ? '⚡' : '🔄'}</Text>
                 <Text style={styles.infoPillValue}>
-                  {pendingTransfers} pending
+                  {transferCapSuspended ? `${pendingTransfers} free` : `${pendingTransfers} pending`}
                 </Text>
               </View>
             )}
@@ -631,7 +648,9 @@ export default function MyXIScreen({ route }: Props) {
         {activeContext && activeContext.contestType !== 'daily' && pendingTransfers > 0 && (
           <View style={styles.pendingNote}>
             <Text style={styles.pendingNoteText}>
-              {pendingTransfers} transfer{pendingTransfers !== 1 ? 's' : ''} made from your last locked XI
+              {transferCapSuspended
+                ? `${pendingTransfers} change${pendingTransfers !== 1 ? 's' : ''} this match — free of cost and uncapped (${suspendingBooster?.name ?? 'booster'} active)`
+                : `${pendingTransfers} transfer${pendingTransfers !== 1 ? 's' : ''} made from your last locked XI`}
               {countdown && countdown !== 'Locked' ? ` — locks in ${countdown}` : ' — locks with this match'}
             </Text>
           </View>
