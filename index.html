@@ -5594,6 +5594,18 @@ p31,Sample Player,MI,bat,9.0,false
           $('#slXiStatXfers .value').textContent = draftChanges ? '~' + draftChanges + ' pending' : 'No changes';
           $('#slXiStatXfers').className = 'stat ' + (draftChanges ? 'ok' : '');
         }
+      } else if (transferCapSuspended && draftChanges > 0) {
+        // Wildcard/Free Hit active with pending changes this match — those
+        // changes are free of cost and don't draw against the season cap
+        // (lock-matches bypasses transfer-count logging entirely for
+        // either booster), so showing a "X/Y left" fraction here would
+        // wrongly imply they're being deducted. Mirrors the info bar's
+        // "free of cost and uncapped" messaging just below, and mobile's
+        // equivalent Xfers pill.
+        const suspendLabel = freeHitActive ? 'Free Hit' : 'Wildcard';
+        $('#slXiStatXfers .label').textContent = isPlayoff ? 'Playoff Xfers' : 'Transfers';
+        $('#slXiStatXfers .value').textContent = '⚡ ' + suspendLabel;
+        $('#slXiStatXfers').className = 'stat';
       } else {
         // Budget configured — show remaining / total (phase-scoped)
         $('#slXiStatXfers .label').textContent = isPlayoff ? 'Playoff Xfers left' : 'Transfers left';
