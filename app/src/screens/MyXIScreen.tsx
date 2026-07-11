@@ -541,6 +541,26 @@ export default function MyXIScreen({ route }: Props) {
               return;
             }
 
+            // Explicitly clear this match's transfer log rather than trusting
+            // saveXI's internal diff (restored playerIds vs. its own freshly
+            // recomputed baseline) to land on exactly zero. Reverting to
+            // locked means "no difference from what's locked" by definition
+            // — there should be nothing pending for this match, full stop.
+            // This is what was missing: the diff-based approach left "N
+            // pending" showing after a revert whenever it didn't resolve to
+            // a clean zero.
+            if (saveResult.squadId && saveResult.matchId) {
+              const { error: clearErr } = await supabase
+                .from('user_transfers')
+                .delete()
+                .eq('squad_id', saveResult.squadId)
+                .eq('match_id', saveResult.matchId);
+              if (clearErr) {
+                console.warn('[MyXI] revert-to-locked: transfer log clear failed (non-fatal):', clearErr.message);
+              }
+            }
+            setPendingTransfers(0);
+
             let boosterMsg = '';
             try {
               const result = await commitPending(saveResult.squadId ?? undefined, saveResult.matchId ?? undefined);
