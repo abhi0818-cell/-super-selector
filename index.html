@@ -5877,7 +5877,17 @@ p31,Sample Player,MI,bat,9.0,false
      * baseline.
      */
     function slBudgetCapSuspended() {
-      return getEffectiveBoosterForMatch(state.activeMatchId) === 'free_hit';
+      // Resolve against slSaveTargetMatch(), NOT state.activeMatchId directly.
+      // Once the viewed match (state.activeMatchId) has actually started,
+      // slSaveTargetMatch() redirects to the real next-to-lock match — the
+      // same redirect the info bar's "Saving for next: M.." label and the
+      // actual save/lock path already use. Checking state.activeMatchId
+      // directly here meant that once the clock passed the viewed match's
+      // start time, this always evaluated against the wrong (already-live)
+      // match, silently going false even with Free Hit genuinely committed
+      // for the real target — the exact "10 pending" messaging bug.
+      const target = slSaveTargetMatch();
+      return getEffectiveBoosterForMatch(target?.id ?? null) === 'free_hit';
     }
 
     /**
@@ -5895,7 +5905,11 @@ p31,Sample Player,MI,bat,9.0,false
      * over budget forever, unlike Free Hit's one-match exception.
      */
     function slTransferCapSuspended() {
-      const b = getEffectiveBoosterForMatch(state.activeMatchId);
+      // Same slSaveTargetMatch() fix as slBudgetCapSuspended() above — must
+      // not read state.activeMatchId directly once the viewed match has
+      // actually started.
+      const target = slSaveTargetMatch();
+      const b = getEffectiveBoosterForMatch(target?.id ?? null);
       return b === 'wildcard' || b === 'free_hit';
     }
 
