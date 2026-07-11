@@ -117,7 +117,7 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
 
       const { data: boosterRows } = await supabase
         .from('user_booster_activations')
-        .select('squad_id, match_id')
+        .select('squad_id, match_id, booster')
         .in('squad_id', squadIds);
 
       // Both a booster activation AND a transfer are committed to the DB as
@@ -143,14 +143,24 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
       }
 
       const boosterCountBySquad: Record<string, number> = {};
+      // (squad_id, match_id) pairs where Wildcard/Free Hit was active — those
+      // matches' transfers were free of cost and never actually charged
+      // against the season cap, so transferCountBySquad below must exclude
+      // them too, not just gate on lock status. Mirrors the equivalent fix
+      // in web's getLeaderboardSL (db.js).
+      const bypassedSquadMatch = new Set<string>();
       (boosterRows ?? []).forEach((b: any) => {
         if (!lockedMatchIds.has(b.match_id)) return; // match hasn't locked yet — don't count
         boosterCountBySquad[b.squad_id] = (boosterCountBySquad[b.squad_id] ?? 0) + 1;
+        if (b.booster === 'wildcard' || b.booster === 'free_hit') {
+          bypassedSquadMatch.add(b.squad_id + '::' + b.match_id);
+        }
       });
 
       const transferCountBySquad: Record<string, number> = {};
       (transfers ?? []).forEach((t: any) => {
         if (!lockedMatchIds.has(t.match_id)) return; // match hasn't locked yet — don't count
+        if (bypassedSquadMatch.has(t.squad_id + '::' + t.match_id)) return; // free transfer — never charged
         transferCountBySquad[t.squad_id] = (transferCountBySquad[t.squad_id] ?? 0) + 1;
       });
 

@@ -2440,7 +2440,7 @@ export function createDb(cfg = {}) {
       // same RLS pitfall migration_v30 fixed for user_transfers.
       const { data: boosterRows } = await sb
         .from('user_booster_activations')
-        .select('squad_id, match_id')
+        .select('squad_id, match_id, booster')
         .in('squad_id', squadIds);
 
       // Both a booster activation AND a transfer are committed to the DB as
@@ -2468,9 +2468,20 @@ export function createDb(cfg = {}) {
       }
 
       const boosterCountBySquad = {};
+      // (squad_id, match_id) pairs where Wildcard/Free Hit was active — those
+      // matches' transfers were free of cost and never actually charged
+      // against the season cap (lock-matches bypasses transfer-count
+      // logging entirely for either booster), so transferCount below must
+      // exclude them too. Same class of fix already applied to the Pick XI
+      // info bar/stat box and the two match-history views — this summary
+      // row was the one place left still showing them as if they counted.
+      const bypassedSquadMatch = new Set();
       (boosterRows || []).forEach(b => {
         if (!lockedMatchIds.has(b.match_id)) return; // match hasn't locked yet — don't count
         boosterCountBySquad[b.squad_id] = (boosterCountBySquad[b.squad_id] || 0) + 1;
+        if (b.booster === 'wildcard' || b.booster === 'free_hit') {
+          bypassedSquadMatch.add(b.squad_id + '::' + b.match_id);
+        }
       });
 
       // Sum all player points per squad; count distinct matches where squad scored > 0
@@ -2494,9 +2505,15 @@ export function createDb(cfg = {}) {
           // Net points = raw fantasy points minus transfer penalties
           totalPoints : (pointsBySquad[s.id] || 0) - (penaltyBySquad[s.id] || 0),
           matchCount  : matchesBySquad[s.id]?.size  || 0,
-          // Only counts transfers whose match has actually locked — see
-          // lockedMatchIds comment above.
-          transferCount   : (xferRows || []).filter(t => t.squad_id === s.id && lockedMatchIds.has(t.match_id)).length,
+          // Only counts transfers whose match has actually locked (see
+          // lockedMatchIds comment above) AND whose match wasn't under
+          // Wildcard/Free Hit (see bypassedSquadMatch comment above) — a
+          // free transfer was never actually charged, so it shouldn't show
+          // as having spent part of the season budget.
+          transferCount   : (xferRows || []).filter(t =>
+            t.squad_id === s.id && lockedMatchIds.has(t.match_id) &&
+            !bypassedSquadMatch.has(s.id + '::' + t.match_id)
+          ).length,
           transfersAllowed,
           boosterCount    : boosterCountBySquad[s.id] || 0,
           boosterAllowed,
