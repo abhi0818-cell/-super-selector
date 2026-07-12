@@ -20,7 +20,7 @@ import {
   View,
 } from 'react-native';
 import { Player, PlayerRole } from '../types';
-import { useTeamStore, RULES } from '../store/teamStore';
+import { useTeamStore, RULES, canAddPlayer } from '../store/teamStore';
 import { useContestStore } from '../store/contestStore';
 import { supabase } from '../lib/supabase';
 import PlayerCard from '../components/PlayerCard';
@@ -74,6 +74,7 @@ export default function PlayerPickerScreen() {
     currentMatchId,
     format,
     recentForm,
+    budgetCapSuspended,
   } = useTeamStore();
 
   const { activeContext } = useContestStore();
@@ -223,10 +224,13 @@ export default function PlayerPickerScreen() {
 
   const isDisabled = useCallback((player: Player): boolean => {
     if (selectedIds.has(player.id)) return false;
-    if (selected.length >= 11) return true;
-    if (player.overseas && osSelected >= osCap) return true;
-    return false;
-  }, [selectedIds, selected.length, osSelected, osCap]);
+    // canAddPlayer folds in role caps + the reachability check (won't let a
+    // slot be spent on an already-satisfied role if another role still needs
+    // it to hit its minimum) — mirrors web's canAddToSlXi so the pool itself
+    // makes an invalid final XI (e.g. 1 BAT of the required 3) unbuildable,
+    // rather than only flagging it after 11 are already picked.
+    return !canAddPlayer(selected, player, format, budgetCapSuspended);
+  }, [selectedIds, selected, format, budgetCapSuspended]);
 
   // Current match label e.g. "M25 · MNY vs SO" — derived from the current match
   const currentMatchLabel = useMemo(() => {

@@ -89,6 +89,66 @@ function validate(selected: SelectedPlayer[], format: MatchFormat, budgetCapSusp
   return { valid: errors.length === 0 && selected.length === RULES.total, errors, warnings };
 }
 
+// ─── Pick-time eligibility (mirrors web's canAddToSlXi in index.html) ────────
+//
+// validate() above only ever runs AFTER the fact — it flags problems in a
+// completed/in-progress XI but nothing consults it before Save (Save XI has
+// no role-count gate at all, on web or mobile). Web never needs one in
+// practice: its pool blocks you from EVER completing an invalid XI in the
+// first place — canAddToSlXi/slTogglePlayer refuse to add a player if doing
+// so would burn a slot a role minimum still needs, so "11 picked but only 1
+// BAT of the required 3" simply can't be built through the UI. Mobile's
+// togglePlayer had no equivalent — only a total-count and overseas-cap
+// check — so it let you freely complete exactly that invalid XI, which then
+// showed as a red "error" message that never actually blocked anything.
+// This closes the gap by construction, matching web, instead of trying to
+// police it after the fact.
+export function canAddPlayer(
+  selected: SelectedPlayer[],
+  player: Player,
+  format: MatchFormat,
+  budgetCapSuspended = false,
+): boolean {
+  if (selected.length >= RULES.total) return false;
+
+  // Budget — suspended while Free Hit is active, same as web's slBudgetCapSuspended.
+  if (!budgetCapSuspended) {
+    const used = selected.reduce((s, p) => s + p.credits, 0);
+    if (used + player.credits > RULES.budget) return false;
+  }
+
+  const roleLimits = RULES.role[player.role];
+  if (roleLimits) {
+    const counts: Record<PlayerRole, number> = { wk: 0, bat: 0, ar: 0, bowl: 0 };
+    selected.forEach(p => { counts[p.role] = (counts[p.role] ?? 0) + 1; });
+
+    // Role cap
+    if ((counts[player.role] ?? 0) >= roleLimits[1]) return false;
+
+    // Reachability: if every remaining slot is needed just to satisfy the
+    // roles still below their minimum, refuse to spend one on a role that's
+    // already met its minimum — otherwise the XI could fill up to 11 while
+    // leaving another role permanently short.
+    const slotsLeft = RULES.total - selected.length;
+    const totalDeficit = (Object.keys(RULES.role) as PlayerRole[])
+      .reduce((s, r) => s + Math.max(0, RULES.role[r][0] - (counts[r] ?? 0)), 0);
+    const thisRoleDeficit = Math.max(0, roleLimits[0] - (counts[player.role] ?? 0));
+    if (totalDeficit >= slotsLeft && thisRoleDeficit === 0) return false;
+  }
+
+  // Max per real team
+  const teamCount = selected.filter(p => p.team === player.team).length;
+  if (teamCount >= RULES.maxPerTeam) return false;
+
+  // Overseas cap
+  if (player.overseas) {
+    const maxOS = RULES.maxOverseas[format] ?? 11;
+    if (selected.filter(p => p.overseas).length >= maxOS) return false;
+  }
+
+  return true;
+}
+
 // ─── Derived stats ────────────────────────────────────────────────────────────
 
 function deriveStats(selected: SelectedPlayer[], format: MatchFormat, budgetCapSuspended = false) {
@@ -469,13 +529,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       return;
     }
 
-    if (selected.length >= RULES.total) return;
-
-    // Overseas cap guard — prevents adding OS players beyond the format/tournament limit
-    if (player.overseas) {
-      const maxOS = RULES.maxOverseas[format] ?? 11;
-      if (selected.filter(p => p.overseas).length >= maxOS) return;
-    }
+    if (!canAddPlayer(selected, player, format, budgetCapSuspended)) return;
 
     const next: SelectedPlayer[] = [...selected, { ...player, captaincy: 'normal' }];
     set({ selected: next, ...deriveStats(next, format, budgetCapSuspended) });
