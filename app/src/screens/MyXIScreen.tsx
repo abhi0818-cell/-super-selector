@@ -158,27 +158,6 @@ export default function MyXIScreen({ route }: Props) {
     setPickerOpen(true);
   };
 
-  // Reverts the XI to the last saved draft (DB), or the last locked XI if no
-  // draft exists, or the snapshot from when the picker was opened as a last resort.
-  const revertXI = useCallback(async () => {
-    // Always discard any staged (not-yet-saved) booster pick on cancel
-    discardPending();
-    if (activeContext && currentMatchId) {
-      const err = await loadSavedXI(currentMatchId, activeContext.contestId, activeContext.contestType);
-      if (err) {
-        if (previousLockedXI.length > 0) restoreXI(previousLockedXI);
-        else restoreXI(snapshot);
-      }
-    } else {
-      restoreXI(snapshot);
-    }
-  }, [activeContext, currentMatchId, discardPending, loadSavedXI, previousLockedXI, restoreXI, snapshot]);
-
-  const handlePickerCancel = useCallback(async () => {
-    setPickerOpen(false);
-    await revertXI();
-  }, [revertXI]);
-
   const currentMatchId    = useTeamStore(s => s.currentMatchId);
   const currentMatchLabel = useTeamStore(s => s.currentMatchLabel);
   const nextMatchTime     = useTeamStore(s => s.nextMatchTime);
@@ -232,6 +211,27 @@ export default function MyXIScreen({ route }: Props) {
   // modal's IN/OUT list, so that list always matches what actually gets
   // counted as a transfer server-side.
   const [previousLockedXI, setPreviousLockedXI] = useState<SelectedPlayer[]>([]);
+
+  // Reverts the XI to the last saved draft (DB), or the last locked XI if no
+  // draft exists, or the snapshot from when the picker was opened as a last resort.
+  const revertXI = useCallback(async () => {
+    // Always discard any staged (not-yet-saved) booster pick on cancel
+    discardPending();
+    if (activeContext && currentMatchId) {
+      const err = await loadSavedXI(currentMatchId, activeContext.contestId, activeContext.contestType);
+      if (err) {
+        if (previousLockedXI.length > 0) restoreXI(previousLockedXI);
+        else restoreXI(snapshot);
+      }
+    } else {
+      restoreXI(snapshot);
+    }
+  }, [activeContext, currentMatchId, discardPending, loadSavedXI, previousLockedXI, restoreXI, snapshot]);
+
+  const handlePickerCancel = useCallback(async () => {
+    setPickerOpen(false);
+    await revertXI();
+  }, [revertXI]);
 
   useEffect(() => {
     setSquadId(null);  // reset when contest changes
