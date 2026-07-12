@@ -6284,13 +6284,33 @@ p31,Sample Player,MI,bat,9.0,false
 
           state.sl.pendingBoosterMatchId = nextMatch.id;
           state.sl.pendingBooster = isActive ? null : booster;
+
+          // Free Hit's whole premise is "make free changes from your CURRENT
+          // locked team for this one match, then revert after" — so
+          // selecting it should snap the picker to that locked baseline
+          // (state.sl.prevXI) as the starting point, same as Revert to
+          // Locked does. Previously selecting Free Hit only staged the
+          // booster and left whatever was already in the picker untouched
+          // (which could be a stale/unrelated draft), so the user never
+          // actually saw their locked team to start editing from. Only on
+          // activation (not deactivation), and only when a real locked
+          // baseline exists.
+          let resetNote = '';
+          if (!isActive && booster === 'free_hit' && state.sl.prevXI?.playerIds?.length === 11) {
+            state.sl.xiPlayers = [...state.sl.prevXI.playerIds];
+            state.sl.xiCaptain = state.sl.prevXI.captainId ?? null;
+            state.sl.xiVc      = state.sl.prevXI.vcId      ?? null;
+            resetNote = ' Loaded your locked team — make your changes and Save XI.';
+          }
+
           toast(isActive
             ? `${BOOSTER_META[booster].label} deselected — Save XI to confirm.`
-            : `${BOOSTER_META[booster].label} selected for M${nextMatch.match_number ?? '?'} — Save XI to confirm.`, 3000);
+            : `${BOOSTER_META[booster].label} selected for M${nextMatch.match_number ?? '?'} — Save XI to confirm.${resetNote}`, 3500);
 
           renderSlBoosterGrid(body);
           renderSlBoosterBar();
           renderSlXiTab();
+          renderPool();
         });
       });
     }
