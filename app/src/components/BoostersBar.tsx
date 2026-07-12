@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import { useBoosterStore } from '../store/boosterStore';
 import { fontSize, radius, spacing } from '../theme';
+import { SelectedPlayer } from '../types';
 
 const C = {
   text:   '#1C1F26',
@@ -35,9 +36,15 @@ interface Props {
   squadId:     string | null;
   matchId:     string | null;
   onStaged?:   (message: string) => void;
+  /** The squad's true previous LOCKED XI — same baseline MyXIScreen already
+   * tracks for the transfer diff. Used so activating Free Hit can snap the
+   * picker to it (see below). */
+  previousLockedXI?: SelectedPlayer[];
+  /** teamStore.restoreXI — replaces the on-screen XI wholesale. */
+  restoreXI?: (players: SelectedPlayer[]) => void;
 }
 
-export default function BoostersBar({ contestType, squadId, matchId, onStaged }: Props) {
+export default function BoostersBar({ contestType, squadId, matchId, onStaged, previousLockedXI, restoreXI }: Props) {
   const { boosters, selectBooster } = useBoosterStore();
 
   if (contestType !== 'sl' && contestType !== 'private') return null;
@@ -55,8 +62,23 @@ export default function BoostersBar({ contestType, squadId, matchId, onStaged }:
 
     const becomingStaged = b.status === 'available';
     selectBooster(id);
+
+    // Free Hit's whole premise is "make free changes from your CURRENT
+    // locked team for this one match, then revert after" — so staging it
+    // snaps the picker to that locked baseline immediately, same as web's
+    // equivalent fix and mobile's own Revert to Locked. Previously staging
+    // Free Hit left whatever was already on screen untouched (which could
+    // be an unrelated stale draft), so the user never actually saw their
+    // locked team to start editing from. Only on activation, not on
+    // deselect, and only when a real locked baseline exists.
+    let resetNote = '';
+    if (becomingStaged && id === 'free_hit' && previousLockedXI?.length === 11 && restoreXI) {
+      restoreXI(previousLockedXI);
+      resetNote = ' Loaded your locked team — make your changes and Save XI.';
+    }
+
     onStaged?.(becomingStaged
-      ? `${b.icon} ${b.name} staged — Save XI to confirm.`
+      ? `${b.icon} ${b.name} staged — Save XI to confirm.${resetNote}`
       : `${b.icon} ${b.name} removed — Save XI to confirm.`);
   };
 

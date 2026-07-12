@@ -708,6 +708,8 @@ export default function MyXIScreen({ route }: Props) {
             squadId={squadId}
             matchId={currentMatchId}
             onStaged={showToast}
+            previousLockedXI={previousLockedXI}
+            restoreXI={restoreXI}
           />
 
           {/* Budget bar */}
