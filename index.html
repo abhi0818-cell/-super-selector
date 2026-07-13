@@ -5629,13 +5629,17 @@ p31,Sample Player,MI,bat,9.0,false
         $('#slXiStatXfers .value').textContent = '⚡ ' + suspendLabel;
         $('#slXiStatXfers').className = 'stat';
       } else if (seasonCap === null) {
-        // No budget configured — show pending draft changes vs last locked XI
+        // No budget configured (or, for the playoff opener, carved out as
+        // its own unlimited window) — the cap itself is the useful signal
+        // here, not the draft-change count, so just say "Unlimited" rather
+        // than "~N pending"/"No changes". "—" is reserved for the one case
+        // where there's no prior locked XI at all to compare against yet.
         $('#slXiStatXfers .label').textContent = isPlayoff ? 'Playoff Xfers' : 'Transfers';
         if (!prev.length) {
           $('#slXiStatXfers .value').textContent = '—';
           $('#slXiStatXfers').className = 'stat';
         } else {
-          $('#slXiStatXfers .value').textContent = draftChanges ? '~' + draftChanges + ' pending' : 'No changes';
+          $('#slXiStatXfers .value').textContent = 'Unlimited';
           $('#slXiStatXfers').className = 'stat ' + (draftChanges ? 'ok' : '');
         }
       } else {
@@ -5677,7 +5681,7 @@ p31,Sample Player,MI,bat,9.0,false
         const boosterLabel = freeHitActive ? 'Free Hit' : 'Wildcard';
         const revertNote   = freeHitActive ? ' Reverts after the match.' : '';
         const unsavedNote  = boosterChanged ? ' Save XI to confirm the booster.' : '';
-        infoBar.innerHTML = `<span style="color:var(--accent);">⚡ ${boosterLabel} ${boosterChanged ? 'selected' : 'active'} — ${pendingChanges} change${pendingChanges !== 1 ? 's' : ''} this match free of cost and uncapped.${revertNote}${unsavedNote}</span>`;
+        infoBar.innerHTML = `<span style="color:var(--accent);">⚡ ${boosterLabel} ${boosterChanged ? 'selected' : 'active'} — ${pendingChanges} free change${pendingChanges !== 1 ? 's' : ''} this match.${revertNote}${unsavedNote}</span>`;
       } else if (pendingChanges === 0 && boosterChanged) {
         const pendingMeta = state.sl.pendingBooster ? BOOSTER_META[state.sl.pendingBooster] : null;
         infoBar.innerHTML = pendingMeta
@@ -5693,13 +5697,14 @@ p31,Sample Player,MI,bat,9.0,false
       } else if (seasonCap === null) {
         // Genuinely uncapped — either no budget configured at all, or (the
         // playoff-opener case) playoff_first_match_unlimited carved this
-        // specific match out of the pooled budget. Either way "Counts when
-        // MXX starts" is actively wrong here — these transfers are never
-        // deducted from anything, so don't imply a countdown is running.
+        // specific match out of the pooled budget. "Counts when MXX starts"
+        // is wrong here (nothing is ever deducted), so lead with "free"
+        // instead — "capped/uncapped" isn't meaningful user-facing language,
+        // just say what it costs (nothing) and when it takes effect.
         const lockNote = nextLock
-          ? ` Free and uncapped — applies when M${nextLock.match_number ?? '?'} starts.` : ' Free and uncapped.';
-        infoBar.innerHTML = `${pendingChanges} pending transfer${pendingChanges !== 1 ? 's' : ''}.`
-          + ` <span style="color:var(--muted);font-size:11px;">${lockNote}</span>`;
+          ? ` Applies when M${nextLock.match_number ?? '?'} starts.` : '';
+        infoBar.innerHTML = `${pendingChanges} free transfer${pendingChanges !== 1 ? 's' : ''}.`
+          + (lockNote ? ` <span style="color:var(--muted);font-size:11px;">${lockNote}</span>` : '');
       } else {
         const remainNote = ` · ${seasonRemaining - pendingChanges} remaining after lock`;
         const lockNote = nextLock
@@ -7333,12 +7338,19 @@ p31,Sample Player,MI,bat,9.0,false
       // already can't be enabled until the draft is 11/11.
       const xfers       = state.sl.seasonXferCount ?? 0;
       const seasonPts   = state.sl.seasonData?.seasonTotal ?? null;
+      // A raw count here ("Xfers: 2") reads like a limit even though it isn't
+      // one — it's just a tally of transfers already saved this phase, with
+      // no cap attached. Confusing enough on its own, but actively misleading
+      // once the phase is confirmed unlimited (e.g. the playoff opener under
+      // playoff_first_match_unlimited): hide it entirely there rather than
+      // show a bare number next to no context. The "Playoff Xfers" stat box
+      // already says "Unlimited" for that case, so nothing is lost.
+      const capIsUnlimited = state.sl.seasonXferCapLoaded && state.sl.seasonXferCap === null;
       bar.style.display = 'flex';
       bar.innerHTML = `
         <span class="sib-squad">${squadName}</span>
         ${contestName ? `<span class="sib-sep">|</span><span class="sib-contest">${contestName}</span>` : ''}
-        <span class="sib-sep">|</span>
-        <span class="sib-label">Xfers:</span><span class="sib-val">${xfers}</span>
+        ${capIsUnlimited ? '' : `<span class="sib-sep">|</span><span class="sib-label">Xfers:</span><span class="sib-val">${xfers}</span>`}
         ${seasonPts !== null ? `<span class="sib-sep">|</span><span class="sib-pts">${seasonPts} pts</span>` : ''}
       `;
     }
