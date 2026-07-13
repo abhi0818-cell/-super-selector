@@ -2697,6 +2697,7 @@ p31,Sample Player,MI,bat,9.0,false
         pendingBoosterMatchId: null,
         seasonXferCount: 0,     // transfers used in the active phase window
         seasonXferCap  : null, // active phase cap (null = unlimited)
+        seasonXferCapLoaded: false, // true once seasonXferCap reflects a real resolved value (vs just the initial placeholder) — needed because `null` is ALSO the valid "unlimited" value, so `??` alone can't tell "not loaded yet" apart from "confirmed unlimited"
         seasonPhase    : 'regular', // 'pre_season' | 'regular' | 'playoff'
       },
     };
@@ -5483,6 +5484,7 @@ p31,Sample Player,MI,bat,9.0,false
         state.sl.squad = await state.db.joinSeason(state.sl.seasonContest.id, name);
         state.sl.seasonXferCount = 0;
         state.sl.seasonXferCap   = state.sl.seasonContest?.total_transfers_allowed ?? null;
+        state.sl.seasonXferCapLoaded = true;
         state.sl.seasonPhase     = 'regular'; // fresh squad always starts in regular phase
         await slLoadDraft();
         toast('"' + name + '" joined the season! Pick your XI for the season.', 4000);
@@ -5536,9 +5538,17 @@ p31,Sample Player,MI,bat,9.0,false
       const contest        = state.sl.seasonContest ?? {};
       // Use the phase-aware cap/count that were refreshed on load/save.
       // Falls back to the raw contest cap so the UI works before slRefreshTransferCount fires.
+      // IMPORTANT: `null` is a legitimate resolved value here (it means "unlimited"),
+      // so we can't use `??` against state.sl.seasonXferCap to decide whether to fall
+      // back — that would mistake "confirmed unlimited" for "not loaded yet" and
+      // incorrectly show the raw pooled cap instead. seasonXferCapLoaded disambiguates
+      // the two. (Previously this always fell back once seasonXferCap was null, which
+      // silently showed the pooled playoff budget instead of "unlimited" on the first
+      // playoff match — see playoff_first_match_unlimited.)
       const phase           = state.sl.seasonPhase ?? 'regular';
-      const seasonCap       = state.sl.seasonXferCap  // refreshed by slRefreshTransferCount
-        ?? (phase === 'playoff'
+      const seasonCap       = state.sl.seasonXferCapLoaded
+        ? state.sl.seasonXferCap
+        : (phase === 'playoff'
             ? (contest.playoff_transfers_allowed ?? null)   // null = unlimited in playoffs
             : (contest.total_transfers_allowed   ?? null));
       // If there's no previous XI (first match or season opener), transfers are always 0.
@@ -6354,6 +6364,7 @@ p31,Sample Player,MI,bat,9.0,false
           state.sl.squad = await state.db.joinSeason(state.sl.seasonContest.id, squadName);
           state.sl.seasonXferCount = 0;
           state.sl.seasonXferCap   = state.sl.seasonContest?.total_transfers_allowed ?? null;
+          state.sl.seasonXferCapLoaded = true;
           state.sl.seasonPhase     = 'regular';
           // refreshOnly=true — this squad is brand new, so there's nothing in the
           // DB to load yet. A non-refresh call here would overwrite the 11 players
@@ -6655,7 +6666,7 @@ p31,Sample Player,MI,bat,9.0,false
 
         // Update transfer count display
         if (result?.seasonXferCount !== undefined) state.sl.seasonXferCount = result.seasonXferCount;
-        if (result?.seasonCap       !== undefined) state.sl.seasonXferCap   = result.seasonCap;
+        if (result?.seasonCap       !== undefined) { state.sl.seasonXferCap = result.seasonCap; state.sl.seasonXferCapLoaded = true; }
         if (result?.phase           !== undefined) state.sl.seasonPhase     = result.phase;
 
         const match  = state.matches.find(m => m.id === matchId);
@@ -7154,6 +7165,7 @@ p31,Sample Player,MI,bat,9.0,false
             state.sl.squad          = newSquad;
             state.sl.seasonXferCount = 0;
             state.sl.seasonXferCap   = publicSlContest.total_transfers_allowed ?? null;
+            state.sl.seasonXferCapLoaded = true;
             state.sl.seasonPhase     = 'regular';
             await slLoadDraft();
             renderSlPanel(); renderPool();
@@ -7892,6 +7904,7 @@ p31,Sample Player,MI,bat,9.0,false
       if (startMN !== null && matchNumber === startMN) {
         state.sl.seasonXferCount = 0;
         state.sl.seasonXferCap   = c.total_transfers_allowed ?? null;
+        state.sl.seasonXferCapLoaded = true;
         state.sl.seasonPhase     = 'regular';
         return;
       }
@@ -7910,6 +7923,7 @@ p31,Sample Player,MI,bat,9.0,false
       );
       state.sl.seasonXferCount = result.count;
       state.sl.seasonXferCap   = result.cap;
+      state.sl.seasonXferCapLoaded = true;
       state.sl.seasonPhase     = result.phase;
     }
 
@@ -11102,6 +11116,7 @@ p31,Sample Player,MI,bat,9.0,false
       state.sl.seasonData      = null;
       state.sl.seasonXferCount = 0;
       state.sl.seasonXferCap   = null;
+      state.sl.seasonXferCapLoaded = false;
       state.sl.seasonPhase     = 'regular';
       showLoginScreen();
     });
