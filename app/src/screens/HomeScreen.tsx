@@ -35,6 +35,8 @@ import NotificationTicker from '../components/NotificationTicker';
 import NotificationsModal from '../components/NotificationsModal';
 import { useLiveMatch, useLiveScore, formatLiveScoreLine } from '../lib/liveScore';
 import { fontSize, radius, spacing, shadow } from '../theme';
+import { fetchContestTransferConfig, fetchTournamentMatches, getTransferUsage, MatchLite } from '../lib/transferCap';
+import { findNextUnlockedMatch } from '../lib/matchLock';
 
 type NavProp  = BottomTabNavigationProp<RootTabParamList, 'Home'>;
 type TileType = 'daily' | 'sl' | 'private' | null;
@@ -127,13 +129,10 @@ function useSlSquadStats(contestId: string | null, userId: string | null): SlSqu
         const squad = squads?.[0] ?? null;
         if (!squad || cancelled) { setStats(s => ({ ...s, loading: false })); return; }
 
-        // 1b. Transfer config lives on the contest, not the squad.
-        const { data: contestRow, error: contestErr } = await supabase
-          .from('contests')
-          .select('total_transfers_allowed, extra_transfer_point_cost')
-          .eq('id', contestId)
-          .maybeSingle();
-        if (contestErr) console.warn('[useSlSquadStats] contest lookup failed:', contestErr);
+        // 1b. Transfer config lives on the contest, not the squad. extraCost
+        // still comes straight off the contest row (used for points-penalty
+        // math below, phase-independent).
+        const { config: transferConfig, tournamentId } = await fetchContestTransferConfig(contestId);
 
         // 2. Scored points, grouped per match (needed for the Best Match tile;
         // the season total is just the sum across all matches).
@@ -158,8 +157,35 @@ function useSlSquadStats(contestId: string | null, userId: string | null): SlSqu
         (transfers ?? []).forEach((t: any) => {
           penaltyByMatch[t.match_id] = (penaltyByMatch[t.match_id] ?? 0) + Number(t.points_deducted ?? 0);
         });
-        const penalty       = Object.values(penaltyByMatch).reduce((s, n) => s + n, 0);
-        const transfersUsed = transfers?.length ?? 0;
+        const penalty = Object.values(penaltyByMatch).reduce((s, n) => s + n, 0);
+
+        // 3b. "Transfers left" for the tile is PHASE-AWARE, not a raw
+        // all-time count against the flat season cap — mirrors MyXIScreen's
+        // loadTransfers via the same getTransferUsage helper. Previously this
+        // was just `transfers?.length` against `total_transfers_allowed`,
+        // which kept counting down from the league-stage total straight
+        // through the playoff phase instead of resetting per
+        // playoff_start_match_number/playoff_transfers_allowed/
+        // playoff_first_match_unlimited. Target match = the squad's next
+        // editable match (same one Pick XI would save against); falls back
+        // to the season's last match if nothing's upcoming (season over).
+        let totalTransfersAllowed: number | null = null;
+        let transfersUsed = 0;
+        if (tournamentId) {
+          try {
+            const allMatches = await fetchTournamentMatches(tournamentId);
+            const target = findNextUnlockedMatch(allMatches) ??
+              allMatches.reduce<MatchLite | null>((best, m) =>
+                (m.match_number ?? -Infinity) > (best?.match_number ?? -Infinity) ? m : best, null);
+            if (target) {
+              const usage = await getTransferUsage(squad.id, target.id, transferConfig, allMatches);
+              totalTransfersAllowed = usage.cap;
+              transfersUsed = usage.used;
+            }
+          } catch (e) {
+            console.warn('[useSlSquadStats] transfer usage lookup failed:', e);
+          }
+        }
 
         // 4. Best match — highest (points - penalty) among matches that have
         // at least one scored row. No scored matches yet → both null, tile
@@ -189,8 +215,8 @@ function useSlSquadStats(contestId: string | null, userId: string | null): SlSqu
             points:               rawPts - penalty,
             rank:                 null,   // populated via leaderboard store
             transfersUsed,
-            totalTransfersAllowed: contestRow?.total_transfers_allowed ?? null,
-            extraCost:            contestRow?.extra_transfer_point_cost ?? 4,
+            totalTransfersAllowed,
+            extraCost:            transferConfig.extra_transfer_point_cost ?? 4,
             bestMatchPoints,
             bestMatchLabel,
             loading:              false,
@@ -480,6 +506,9 @@ function ContestTile({ icon, title, subtitle, open, onToggle, headerRight, child
 
 function SLHeaderStats({ stats }: { stats: SlSquadStats }) {
   if (!stats.squadId || stats.points === 0 && stats.transfersUsed === 0) return null;
+  // null cap = unlimited (e.g. the unlimited first playoff match) — show '-'
+  // instead of hiding the whole xfer block, which previously made it look
+  // like there was simply no data.
   const freeLeft = stats.totalTransfersAllowed !== null
     ? Math.max(0, stats.totalTransfersAllowed - stats.transfersUsed)
     : null;
@@ -487,15 +516,11 @@ function SLHeaderStats({ stats }: { stats: SlSquadStats }) {
     <View style={styles.slHeaderStats}>
       <Text style={styles.slHeaderPts}>{stats.points}</Text>
       <Text style={styles.slHeaderPtsSub}>pts</Text>
-      {freeLeft !== null && (
-        <>
-          <View style={styles.slHeaderDivider} />
-          <Text style={[styles.slHeaderXfer, freeLeft === 0 && styles.slHeaderXferWarn]}>
-            {freeLeft}/{stats.totalTransfersAllowed}
-          </Text>
-          <Text style={styles.slHeaderPtsSub}>xfr</Text>
-        </>
-      )}
+      <View style={styles.slHeaderDivider} />
+      <Text style={[styles.slHeaderXfer, freeLeft === 0 && styles.slHeaderXferWarn]}>
+        {freeLeft !== null ? `${freeLeft}/${stats.totalTransfersAllowed}` : '-'}
+      </Text>
+      <Text style={styles.slHeaderPtsSub}>xfr</Text>
     </View>
   );
 }
@@ -540,7 +565,7 @@ function SLStatsGrid({ stats, rank }: { stats: SlSquadStats; rank: number | null
         {!hasSquad ? (
           <Text style={styles.slStatVal}>—</Text>
         ) : unlimitedXfer ? (
-          <Text style={styles.slStatVal}>{stats.transfersUsed}<Text style={styles.slStatSub}>/∞</Text></Text>
+          <Text style={styles.slStatVal}>-</Text>
         ) : (
           <Text style={[styles.slStatVal, freeLeft === 0 && { color: C.bad }]}>
             {freeLeft}<Text style={styles.slStatSub}>/{stats.totalTransfersAllowed}</Text>

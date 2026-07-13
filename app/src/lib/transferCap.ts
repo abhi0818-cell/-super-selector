@@ -36,12 +36,13 @@ export interface MatchLite {
 }
 
 export interface ContestTransferConfig {
-  start_match_number:         number | null;
-  playoff_start_match_number: number | null;
-  total_transfers_allowed:    number | null;
-  playoff_transfers_allowed:  number | null;
-  free_transfers_per_match:   number | null;
-  extra_transfer_point_cost:  number | null;
+  start_match_number:            number | null;
+  playoff_start_match_number:    number | null;
+  total_transfers_allowed:       number | null;
+  playoff_transfers_allowed:     number | null;
+  playoff_first_match_unlimited: boolean;
+  free_transfers_per_match:      number | null;
+  extra_transfer_point_cost:     number | null;
 }
 
 export interface PreviousXI {
@@ -64,7 +65,7 @@ export async function fetchContestTransferConfig(
 ): Promise<{ config: ContestTransferConfig; tournamentId: string | null }> {
   const { data, error } = await supabase
     .from('contests')
-    .select('tournament_id, start_match_number, playoff_start_match_number, total_transfers_allowed, playoff_transfers_allowed, free_transfers_per_match, extra_transfer_point_cost')
+    .select('tournament_id, start_match_number, playoff_start_match_number, total_transfers_allowed, playoff_transfers_allowed, playoff_first_match_unlimited, free_transfers_per_match, extra_transfer_point_cost')
     .eq('id', contestId)
     .single();
   if (error) throw error;
@@ -72,12 +73,13 @@ export async function fetchContestTransferConfig(
   return {
     tournamentId: data?.tournament_id ?? null,
     config: {
-      start_match_number:         data?.start_match_number         ?? null,
-      playoff_start_match_number: data?.playoff_start_match_number ?? null,
-      total_transfers_allowed:    data?.total_transfers_allowed    ?? null,
-      playoff_transfers_allowed:  data?.playoff_transfers_allowed  ?? null,
-      free_transfers_per_match:   data?.free_transfers_per_match   ?? null,
-      extra_transfer_point_cost:  data?.extra_transfer_point_cost  ?? null,
+      start_match_number:            data?.start_match_number             ?? null,
+      playoff_start_match_number:    data?.playoff_start_match_number     ?? null,
+      total_transfers_allowed:       data?.total_transfers_allowed        ?? null,
+      playoff_transfers_allowed:     data?.playoff_transfers_allowed      ?? null,
+      playoff_first_match_unlimited: data?.playoff_first_match_unlimited  ?? false,
+      free_transfers_per_match:      data?.free_transfers_per_match       ?? null,
+      extra_transfer_point_cost:     data?.extra_transfer_point_cost      ?? null,
     },
   };
 }
@@ -220,25 +222,59 @@ function detectPhase(
   return 'regular';
 }
 
-function phaseMatchIdSet(
-  phase: SeasonPhase,
+/**
+ * Resolves the active budget window for a save/display: which cap applies,
+ * and which match IDs count toward it.
+ *
+ * Playoff carve-out: when playoff_first_match_unlimited is set, the first
+ * playoff match (mn === playoffStartMN) is pulled out into its own isolated,
+ * uncapped window — its transfers never count against the pooled budget the
+ * rest of the playoff matches (M32..M34) share, and vice versa.
+ */
+export function resolveBudgetWindow(
+  saveMatchNum: number | null,
   allMatches: MatchLite[],
   startMatchNumber: number | null,
   playoffStartMN: number | null,
-): Set<string> | null {
-  if (phase === 'pre_season' || !allMatches.length) return null;
-  if (phase === 'playoff') {
-    return new Set(allMatches.filter(m => (m.match_number ?? 0) >= (playoffStartMN ?? 0)).map(m => m.id));
-  }
-  // regular: (startMatchNumber, playoffStartMN − 1] — strictly greater than the opener
-  return new Set(
-    allMatches
-      .filter(m => {
-        const mn = m.match_number ?? 0;
-        return mn > (startMatchNumber ?? 0) && (playoffStartMN === null || mn < playoffStartMN);
-      })
-      .map(m => m.id),
-  );
+  seasonCap: number | null,
+  playoffCap: number | null,
+  playoffFirstMatchUnlimited: boolean,
+): { phase: SeasonPhase; activeCap: number | null; phaseIds: Set<string> | null; isUnlimitedFirstPlayoffMatch: boolean } {
+  const phase = detectPhase(saveMatchNum, startMatchNumber, playoffStartMN);
+
+  const isUnlimitedFirstPlayoffMatch =
+    phase === 'playoff' && playoffFirstMatchUnlimited && saveMatchNum === playoffStartMN;
+
+  const activeCap = isUnlimitedFirstPlayoffMatch ? null
+                   : phase === 'playoff' ? playoffCap
+                   : phase === 'regular' ? seasonCap
+                   : null;
+
+  const phaseIds = (() => {
+    if (phase === 'pre_season' || !allMatches.length) return null;
+    if (phase === 'playoff') {
+      if (isUnlimitedFirstPlayoffMatch) {
+        return new Set(allMatches.filter(m => m.match_number === playoffStartMN).map(m => m.id));
+      }
+      return new Set(
+        allMatches
+          .filter(m => (m.match_number ?? 0) >= (playoffStartMN ?? 0)
+            && !(playoffFirstMatchUnlimited && m.match_number === playoffStartMN))
+          .map(m => m.id),
+      );
+    }
+    // regular: (startMatchNumber, playoffStartMN − 1] — strictly greater than the opener
+    return new Set(
+      allMatches
+        .filter(m => {
+          const mn = m.match_number ?? 0;
+          return mn > (startMatchNumber ?? 0) && (playoffStartMN === null || mn < playoffStartMN);
+        })
+        .map(m => m.id),
+    );
+  })();
+
+  return { phase, activeCap, phaseIds, isUnlimitedFirstPlayoffMatch };
 }
 
 // ─── Transfer usage for display (mirrors the tail of checkAndLogTransfers) ─────
@@ -260,13 +296,12 @@ export async function getTransferUsage(
   const playoffStartMN   = config.playoff_start_match_number ?? null;
 
   const saveMatchNum = allMatches.find(m => m.id === currentMatchId)?.match_number ?? null;
-  const phase = detectPhase(saveMatchNum, startMatchNumber, playoffStartMN);
-  const activeCap = phase === 'playoff'
-    ? (config.playoff_transfers_allowed ?? null)
-    : phase === 'regular'
-      ? (config.total_transfers_allowed ?? null)
-      : null;
-  const phaseIds = phaseMatchIdSet(phase, allMatches, startMatchNumber, playoffStartMN);
+  const { phase, activeCap, phaseIds } = resolveBudgetWindow(
+    saveMatchNum, allMatches, startMatchNumber, playoffStartMN,
+    config.total_transfers_allowed ?? null,
+    config.playoff_transfers_allowed ?? null,
+    config.playoff_first_match_unlimited ?? false,
+  );
 
   let countQuery = supabase
     .from('user_transfers')
@@ -319,9 +354,10 @@ export async function checkAndLogTransfers(opts: CheckAndLogTransfersOpts): Prom
   const playoffCap       = config.playoff_transfers_allowed  ?? null;
 
   const saveMatchNum = allMatches.find(m => m.id === matchId)?.match_number ?? null;
-  const phase = detectPhase(saveMatchNum, startMatchNumber, playoffStartMN);
-  const activeCap = phase === 'playoff' ? playoffCap : phase === 'regular' ? seasonCap : null;
-  const phaseIds  = phaseMatchIdSet(phase, allMatches, startMatchNumber, playoffStartMN);
+  const { phase, activeCap, phaseIds, isUnlimitedFirstPlayoffMatch } = resolveBudgetWindow(
+    saveMatchNum, allMatches, startMatchNumber, playoffStartMN,
+    seasonCap, playoffCap, config.playoff_first_match_unlimited ?? false,
+  );
 
   let transfersMade = 0;
 
@@ -370,11 +406,14 @@ export async function checkAndLogTransfers(opts: CheckAndLogTransfersOpts): Prom
         }
       }
 
+      // The unlimited first playoff match bypasses the free/paid split
+      // entirely — every swap is free, regardless of free_transfers_per_match —
+      // it's a full reset, not just an uncapped count.
       const freePerMatch = config.free_transfers_per_match ?? null;
       const extraCost    = Number(config.extra_transfer_point_cost ?? 4);
 
       const xferRows = playersOut.slice(0, transfersMade).map((outId, i) => {
-        const isFree = freePerMatch === null || i < freePerMatch;
+        const isFree = isUnlimitedFirstPlayoffMatch || freePerMatch === null || i < freePerMatch;
         return {
           squad_id:        squadId,
           match_id:        matchId,

@@ -11,8 +11,9 @@
 
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
-import { isMatchLocked } from '../lib/matchLock';
+import { isMatchLocked, findNextUnlockedMatch } from '../lib/matchLock';
 import { resolveDisplayName } from '../lib/profileUtils';
+import { resolveBudgetWindow, MatchLite } from '../lib/transferCap';
 
 // ─── Public type ──────────────────────────────────────────────────────────────
 
@@ -26,7 +27,7 @@ export type LBEntry = {
   isCurrentUser: boolean;
   // SL/private-league only (mirrors web's getLeaderboardSL) — undefined for daily contests.
   transferCount?:    number;
-  transfersAllowed?: number | null; // null = unlimited, shown as '∞'
+  transfersAllowed?: number | null; // null = unlimited, shown as '-'
   boosterCount?:     number;
   boosterAllowed?:   number;        // 0 = contest has no booster budget configured
 };
@@ -104,16 +105,47 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
       // caps, plus each squad's booster-activation count. Cheap no-ops for
       // daily contests (booster_allowed comes back 0, counts come back empty),
       // so it's safe to always fetch rather than branch on contest type here.
+      //
+      // Xfers cap is PHASE-AWARE, not a flat total_transfers_allowed — mirrors
+      // web's getLeaderboardSL (db.js). Once the playoff phase starts, the
+      // relevant cap is playoff_transfers_allowed (pooled across the playoff
+      // matches), and if playoff_first_match_unlimited is set, the first
+      // playoff match resolves to fully unlimited (null cap). Previously this
+      // always used the flat season total, so it kept counting down from the
+      // league-stage figure straight through the playoff opener.
       const { data: contestRow } = await supabase
         .from('contests')
-        .select('tournament_id, available_boosters, total_transfers_allowed')
+        .select('tournament_id, available_boosters, total_transfers_allowed, start_match_number, playoff_start_match_number, playoff_transfers_allowed, playoff_first_match_unlimited')
         .eq('id', contestId)
         .maybeSingle();
       const boosterAllowed = contestRow?.available_boosters
         ? Object.values(contestRow.available_boosters as Record<string, number>)
             .reduce((sum: number, n) => sum + Number(n || 0), 0)
         : 0;
-      const transfersAllowed = contestRow?.total_transfers_allowed ?? null;
+
+      let transfersAllowed = contestRow?.total_transfers_allowed ?? null;
+      let phaseIds: Set<string> | null = null; // null = no phase filter (count everything, legacy behavior)
+      if (contestRow?.tournament_id) {
+        const { data: tournamentMatches } = await supabase
+          .from('matches')
+          .select('id, match_number, status, start_time, lock_time')
+          .eq('tournament_id', contestRow.tournament_id);
+        const allMatches = (tournamentMatches ?? []) as MatchLite[];
+        const target = findNextUnlockedMatch(allMatches) ??
+          allMatches.reduce<MatchLite | null>((best, m) =>
+            (m.match_number ?? -Infinity) > (best?.match_number ?? -Infinity) ? m : best, null);
+        const window = resolveBudgetWindow(
+          target?.match_number ?? null,
+          allMatches,
+          contestRow.start_match_number         ?? null,
+          contestRow.playoff_start_match_number ?? null,
+          contestRow.total_transfers_allowed     ?? null,
+          contestRow.playoff_transfers_allowed   ?? null,
+          contestRow.playoff_first_match_unlimited ?? false,
+        );
+        transfersAllowed = window.activeCap;
+        phaseIds = window.phaseIds;
+      }
 
       const { data: boosterRows } = await supabase
         .from('user_booster_activations')
@@ -161,6 +193,7 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
       (transfers ?? []).forEach((t: any) => {
         if (!lockedMatchIds.has(t.match_id)) return; // match hasn't locked yet — don't count
         if (bypassedSquadMatch.has(t.squad_id + '::' + t.match_id)) return; // free transfer — never charged
+        if (phaseIds !== null && !phaseIds.has(t.match_id)) return; // outside the current phase window
         transferCountBySquad[t.squad_id] = (transferCountBySquad[t.squad_id] ?? 0) + 1;
       });
 

@@ -368,7 +368,7 @@ export const useBoosterStore = create<BoosterState>((set, get) => ({
       // 1. Contest config — available boosters + season/playoff start matches
       const { data: contestRow, error: contestErr } = await supabase
         .from('contests')
-        .select('available_boosters, start_match_number, playoff_start_match_number')
+        .select('available_boosters, start_match_number, playoff_start_match_number, playoff_first_match_unlimited')
         .eq('id', contestId)
         .single();
       if (contestErr) throw contestErr;
@@ -396,10 +396,15 @@ export const useBoosterStore = create<BoosterState>((set, get) => ({
         .eq('id', matchId)
         .maybeSingle();
       const mn = matchRow?.match_number ?? null;
-      const startMN   = contestRow?.start_match_number         ?? null;
-      const playoffMN = contestRow?.playoff_start_match_number ?? null;
+      const startMN            = contestRow?.start_match_number            ?? null;
+      const playoffMN          = contestRow?.playoff_start_match_number    ?? null;
+      const playoffFirstUnlim  = contestRow?.playoff_first_match_unlimited ?? false;
+      // Season opener is ALWAYS unlimited (no prior baseline to diff against).
+      // The first playoff match is only unlimited when playoff_first_match_unlimited
+      // is explicitly set — otherwise it shares the same pooled playoff budget
+      // as the rest of the playoff matches, so boosters remain meaningful there.
       const transfersUnlimited =
-        (mn !== null && (mn === startMN || mn === playoffMN)) ||
+        (mn !== null && (mn === startMN || (mn === playoffMN && playoffFirstUnlim))) ||
         // Defensive fallback for contests with no start_match_number configured.
         (startMN === null && playoffMN === null && isFirstMatchFallback);
 

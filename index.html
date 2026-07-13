@@ -6174,14 +6174,21 @@ p31,Sample Player,MI,bat,9.0,false
 
       const { contest, available, nextMatch, activations, activeForNext, pendingForNext, lockedMatchIds } = ctx;
 
-      // Is the next match the first of the season or the first of playoffs?
-      // On those matches transfers are already unlimited, so wildcard/free_hit are pointless.
+      // Is the next match the first of the season, or a first-playoff-match
+      // that's been configured as unlimited (playoff_first_match_unlimited)?
+      // On those matches transfers are already unlimited, so wildcard/free_hit
+      // are pointless. The season opener (start_match_number) is ALWAYS
+      // unlimited — there's no prior baseline to diff against, so no cap can
+      // ever apply there regardless of config. The first playoff match is
+      // only unlimited when playoff_first_match_unlimited is explicitly set —
+      // otherwise it shares the same pooled playoff_transfers_allowed budget
+      // as the rest of the playoff matches, so boosters remain meaningful there.
       const TRANSFER_BOOSTERS = new Set(['wildcard', 'free_hit']);
       const mn = nextMatch?.match_number ?? null;
       const transfersUnlimited =
         mn !== null && (
-          mn === (contest.start_match_number           ?? null) ||
-          mn === (contest.playoff_start_match_number   ?? null)
+          mn === (contest.start_match_number ?? null) ||
+          (mn === (contest.playoff_start_match_number ?? null) && !!contest.playoff_first_match_unlimited)
         );
 
       // Compact 2-column grid of icon tiles — a full-width sentence-per-row list
@@ -6628,6 +6635,7 @@ p31,Sample Player,MI,bat,9.0,false
           start_match_number         : contest.start_match_number         ?? null,
           playoff_start_match_number : contest.playoff_start_match_number ?? null,
           playoff_transfers_allowed  : contest.playoff_transfers_allowed  ?? null,
+          playoff_first_match_unlimited: contest.playoff_first_match_unlimited ?? false,
           allMatches                 : state.matches,
           bypassTransfers,
         });
@@ -6755,12 +6763,22 @@ p31,Sample Player,MI,bat,9.0,false
       // Match | Captain | Vice-Captain | Booster | Xfers Left | Net | Running.
       const COLGROUP = '<colgroup><col><col style="width:56px"><col style="width:64px"><col style="width:60px"><col style="width:74px"><col style="width:56px"><col style="width:76px"></colgroup>';
 
-      // Season-wide transfer budget (null = unlimited) — the -Xfer column counts
-      // down from this as transfers are used, instead of just showing the points
-      // penalty (which is usually 0 and told the admin nothing useful).
-      const totalBudget = state.sl.seasonContest?.total_transfers_allowed ?? null;
+      // Transfer budget windows — regular season and playoff are SEPARATE
+      // pooled budgets (see playoff_start_match_number/playoff_transfers_allowed),
+      // and if playoff_first_match_unlimited is set, the first playoff match is
+      // its own isolated, unlimited window excluded from the pooled playoff
+      // budget the rest of the playoff matches share. The -Xfer column counts
+      // down within whichever window each row's match falls into, resetting at
+      // the playoff boundary instead of counting straight through it against
+      // the league-stage total.
+      const seasonContest    = state.sl.seasonContest || {};
+      const totalBudget      = seasonContest.total_transfers_allowed     ?? null;
+      const playoffStartMN   = seasonContest.playoff_start_match_number  ?? null;
+      const playoffBudget    = seasonContest.playoff_transfers_allowed   ?? null;
+      const playoffFirstUnlim = !!seasonContest.playoff_first_match_unlimited;
       let running = 0;
-      let cumXfer = 0;
+      let regularCumXfer = 0;
+      let playoffCumXfer = 0;
       const rows = data.matches.map(m => {
         const pen  = penMap[m.match_id] || 0;
         const net  = m.xi_total - pen;
@@ -6776,18 +6794,32 @@ p31,Sample Player,MI,bat,9.0,false
         const matchBooster    = getCachedBoosterForMatch(m.match_id);
         const bypassedThisMatch = matchBooster === 'wildcard' || matchBooster === 'free_hit';
         const xferCount = (data.transfers || []).filter(t => t.match_id === m.match_id).length;
-        if (!bypassedThisMatch) cumXfer += xferCount;
+        const detailId    = 'slDetail_' + m.match_id.replace(/-/g, '');
+        const pitchPanelId = detailId + '_pitch';
+
+        // Which budget window does this row's match fall into?
+        const isPlayoffMatch = playoffStartMN !== null && (m.match_number ?? 0) >= playoffStartMN;
+        const isUnlimitedFirstPlayoffMatch = isPlayoffMatch && playoffFirstUnlim && m.match_number === playoffStartMN;
+
+        let remaining;
+        if (isUnlimitedFirstPlayoffMatch) {
+          remaining = null; // unlimited, and excluded from the pooled playoff count below
+        } else if (isPlayoffMatch) {
+          if (!bypassedThisMatch) playoffCumXfer += xferCount;
+          remaining = playoffBudget === null ? null : Math.max(0, playoffBudget - playoffCumXfer);
+        } else {
+          if (!bypassedThisMatch) regularCumXfer += xferCount;
+          remaining = totalBudget === null ? null : Math.max(0, totalBudget - regularCumXfer);
+        }
+
         const xferTxt = xferCount
           ? ' <span style="font-size:10px;color:var(--muted);">' +
             (bypassedThisMatch ? '⚡×' + xferCount + ' free' : '×' + xferCount + ' xfer') +
             '</span>'
           : '';
-        const detailId    = 'slDetail_' + m.match_id.replace(/-/g, '');
-        const pitchPanelId = detailId + '_pitch';
-        // Running countdown of the season transfer budget through this match
-        // (Unlimited if no cap is set). Points penalty, if any, shown alongside.
-        const remaining = totalBudget === null ? null : Math.max(0, totalBudget - cumXfer);
-        const penCell = (totalBudget === null ? 'Unlimited' : String(remaining)) +
+        // Running countdown of the active budget window through this match
+        // ('-' if unlimited). Points penalty, if any, shown alongside.
+        const penCell = (remaining === null ? '-' : String(remaining)) +
           (pen ? ' <span style="color:var(--bad);font-size:9px;">(-' + pen + ')</span>' : '');
 
         // Reuse the shared pitch+breakdown component — reshape SL's per-match player
@@ -7870,7 +7902,11 @@ p31,Sample Player,MI,bat,9.0,false
         startMN,
         c.playoff_start_match_number ?? null,
         matchNumber ?? null,
-        { season: c.total_transfers_allowed ?? null, playoff: c.playoff_transfers_allowed ?? null }
+        {
+          season: c.total_transfers_allowed ?? null,
+          playoff: c.playoff_transfers_allowed ?? null,
+          playoffFirstMatchUnlimited: c.playoff_first_match_unlimited ?? false,
+        }
       );
       state.sl.seasonXferCount = result.count;
       state.sl.seasonXferCap   = result.cap;
@@ -10533,7 +10569,7 @@ p31,Sample Player,MI,bat,9.0,false
               // Show transfers LEFT, not used — mirrors the Transfers-left
               // stat on the My XI tab (#slXiStatXfers) instead of a raw used count.
               const xferLabel    = r.transfersAllowed == null
-                ? '∞'
+                ? '-'
                 : `${Math.max(0, r.transfersAllowed - (r.transferCount ?? 0))}/${r.transfersAllowed}`;
               return `<div style="padding:8px 10px;font-size:12px;${bg}border-bottom:1px solid var(--border);">${rank}</div>
                 <div class="inline-lb-row" data-kind="sl" data-entity="${entityId || ''}" data-key="${key}" data-detail="${detailId}" style="cursor:pointer;padding:8px 10px;font-size:12px;font-weight:${isMe?'600':'400'};${bg}border-bottom:1px solid var(--border);">

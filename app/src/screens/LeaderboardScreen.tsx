@@ -354,7 +354,7 @@ function UserHighlight({ entry, showSlCols }: { entry: LeaderboardEntry | undefi
   if (!entry) return null;
   const boosterLabel = entry.boosterAllowed ? `${entry.boosterCount ?? 0}/${entry.boosterAllowed}` : '—';
   const xferLabel     = entry.transfersAllowed == null
-    ? '∞'
+    ? '-'
     : `${Math.max(0, entry.transfersAllowed - (entry.transferCount ?? 0))}/${entry.transfersAllowed}`;
   return (
     <LinearGradient
@@ -394,7 +394,7 @@ function EntryRow({ entry, onPress, showSlCols }: EntryRowProps) {
   const podGrad   = podiumGrad(entry.rank);
   const boosterLabel = entry.boosterAllowed ? `${entry.boosterCount ?? 0}/${entry.boosterAllowed}` : '—';
   const xferLabel     = entry.transfersAllowed == null
-    ? '∞'
+    ? '-'
     : `${Math.max(0, entry.transfersAllowed - (entry.transferCount ?? 0))}/${entry.transfersAllowed}`;
 
   const inner = (

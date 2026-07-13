@@ -460,6 +460,11 @@
                          style="font-size:13px; padding:6px 9px;" />
                 </div>
               </div>
+              <label style="display:flex; align-items:center; gap:6px; font-size:11px; color:var(--muted); margin-top:8px;">
+                <input id="ncPlayoffFirstUnlimited" type="checkbox" checked />
+                First playoff match has unlimited, cost-free transfers (excluded from the budget above)
+                <span style="font-weight:400;">— on by default, uncheck only as a deliberate exception</span>
+              </label>
             </div>
 
             <!-- Boosters -->
@@ -530,6 +535,7 @@
           opts.startMatchNumber         = parseIntOrNull($('#ncStartMN')?.value);
           opts.playoffStartMatchNumber  = parseIntOrNull($('#ncPlayoffStartMN')?.value);
           opts.playoffTransfersAllowed  = parseIntOrNull($('#ncPlayoffXfers')?.value);
+          opts.playoffFirstMatchUnlimited = !!$('#ncPlayoffFirstUnlimited')?.checked;
 
           // Collect enabled boosters
           const boosters = {};
@@ -633,6 +639,7 @@
           const startMN       = c.start_match_number          ?? '';
           const playoffStartMN= c.playoff_start_match_number  ?? '';
           const playoffBudget = c.playoff_transfers_allowed   ?? '';
+          const playoffFirstUnlimited = !!c.playoff_first_match_unlimited;
           return `
             <div style="border:1px solid var(--border); border-radius:8px; padding:14px 16px; margin-bottom:12px;">
               <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
@@ -645,6 +652,16 @@
                 ${numRow('Season start match number','Season-long scoring and transfers only apply from this match number onward. Leave blank to include all matches.',`startMN_${c.id}`,startMN,'All matches')}
                 ${numRow('Playoff start match number','Match number where the playoff phase begins (uses a separate transfer budget). Leave blank if no playoff phase.',`playoffStartMN_${c.id}`,playoffStartMN,'No playoffs')}
                 ${numRow('Playoff transfer budget','Separate transfer allowance for the playoff phase. Leave blank for unlimited playoff transfers.',`playoffBudget_${c.id}`,playoffBudget,'Unlimited')}
+                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+                  <label style="font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; min-width:200px;">
+                    <input type="checkbox" id="playoffFirstUnlimited_${c.id}" ${playoffFirstUnlimited ? 'checked' : ''} />
+                    First playoff match unlimited
+                    <span style="font-size:10px; display:block;">(excludes it from the playoff budget above — the rest of the playoff matches share that budget)</span>
+                  </label>
+                  <button class="primary" style="font-size:12px; padding:5px 12px;"
+                    data-saveplayofffirstunlimited="${c.id}">Save</button>
+                  <span id="playoffFirstUnlimited_${c.id}_status" style="font-size:11px; color:var(--muted);"></span>
+                </div>
                 ${buildBoosterConfigHtml(c.id, c.available_boosters)}
               ` : `<div style="font-size:12px;color:var(--muted);">No configurable options for daily contests.</div>`}
             </div>`;
@@ -805,6 +822,30 @@
               }
               statusEl.style.color = 'var(--good,#4ade80)';
               if (state.sl.seasonContest?.id === cid) { renderSlXiTab(); renderSlLiveTab(); }
+            } catch (e) {
+              statusEl.textContent = 'Save failed: ' + e.message;
+              statusEl.style.color = 'var(--bad)';
+            } finally { btn.disabled = false; }
+          });
+        });
+
+        // Playoff first-match-unlimited checkbox
+        wrap.querySelectorAll('[data-saveplayofffirstunlimited]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const cid       = btn.dataset.saveplayofffirstunlimited;
+            const chk       = $(`#playoffFirstUnlimited_${cid}`);
+            const statusEl  = $(`#playoffFirstUnlimited_${cid}_status`);
+            const val       = !!chk?.checked;
+
+            btn.disabled = true; statusEl.textContent = 'Saving…'; statusEl.style.color = 'var(--muted)';
+            try {
+              await state.db.updateContestPhases(cid, { playoff_first_match_unlimited: val });
+              statusEl.textContent = val ? 'Saved — first playoff match unlimited.' : 'Saved — pooled with the rest of the playoff phase.';
+              statusEl.style.color = 'var(--good,#4ade80)';
+              if (state.sl.seasonContest?.id === cid) {
+                state.sl.seasonContest.playoff_first_match_unlimited = val;
+                renderSlXiTab(); renderSlLiveTab();
+              }
             } catch (e) {
               statusEl.textContent = 'Save failed: ' + e.message;
               statusEl.style.color = 'var(--bad)';
