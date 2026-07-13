@@ -28,8 +28,11 @@ import {
   toContestContext,
 } from '../store/contestStore';
 import { useLeaderboardStore } from '../store/leaderboardStore';
+import { useNotificationsStore } from '../store/notificationsStore';
 import LeagueSelector from '../components/LeagueSelector';
 import MyLiveTeamModal from '../components/MyLiveTeamModal';
+import NotificationTicker from '../components/NotificationTicker';
+import NotificationsModal from '../components/NotificationsModal';
 import { useLiveMatch, useLiveScore, formatLiveScoreLine } from '../lib/liveScore';
 import { fontSize, radius, spacing, shadow } from '../theme';
 
@@ -567,11 +570,13 @@ export default function HomeScreen() {
   const { tournaments, selectedTournamentId } = useTournamentStore();
   const { contests, loadContests, contestsLoading } = useContestStore();
   const { entries: lbEntries, loadLeaderboard }     = useLeaderboardStore();
+  const { items: notifications, loading: notifLoading, loadNotifications, markAllRead } = useNotificationsStore();
 
   const [openTile, setOpenTile]               = useState<TileType>(null);
   const [selectorVisible, setSelectorVisible] = useState(false);
   const [selectorContests, setSelectorContests] = useState<RealContest[]>([]);
   const [liveModalVisible, setLiveModalVisible] = useState(false);
+  const [notifModalVisible, setNotifModalVisible] = useState(false);
 
   const firstName        = user?.email?.split('@')[0] ?? 'Player';
   const teamReady        = validation.valid;
@@ -637,6 +642,19 @@ export default function HomeScreen() {
     }, [slContest?.id])
   );
 
+  // Notifications — reloaded on every focus so a push sent while the app was
+  // backgrounded shows up in the ticker as soon as the user comes back.
+  useFocusEffect(
+    useCallback(() => {
+      if (user?.id) loadNotifications(user.id);
+    }, [user?.id])
+  );
+
+  const openNotifications = () => {
+    setNotifModalVisible(true);
+    if (user?.id) markAllRead(user.id);
+  };
+
   const toggleTile = (tile: TileType) => setOpenTile(prev => prev === tile ? null : tile);
 
   const pickForContext = (ctx: ContestContext) => {
@@ -686,6 +704,12 @@ export default function HomeScreen() {
             <Text style={styles.signOutLinkText}>Sign out</Text>
           </Pressable>
         </View>
+
+        {/* ── Notification ticker ───────────────────────────────────────── */}
+        <NotificationTicker
+          items={notifications.filter(n => !n.read)}
+          onPress={openNotifications}
+        />
 
         {/* ── Tournament context bar ────────────────────────────────────── */}
         {activeTournament && (
@@ -846,6 +870,13 @@ export default function HomeScreen() {
         squadId={slStats.squadId ?? null}
         userId={user?.id ?? null}
         onClose={() => setLiveModalVisible(false)}
+      />
+
+      <NotificationsModal
+        visible={notifModalVisible}
+        items={notifications}
+        loading={notifLoading}
+        onClose={() => setNotifModalVisible(false)}
       />
     </SafeAreaView>
   );

@@ -1,10 +1,12 @@
 /**
  * AdminScreen — mobile admin panel (visible only to ADMIN_EMAIL)
  *
- * Three sections:
+ * Four sections:
  *  1. Match Lock       — trigger lock-matches Edge Function
  *  2. Fetch Scores     — trigger poll-cricapi / scrape-scorecard per match
  *  3. Player Map       — resolve scraper_unmatched + scraper_fielding_issues
+ *  4. Notify           — send a push notification to every registered device
+ *                        via the send-push-notification Edge Function
  */
 
 import React, { useState, useCallback } from 'react';
@@ -421,6 +423,89 @@ function PlayerMapSection({ tournamentId }: { tournamentId: string | null }) {
   );
 }
 
+// ─── 4. Notify ────────────────────────────────────────────────────────────────
+
+function NotifySection() {
+  const [title, setTitle]   = useState('');
+  const [body, setBody]     = useState('');
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  const canSend = title.trim().length > 0 && body.trim().length > 0 && !sending;
+
+  async function send() {
+    Alert.alert(
+      'Send to all users?',
+      `"${title.trim()}" will be pushed to every registered device.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Send', style: 'destructive', onPress: doSend },
+      ],
+    );
+  }
+
+  async function doSend() {
+    setSending(true);
+    setResult(null);
+    try {
+      const { data, error } = await supabase.functions.invoke('send-push-notification', {
+        body: { title: title.trim(), body: body.trim() },
+      });
+      if (error) throw error;
+      setResult(`Sent ${data?.sent ?? 0} · Failed ${data?.failed ?? 0}`);
+      setTitle('');
+      setBody('');
+    } catch (e: any) {
+      setResult(`Error: ${e?.message ?? 'unknown'}`);
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <View>
+      <Text style={s.hint}>
+        Sends a push notification to every device currently registered across all users.
+      </Text>
+
+      <TextInput
+        style={s.notifyInput}
+        placeholder="Title"
+        placeholderTextColor={C.muted}
+        value={title}
+        onChangeText={setTitle}
+        maxLength={80}
+      />
+      <TextInput
+        style={[s.notifyInput, s.notifyBody]}
+        placeholder="Message"
+        placeholderTextColor={C.muted}
+        value={body}
+        onChangeText={setBody}
+        multiline
+        maxLength={200}
+      />
+
+      <Pressable
+        style={[s.primaryBtn, !canSend && s.btnDisabled]}
+        onPress={send}
+        disabled={!canSend}
+      >
+        {sending
+          ? <ActivityIndicator color="#1C1F26" />
+          : <Text style={s.primaryBtnText}>🔔 Send Notification</Text>
+        }
+      </Pressable>
+
+      {result && (
+        <Text style={[s.resultText, result.startsWith('Error') && { color: C.bad }]}>
+          {result}
+        </Text>
+      )}
+    </View>
+  );
+}
+
 // ─── Status colour helper ─────────────────────────────────────────────────────
 
 function statusColor(status: string): string {
@@ -441,7 +526,7 @@ export default function AdminScreen() {
   const [matches, setMatches]      = useState<AdminMatch[]>([]);
   const [matchLoading, setMatchLoading] = useState(false);
 
-  const [openSection, setOpenSection] = useState<'lock' | 'fetch' | 'map' | null>('lock');
+  const [openSection, setOpenSection] = useState<'lock' | 'fetch' | 'map' | 'notify' | null>('lock');
 
   // Guard — should never render for non-admins (tab is hidden), but belt + suspenders
   if (user?.email !== ADMIN_EMAIL) {
@@ -469,7 +554,7 @@ export default function AdminScreen() {
 
   useFocusEffect(useCallback(() => { loadMatches(); }, [loadMatches]));
 
-  function toggle(s: 'lock' | 'fetch' | 'map') {
+  function toggle(s: 'lock' | 'fetch' | 'map' | 'notify') {
     setOpenSection(o => o === s ? null : s);
   }
 
@@ -502,6 +587,14 @@ export default function AdminScreen() {
           onToggle={() => toggle('map')}
         >
           <PlayerMapSection tournamentId={selectedTournamentId ?? null} />
+        </Section>
+
+        <Section
+          title="Notify"
+          open={openSection === 'notify'}
+          onToggle={() => toggle('notify')}
+        >
+          <NotifySection />
         </Section>
 
       </ScrollView>
@@ -570,6 +663,10 @@ const s = StyleSheet.create({
   smallBtnGhost:   { borderColor: C.border, backgroundColor: 'transparent' },
   smallBtnAccent:  { borderColor: C.accent, backgroundColor: C.accent },
   smallBtnText:    { fontSize: fontSize.sm, fontWeight: '600', color: C.text },
+
+  // Notify
+  notifyInput: { backgroundColor: C.panel2, borderWidth: 1, borderColor: C.border, borderRadius: radius.md, padding: spacing.sm, fontSize: fontSize.base, color: C.text, marginBottom: spacing.sm },
+  notifyBody:  { minHeight: 70, textAlignVertical: 'top' },
 
   // Resolve panel (inline player search)
   resolvePanel:    { marginTop: spacing.sm, backgroundColor: C.panel2, borderRadius: radius.md, padding: spacing.sm },

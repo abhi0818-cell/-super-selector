@@ -6,6 +6,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts, PlayfairDisplay_700Bold } from '@expo-google-fonts/playfair-display';
 import { supabase }           from './src/lib/supabase';
+import { registerPushToken }  from './src/lib/pushNotifications';
 import { useAuthStore }       from './src/store/authStore';
 import { useLeaderboardStore } from './src/store/leaderboardStore';
 import RootNavigator          from './src/navigation/RootNavigator';
@@ -22,7 +23,10 @@ export default function App() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setInitialized();
-      if (session?.user) setCurrentUser(session.user.id);
+      if (session?.user) {
+        setCurrentUser(session.user.id);
+        registerPushToken(session.user.id);
+      }
     });
 
     // Listen for auth changes (sign in, sign out, token refresh)
@@ -31,6 +35,7 @@ export default function App() {
         setSession(session);
         if (session?.user) {
           setCurrentUser(session.user.id);
+          registerPushToken(session.user.id);
         } else {
           setCurrentUser(null);
         }
