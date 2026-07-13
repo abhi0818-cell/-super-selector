@@ -52,6 +52,7 @@ interface Contest {
   start_match_number: number | null;
   playoff_start_match_number: number | null;
   playoff_transfers_allowed: number | null;
+  playoff_first_match_unlimited: boolean;
 }
 
 interface Squad {
@@ -194,7 +195,7 @@ Deno.serve(async (req) => {
     // Contests for this tournament
     const { data: contests } = await sb
       .from('contests')
-      .select('id, contest_type, total_transfers_allowed, free_transfers_per_match, extra_transfer_point_cost, start_match_number, playoff_start_match_number, playoff_transfers_allowed')
+      .select('id, contest_type, total_transfers_allowed, free_transfers_per_match, extra_transfer_point_cost, start_match_number, playoff_start_match_number, playoff_transfers_allowed, playoff_first_match_unlimited')
       .eq('tournament_id', match.tournament_id)
       .eq('is_active', true);
 
@@ -364,7 +365,18 @@ Deno.serve(async (req) => {
             const transfersMade  = Math.min(playersOut.length, playersIn.length);
 
             if (transfersMade > 0) {
-              const phase        = detectPhase(match.match_number, contest.start_match_number, contest.playoff_start_match_number);
+              const phase = detectPhase(match.match_number, contest.start_match_number, contest.playoff_start_match_number);
+              // Unlimited first playoff match: every swap is free, regardless
+              // of free_transfers_per_match — a full reset, not just an
+              // uncapped count. Mirrors db.js saveMatchXI / transferCap.ts
+              // checkAndLogTransfers, which the client already enforces before
+              // save — this cron path just needs to log the same result
+              // consistently in case a squad's draft reaches lock without
+              // ever having gone through the client-side check.
+              const isUnlimitedFirstPlayoffMatch =
+                phase === 'playoff' &&
+                !!contest.playoff_first_match_unlimited &&
+                match.match_number === contest.playoff_start_match_number;
               const freePerMatch = contest.free_transfers_per_match ?? null;
               const extraCost    = Number(contest.extra_transfer_point_cost ?? 4);
 
@@ -374,7 +386,7 @@ Deno.serve(async (req) => {
                 .eq('match_id', match.id);
 
               const xferRows = playersOut.slice(0, transfersMade).map((outId, i) => {
-                const isFree = freePerMatch === null || i < freePerMatch;
+                const isFree = isUnlimitedFirstPlayoffMatch || freePerMatch === null || i < freePerMatch;
                 return {
                   squad_id       : squad.id,
                   match_id       : match.id,
