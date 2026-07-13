@@ -415,6 +415,13 @@ export default function MyXIScreen({ route }: Props) {
     (b.status === 'active' || b.status === 'pending'));
   const transferCapSuspended = isSL && !!suspendingBooster;
 
+  // Genuinely uncapped this match — either a booster suspends the cap, or
+  // transferInfo.total resolved to null (no budget configured, or this is
+  // the playoff opener carved out by playoff_first_match_unlimited). Distinct
+  // from transferInfo === null (not loaded yet), which falls through to the
+  // normal "pending" wording until the real value arrives.
+  const isUncappedTransfers = transferCapSuspended || transferInfo?.total === null;
+
   // ── Revert button gating (SL/private only) ────────────────────────────────
   // "Revert to Locked": there's an actual saved-but-not-yet-locked transfer
   // to undo — compare the SAVED snapshot directly against previousLockedXI
@@ -665,15 +672,18 @@ export default function MyXIScreen({ route }: Props) {
 
             {/* Pending — transfers already saved for the upcoming match that
                 haven't locked yet (i.e. made against the last locked XI).
-                Wording switches when Wildcard/Free Hit is active — those
-                transfers are free of cost and don't draw against the season
-                cap, so "pending" (implying they'll be charged) would be
-                misleading. */}
+                Wording switches when Wildcard/Free Hit is active, OR when
+                this match is genuinely uncapped (transferInfo.total === null —
+                either no budget configured, or this is the playoff opener
+                carved out by playoff_first_match_unlimited) — in all of
+                those cases the transfers are free of cost and don't draw
+                against any cap, so "pending" (implying they'll be charged)
+                would be misleading. */}
             {activeContext && activeContext.contestType !== 'daily' && pendingTransfers > 0 && (
               <View style={styles.infoPill}>
-                <Text style={styles.infoPillIcon}>{transferCapSuspended ? '⚡' : '🔄'}</Text>
+                <Text style={styles.infoPillIcon}>{isUncappedTransfers ? '⚡' : '🔄'}</Text>
                 <Text style={styles.infoPillValue}>
-                  {transferCapSuspended ? `${pendingTransfers} free` : `${pendingTransfers} pending`}
+                  {isUncappedTransfers ? `${pendingTransfers} free` : `${pendingTransfers} pending`}
                 </Text>
               </View>
             )}
@@ -686,7 +696,9 @@ export default function MyXIScreen({ route }: Props) {
             <Text style={styles.pendingNoteText}>
               {transferCapSuspended
                 ? `${pendingTransfers} change${pendingTransfers !== 1 ? 's' : ''} this match — free of cost and uncapped (${suspendingBooster?.name ?? 'booster'} active)`
-                : `${pendingTransfers} transfer${pendingTransfers !== 1 ? 's' : ''} made from your last locked XI`}
+                : transferInfo?.total === null
+                  ? `${pendingTransfers} transfer${pendingTransfers !== 1 ? 's' : ''} — free of cost and uncapped this match`
+                  : `${pendingTransfers} transfer${pendingTransfers !== 1 ? 's' : ''} made from your last locked XI`}
               {countdown && countdown !== 'Locked' ? ` — locks in ${countdown}` : ' — locks with this match'}
             </Text>
           </View>

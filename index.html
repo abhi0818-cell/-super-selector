@@ -5690,9 +5690,18 @@ p31,Sample Player,MI,bat,9.0,false
       } else if (pendingExceedsCap) {
         const phaseScope = isPlayoff ? 'this playoff' : 'this season';
         infoBar.innerHTML = `<span style="color:var(--danger,#e55);">Only ${seasonRemaining} transfer${seasonRemaining !== 1 ? 's' : ''} left ${phaseScope} — reduce to ${seasonRemaining} change${seasonRemaining !== 1 ? 's' : ''}.</span>`;
+      } else if (seasonCap === null) {
+        // Genuinely uncapped — either no budget configured at all, or (the
+        // playoff-opener case) playoff_first_match_unlimited carved this
+        // specific match out of the pooled budget. Either way "Counts when
+        // MXX starts" is actively wrong here — these transfers are never
+        // deducted from anything, so don't imply a countdown is running.
+        const lockNote = nextLock
+          ? ` Free and uncapped — applies when M${nextLock.match_number ?? '?'} starts.` : ' Free and uncapped.';
+        infoBar.innerHTML = `${pendingChanges} pending transfer${pendingChanges !== 1 ? 's' : ''}.`
+          + ` <span style="color:var(--muted);font-size:11px;">${lockNote}</span>`;
       } else {
-        const remainNote = seasonCap !== null
-          ? ` · ${seasonRemaining - pendingChanges} remaining after lock` : '';
+        const remainNote = ` · ${seasonRemaining - pendingChanges} remaining after lock`;
         const lockNote = nextLock
           ? ` Counts when M${nextLock.match_number ?? '?'} starts.` : '';
         infoBar.innerHTML = `${pendingChanges} pending transfer${pendingChanges !== 1 ? 's' : ''}${remainNote}.`
