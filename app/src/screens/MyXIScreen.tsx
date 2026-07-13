@@ -695,9 +695,9 @@ export default function MyXIScreen({ route }: Props) {
           <View style={styles.pendingNote}>
             <Text style={styles.pendingNoteText}>
               {transferCapSuspended
-                ? `${pendingTransfers} change${pendingTransfers !== 1 ? 's' : ''} this match — free of cost and uncapped (${suspendingBooster?.name ?? 'booster'} active)`
+                ? `${pendingTransfers} free change${pendingTransfers !== 1 ? 's' : ''} this match (${suspendingBooster?.name ?? 'booster'} active)`
                 : transferInfo?.total === null
-                  ? `${pendingTransfers} transfer${pendingTransfers !== 1 ? 's' : ''} — free of cost and uncapped this match`
+                  ? `${pendingTransfers} free transfer${pendingTransfers !== 1 ? 's' : ''}`
                   : `${pendingTransfers} transfer${pendingTransfers !== 1 ? 's' : ''} made from your last locked XI`}
               {countdown && countdown !== 'Locked' ? ` — locks in ${countdown}` : ' — locks with this match'}
             </Text>
