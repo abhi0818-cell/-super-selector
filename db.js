@@ -33,6 +33,36 @@ function resolveDisplayName(p) {
 }
 
 /**
+ * PostgREST/Supabase caps a single .select() at 1000 rows by default. Any
+ * query whose result set can plausibly exceed that (e.g. every score row for
+ * every player in every match for every squad in a season-long contest) must
+ * paginate explicitly, or it silently truncates — no error, just missing
+ * rows past the cutoff. This was the actual cause of a real incident: the SL
+ * leaderboard undercounted a squad's total points once the contest's
+ * user_match_xi_scores rows crossed 1000 — whichever squad's rows happened
+ * to land past the cap just vanished from the client-side sum, while the
+ * per-squad detail view (a much smaller, squad-scoped query) stayed correct.
+ *
+ * @param {(from: number, to: number) => Promise<{data: any[]|null, error: any}>} pageFn
+ *   Called with successive .range(from, to) windows; must return the same
+ *   shape a Supabase query builder's await does.
+ * @returns {Promise<any[]>}
+ */
+async function fetchAllRows(pageFn, pageSize = 1000) {
+  let all = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await pageFn(from, from + pageSize - 1);
+    if (error) throw error;
+    if (!data || !data.length) break;
+    all = all.concat(data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}
+
+/**
  * Picks the "current" match_number for a tournament, mirroring index.html's
  * findNextMatch(): prefer a currently-live match (effective lock time passed,
  * not completed), else the nearest upcoming match, else — if the whole
@@ -2481,21 +2511,28 @@ export function createDb(cfg = {}) {
         });
       }
 
-      // SL scores live in user_match_xi_scores (one row per player per squad per match).
+      // SL scores live in user_match_xi_scores (one row per player per squad per match) —
+      // squads × matches × 11 players routinely exceeds PostgREST's 1000-row
+      // default cap for a season-long contest, so this MUST paginate (see
+      // fetchAllRows) or it silently truncates and undercounts whichever
+      // squads' rows land past the cutoff.
       // user_team_match_scores is the daily pipeline and never receives SL data.
-      const { data: scores, error: scErr } = await sb
+      const scores = await fetchAllRows((from, to) => sb
         .from('user_match_xi_scores')
         .select('squad_id, match_id, total_points')
-        .in('squad_id', squadIds);
-      if (scErr) throw scErr;
+        .in('squad_id', squadIds)
+        .range(from, to));
 
       // Fetch transfer penalties for all squads in this contest. match_id is
       // needed below to gate the "Xfers used" COUNT on lock status (points
-      // penalty itself is left as-is — not what was reported).
-      const { data: xferRows } = await sb
+      // penalty itself is left as-is — not what was reported). Paginated for
+      // the same reason as scores above — smaller in practice, but a large
+      // contest could still cross the cap over a full season.
+      const xferRows = await fetchAllRows((from, to) => sb
         .from('user_transfers')
         .select('squad_id, match_id, points_deducted')
-        .in('squad_id', squadIds);
+        .in('squad_id', squadIds)
+        .range(from, to));
 
       const penaltyBySquad = {};
       (xferRows || []).forEach(t => {
@@ -2548,11 +2585,13 @@ export function createDb(cfg = {}) {
       // Fetch booster activation counts for all squads in this contest.
       // Requires the "booster_activations_read_all" policy (migration_v31) —
       // without it this silently returns only the viewer's own squad's rows,
-      // same RLS pitfall migration_v30 fixed for user_transfers.
-      const { data: boosterRows } = await sb
+      // same RLS pitfall migration_v30 fixed for user_transfers. Paginated
+      // for the same 1000-row cap reason as scores/xferRows above.
+      const boosterRows = await fetchAllRows((from, to) => sb
         .from('user_booster_activations')
         .select('squad_id, match_id, booster')
-        .in('squad_id', squadIds);
+        .in('squad_id', squadIds)
+        .range(from, to));
 
       // Both a booster activation AND a transfer are committed to the DB as
       // soon as a squad hits Save — which can be well before the match they

@@ -15,6 +15,35 @@ import { isMatchLocked, findNextUnlockedMatch } from '../lib/matchLock';
 import { resolveDisplayName } from '../lib/profileUtils';
 import { resolveBudgetWindow, MatchLite } from '../lib/transferCap';
 
+/**
+ * PostgREST/Supabase caps a single .select() at 1000 rows by default. Any
+ * query whose result set can plausibly exceed that (e.g. every score row for
+ * every player in every match for every squad in a season-long contest) must
+ * paginate explicitly, or it silently truncates — no error, just missing
+ * rows past the cutoff. This was the actual cause of a real incident: the SL
+ * leaderboard undercounted a squad's total points once the contest's
+ * user_match_xi_scores rows crossed 1000 — whichever squad's rows happened
+ * to land past the cap just vanished from the client-side sum, while the
+ * per-squad detail view (a much smaller, squad-scoped query) stayed correct.
+ * Mirrors db.js's fetchAllRows.
+ */
+async function fetchAllRows<T>(
+  pageFn: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>,
+  pageSize = 1000,
+): Promise<T[]> {
+  let all: T[] = [];
+  let from = 0;
+  for (;;) {
+    const { data, error } = await pageFn(from, from + pageSize - 1);
+    if (error) throw error;
+    if (!data || !data.length) break;
+    all = all.concat(data);
+    if (data.length < pageSize) break;
+    from += pageSize;
+  }
+  return all;
+}
+
 // ─── Public type ──────────────────────────────────────────────────────────────
 
 export type LBEntry = {
@@ -72,17 +101,22 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
 
       const squadIds = squads.map((s: any) => s.id);
 
-      // Step 2: sum total_points per squad across all matches
-      const { data: scores, error: scoresErr } = await supabase
-        .from('user_match_xi_scores')
-        .select('squad_id, total_points')
-        .in('squad_id', squadIds);
-
-      if (scoresErr) throw scoresErr;
+      // Step 2: sum total_points per squad across all matches. Paginated —
+      // squads × matches × 11 players routinely exceeds PostgREST's 1000-row
+      // default cap for a season-long contest, so an unbounded .select() here
+      // silently truncates and undercounts whichever squads' rows land past
+      // the cutoff (mirrors db.js's fetchAllRows / getLeaderboardSL).
+      const scores = await fetchAllRows<{ squad_id: string; total_points: number }>((from, to) =>
+        supabase
+          .from('user_match_xi_scores')
+          .select('squad_id, total_points')
+          .in('squad_id', squadIds)
+          .range(from, to),
+      );
 
       // Aggregate points per squad
       const pointsBySquad: Record<string, number> = {};
-      (scores ?? []).forEach((s: any) => {
+      scores.forEach((s: any) => {
         pointsBySquad[s.squad_id] = (pointsBySquad[s.squad_id] ?? 0) + Number(s.total_points);
       });
 
@@ -90,11 +124,14 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
       // count rows per squad for the SL "Xfers used/allowed" column (mirrors
       // db.js's getLeaderboardSL). match_id is needed to gate the COUNT on
       // lock status below (points penalty is left as-is — not what was
-      // reported).
-      const { data: transfers } = await supabase
-        .from('user_transfers')
-        .select('squad_id, match_id, points_deducted')
-        .in('squad_id', squadIds);
+      // reported). Paginated for the same 1000-row cap reason as scores above.
+      const transfers = await fetchAllRows<{ squad_id: string; match_id: string; points_deducted: number }>((from, to) =>
+        supabase
+          .from('user_transfers')
+          .select('squad_id, match_id, points_deducted')
+          .in('squad_id', squadIds)
+          .range(from, to),
+      );
 
       const penaltyBySquad: Record<string, number> = {};
       (transfers ?? []).forEach((t: any) => {
@@ -147,10 +184,14 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
         phaseIds = window.phaseIds;
       }
 
-      const { data: boosterRows } = await supabase
-        .from('user_booster_activations')
-        .select('squad_id, match_id, booster')
-        .in('squad_id', squadIds);
+      // Paginated for the same 1000-row cap reason as scores/transfers above.
+      const boosterRows = await fetchAllRows<{ squad_id: string; match_id: string; booster: string }>((from, to) =>
+        supabase
+          .from('user_booster_activations')
+          .select('squad_id, match_id, booster')
+          .in('squad_id', squadIds)
+          .range(from, to),
+      );
 
       // Both a booster activation AND a transfer are committed to the DB as
       // soon as a squad hits Save (mirrors the "save is the lock" model),
