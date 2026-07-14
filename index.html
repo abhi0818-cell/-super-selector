@@ -166,24 +166,22 @@
     .panel h2 .h-actions button { font-size: 11px; padding: 4px 10px; text-transform: none; letter-spacing: 0; }
 
     /* ── Upcoming-schedule preview popup (opened from Player Pool heading) ──
-       Fixed to the viewport (not the page) — a centered modal, not a drawer
-       pinned to the pool panel, so it doesn't drift when the pool list
-       scrolls and doesn't need its own edge-of-page scroll rail. */
+       Covers the Player Pool panel only — same bounds/rounded corners as
+       the panel itself — leaving the pitch/XI panel on the right fully
+       visible and interactive. Anchored to #poolPanel (not the viewport or
+       the page), so it can't drift on scroll and needs no scroll rail of
+       its own beyond the fixture list. */
+    #poolPanel { position: relative; }
     .schedule-drawer {
-      position: fixed; inset: 0; z-index: 200;
-      display: flex; align-items: center; justify-content: center;
-      background: rgba(28,31,38,0.32);
+      position: absolute; inset: 0; z-index: 20; border-radius: 12px; overflow: hidden;
+      background: var(--bg);
       opacity: 0; pointer-events: none; transition: opacity .18s ease;
     }
     .schedule-drawer.open { opacity: 1; pointer-events: auto; }
     .schedule-modal {
-      width: 360px; max-width: 92vw; max-height: 78vh;
-      background: var(--bg); border: 1px solid var(--border); border-radius: 14px;
-      box-shadow: 0 12px 32px rgba(0,0,0,0.22);
+      height: 100%;
       display: flex; flex-direction: column; overflow: hidden;
-      transform: scale(0.96); transition: transform .18s ease;
     }
-    .schedule-drawer.open .schedule-modal { transform: scale(1); }
     .schedule-drawer-hdr {
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
       padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--panel);
@@ -1475,6 +1473,23 @@
         </div>
       </div>
       <div id="playerGrid" class="player-grid"></div>
+
+      <!-- Upcoming match schedule preview — covers this panel only (same
+           bounds/rounded corners), leaving the pitch/XI panel untouched.
+           Opened from the heading above. Only ever shows upcoming (not
+           live/completed) matches; see renderScheduleDrawer(). -->
+      <div id="scheduleDrawer" class="schedule-drawer">
+        <div class="schedule-modal">
+          <div class="schedule-drawer-hdr">
+            <div>
+              <div class="schedule-drawer-title">Upcoming matches</div>
+              <div class="schedule-drawer-sub" id="scheduleDrawerSub"></div>
+            </div>
+            <button id="scheduleDrawerClose" class="ctrl-btn ctrl-btn-ghost" title="Close" style="padding:4px 8px !important;">✕</button>
+          </div>
+          <div id="scheduleDrawerList" class="schedule-drawer-list"></div>
+        </div>
+      </div>
     </section>
 
     <!-- RIGHT: Selected XI + scoreboard -->
@@ -1704,24 +1719,6 @@
       </div><!-- end slPanel -->
 
     </section>
-
-    <!-- Upcoming match schedule preview — centered popup (fixed to the
-         viewport, not the pool panel, so it doesn't scroll with the page).
-         Opened from the Player Pool heading. Only ever shows upcoming
-         (not live/completed) matches; see renderScheduleDrawer(). Clicking
-         the dimmed backdrop closes it, same as the ✕ button. -->
-    <div id="scheduleDrawer" class="schedule-drawer">
-      <div class="schedule-modal">
-        <div class="schedule-drawer-hdr">
-          <div>
-            <div class="schedule-drawer-title">Upcoming matches</div>
-            <div class="schedule-drawer-sub" id="scheduleDrawerSub"></div>
-          </div>
-          <button id="scheduleDrawerClose" class="ctrl-btn ctrl-btn-ghost" title="Close" style="padding:4px 8px !important;">✕</button>
-        </div>
-        <div id="scheduleDrawerList" class="schedule-drawer-list"></div>
-      </div>
-    </div>
   </main><!-- end #pageTabTeam -->
 
   <!-- ══ Season tab panel ══ -->
@@ -10473,10 +10470,6 @@ p31,Sample Player,MI,bat,9.0,false
       setScheduleOpen(!$('#scheduleDrawer').classList.contains('open'));
     });
     $('#scheduleDrawerClose')?.addEventListener('click', () => setScheduleOpen(false));
-    // Click on the dimmed backdrop (not the modal card itself) also closes it.
-    $('#scheduleDrawer')?.addEventListener('click', (e) => {
-      if (e.target.id === 'scheduleDrawer') setScheduleOpen(false);
-    });
 
     // Show the correct edit button depending on active mode when My Team tab opens
     function ensureEditTeamBtnVisible() {
