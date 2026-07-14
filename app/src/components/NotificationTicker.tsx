@@ -61,6 +61,10 @@ export default function NotificationTicker({ items, onPress, onDismiss }: Props)
     .map(i => `🔔 ${singleLine(i.title)} — ${singleLine(i.body)}`)
     .join('     •     ');
 
+  // Reset the measured width whenever the message changes — otherwise a
+  // shorter new message briefly renders at the previous (wrong) width.
+  useEffect(() => { setTextWidth(0); }, [message]);
+
   useEffect(() => {
     animRef.current?.stop();
     if (!containerWidth || !textWidth || !message) return;
@@ -95,12 +99,19 @@ export default function NotificationTicker({ items, onPress, onDismiss }: Props)
           style={styles.container}
           onLayout={e => setContainerWidth(e.nativeEvent.layout.width)}
         >
-          <Animated.Text
-            style={[styles.text, { transform: [{ translateX }] }]}
-            onLayout={e => setTextWidth(e.nativeEvent.layout.width)}
-          >
-            {message}
-          </Animated.Text>
+          {/* Only render the real scrolling copy once we know its true
+              unwrapped width (from the offscreen probe below) — giving it
+              an explicit width is what actually stops it from wrapping or
+              being clipped to the container's width; position/alignSelf
+              tricks alone aren't reliably honored by Yoga for text sizing. */}
+          {textWidth > 0 && (
+            <Animated.Text
+              style={[styles.text, { width: textWidth, transform: [{ translateX }] }]}
+              numberOfLines={1}
+            >
+              {message}
+            </Animated.Text>
+          )}
         </View>
       </Pressable>
       <Pressable
@@ -110,6 +121,18 @@ export default function NotificationTicker({ items, onPress, onDismiss }: Props)
       >
         <Text style={styles.dismissText}>✕</Text>
       </Pressable>
+
+      {/* Offscreen measuring probe — rendered with no width/wrap constraint
+          so onLayout reports the message's true single-line content width,
+          which the visible copy above then uses as its explicit width. */}
+      <Text
+        style={[styles.text, styles.probe]}
+        numberOfLines={1}
+        pointerEvents="none"
+        onLayout={e => setTextWidth(e.nativeEvent.layout.width)}
+      >
+        {message}
+      </Text>
     </View>
   );
 }
@@ -146,16 +169,20 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   text: {
-    position:    'absolute',
-    alignSelf:    'flex-start', // don't stretch to container width — it'd
-                                 // otherwise clip/wrap content that's meant
-                                 // to render at its full intrinsic width and
-                                 // scroll past the edges
-    color:        C.text,
-    fontSize:     fontSize.sm,
-    fontWeight:   '700',
-    // Single line, no wrapping — a marquee that wraps defeats the scroll.
-    flexShrink:   0,
-    flexWrap:     'nowrap',
+    position:  'absolute',
+    top:        0,
+    left:       0,
+    height:    '100%',
+    textAlignVertical: 'center', // Android — Text ignores alignItems:center from a non-flex ancestor
+    color:      C.text,
+    fontSize:   fontSize.sm,
+    fontWeight: '700',
+  },
+  // Invisible, laid out with no width constraint purely so onLayout reports
+  // the message's true single-line width — see the probe comment above.
+  probe: {
+    opacity:        0,
+    top:            -9999,
+    left:           -9999,
   },
 });
