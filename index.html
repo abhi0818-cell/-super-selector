@@ -158,8 +158,7 @@
     .cc-join-pill { border: 1px solid var(--accent); color: var(--accent); border-radius: 99px; padding: 2px 10px; font-size: 11px; cursor: pointer; transition: background .12s, color .12s; }
     .cc-join-pill:hover { background: var(--accent); color: #1C1F26; }
 
-    /* Season tab panel */
-    #pageTabSeason { max-width: 1400px; margin: 0 auto; padding: 20px 24px 32px; }
+    /* Season summary tiles — used in the My Team > Season Long > History tab */
     .season-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
     @media (max-width: 800px) { .season-metrics { grid-template-columns: 1fr 1fr; } }
     .season-metric { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
@@ -742,12 +741,6 @@
     .sl-xi-add-btn.in-xi { background: rgba(201,168,76,0.15); }
     .sl-xi-add-btn:disabled { opacity: 0.35; }
 
-    .sl-season-header {
-      padding: 12px 16px; border-bottom: 1px solid var(--border);
-      display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;
-    }
-    .sl-season-total { font-size: 22px; font-weight: 800; color: var(--accent); }
-    .sl-season-penalty { font-size: 12px; color: var(--bad); margin-top: 2px; }
     .sl-season-table { width: 100%; border-collapse: collapse; font-size: 12px; }
     .sl-season-table th {
       color: var(--muted); font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px;
@@ -794,14 +787,6 @@
     #inlineLbContent .hist-match-table td { border-bottom: 1px dashed rgba(214,207,168,0.7); }
     #inlineLbContent .hist-match-block:last-child .hist-match-table td { border-bottom: none; }
     #inlineLbContent .hist-match-block.open .hist-match-table td { border-bottom-color: transparent; }
-    /* Top-level page-nav Season tab: same accordion table-alignment treatment. */
-    #seasonMatchHistory .sl-season-table { table-layout: fixed; }
-    #seasonMatchHistory .sl-season-table th { white-space: normal; line-height: 1.3; }
-    #seasonMatchHistory .sl-season-table td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    #seasonMatchHistory .hist-match-table { margin: 0; }
-    #seasonMatchHistory .hist-match-table td { border-bottom: 1px dashed rgba(214,207,168,0.7); }
-    #seasonMatchHistory .hist-match-block:last-child .hist-match-table td { border-bottom: none; }
-    #seasonMatchHistory .hist-match-block.open .hist-match-table td { border-bottom-color: transparent; }
 
     /* ── Leaderboard ──────────────────────────────────────── */
     #lbModal {
@@ -1423,7 +1408,6 @@
   <nav class="page-tabs" id="pageTabs" style="display:none;">
     <span class="p-tab active" data-ptab="home">Home</span>
     <span class="p-tab" data-ptab="team">My Team</span>
-    <span class="p-tab" data-ptab="season">Season</span>
     <span class="p-tab" data-ptab="contest">🏆 Leaderboard</span>
     <span class="p-tab" data-ptab="rules">📖 Rules</span>
   </nav>
@@ -1745,16 +1729,34 @@
           <!-- Live Score tab -->
           <div id="slLiveTab" style="display:none;"></div>
 
-          <!-- Season scoreboard tab -->
+          <!-- Season scoreboard tab (formerly split across this + the standalone
+               top-level Season page tab — merged into one so match history and
+               season summary tiles live in a single place; see PROGRESS notes) -->
           <div id="slSeasonTab" style="display:none;">
-            <div class="sl-season-header">
-              <div>
-                <div style="font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Season Total</div>
-                <div class="sl-season-total" id="slSeasonTotal">— pts</div>
+            <div class="season-metrics" id="slSeasonMetrics">
+              <div class="season-metric">
+                <div class="season-metric-label">Total points</div>
+                <div class="season-metric-value" id="slSeasonTotalPts">— pts</div>
+                <div class="season-metric-sub" id="slSeasonMatchCount"></div>
               </div>
-              <div style="text-align:right;">
-                <button id="slRefreshSeasonBtn" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
+              <div class="season-metric">
+                <div class="season-metric-label">Current rank</div>
+                <div class="season-metric-value" id="slSeasonRank">—</div>
+                <div class="season-metric-sub" id="slSeasonRankOf"></div>
               </div>
+              <div class="season-metric">
+                <div class="season-metric-label">Transfers used</div>
+                <div class="season-metric-value" id="slSeasonXfers">—</div>
+                <div class="season-metric-sub" id="slSeasonXferPenalty"></div>
+              </div>
+              <div class="season-metric">
+                <div class="season-metric-label">Best match</div>
+                <div class="season-metric-value" id="slSeasonBestPts">—</div>
+                <div class="season-metric-sub" id="slSeasonBestMatch"></div>
+              </div>
+            </div>
+            <div style="text-align:right; margin-bottom:10px;">
+              <button id="slRefreshSeasonBtn" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
             </div>
             <div id="slSeasonView">
               <div class="sl-empty">No matches scored yet.</div>
@@ -1769,37 +1771,6 @@
 
     </section>
   </main><!-- end #pageTabTeam -->
-
-  <!-- ══ Season tab panel ══ -->
-  <div id="pageTabSeason" style="display:none;">
-    <div class="season-metrics" id="seasonMetrics">
-      <div class="season-metric">
-        <div class="season-metric-label">Total points</div>
-        <div class="season-metric-value" id="seasonTotalPts">—</div>
-        <div class="season-metric-sub" id="seasonMatchCount"></div>
-      </div>
-      <div class="season-metric">
-        <div class="season-metric-label">Current rank</div>
-        <div class="season-metric-value" id="seasonRank">—</div>
-        <div class="season-metric-sub" id="seasonRankOf"></div>
-      </div>
-      <div class="season-metric">
-        <div class="season-metric-label">Transfers used</div>
-        <div class="season-metric-value" id="seasonXfers">—</div>
-        <div class="season-metric-sub" id="seasonXferPenalty"></div>
-      </div>
-      <div class="season-metric">
-        <div class="season-metric-label">Best match</div>
-        <div class="season-metric-value" id="seasonBestPts">—</div>
-        <div class="season-metric-sub" id="seasonBestMatch"></div>
-      </div>
-    </div>
-    <!-- Match history (reuses existing SL season view) -->
-    <div style="font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px;">Match history</div>
-    <div id="seasonMatchHistory">
-      <div style="font-size:13px; color:var(--muted); padding:20px 0;">No match history yet.</div>
-    </div>
-  </div>
 
   <!-- Player admin modal -->
   <div id="adminModal" class="modal-backdrop">
@@ -5307,11 +5278,6 @@ p31,Sample Player,MI,bat,9.0,false
       const slTab    = document.querySelector('.m-tab[data-mode="season_long"]');
       if (dailyTab) dailyTab.style.display = hasDailyContest ? '' : 'none';
       if (slTab)    slTab.style.display    = hasSlContest    ? '' : 'none';
-      // Show/hide the top-level Season page tab — only relevant when SL exists
-      const seasonPageTab = document.querySelector('.p-tab[data-ptab="season"]');
-      if (seasonPageTab) seasonPageTab.style.display = hasSlContest ? '' : 'none';
-      // If Season tab is active and SL no longer exists, bounce back to Home
-      if (!hasSlContest && activePageTab === 'season') switchPageTab('home');
       // Auto-switch away from a tab whose contest no longer exists
       if (!hasDailyContest && state.mode === 'daily') {
         if (hasSlContest) switchMode('season_long');
@@ -6862,14 +6828,29 @@ p31,Sample Player,MI,bat,9.0,false
       renderSlActiveScreen(); // handles tab visibility + calls renderSlSeasonTab
     }
 
-    function renderSlSeasonTab() {
+    async function renderSlSeasonTab() {
       const data = state.sl.seasonData;
       if (!data) { loadAndRenderSeason(); return; }
 
-      $('#slSeasonTotal').textContent = data.seasonTotal + ' pts';
+      // Rank tile — pulled from the live SL leaderboard rather than season
+      // totals, since rank depends on every squad in the contest, not just
+      // this one. Resolved regardless of which branch below renders.
+      computeSeasonRank().then(rankInfo => {
+        $('#slSeasonRank').textContent   = rankInfo ? `#${rankInfo.rank}` : '—';
+        $('#slSeasonRankOf').textContent = rankInfo ? `of ${rankInfo.total}` : '';
+      });
+
+      $('#slSeasonTotalPts').textContent   = data.seasonTotal + ' pts';
+      $('#slSeasonMatchCount').textContent = `across ${data.matches.length} match${data.matches.length !== 1 ? 'es' : ''}`;
+      const seasonXferCount   = (data.transfers || []).length;
+      const seasonXferPenalty = (data.transfers || []).reduce((s, t) => s + Number(t.points_deducted ?? 0), 0);
+      $('#slSeasonXfers').textContent       = seasonXferCount;
+      $('#slSeasonXferPenalty').textContent = seasonXferPenalty ? `−${seasonXferPenalty} pts penalty` : '';
 
       const view = $('#slSeasonView');
       if (!data.matches.length) {
+        $('#slSeasonBestPts').textContent   = '—';
+        $('#slSeasonBestMatch').textContent = '—';
         view.innerHTML = '<div class="sl-empty">No matches scored yet -- finalize completed matches first.</div>';
         return;
       }
@@ -6906,10 +6887,12 @@ p31,Sample Player,MI,bat,9.0,false
       let running = 0;
       let regularCumXfer = 0;
       let playoffCumXfer = 0;
+      let bestPts = 0, bestMatchLabel = '';
       const rows = data.matches.map(m => {
         const pen  = penMap[m.match_id] || 0;
         const net  = m.xi_total - pen;
         running   += net;
+        if (net > bestPts) { bestPts = net; bestMatchLabel = 'M' + (m.match_number ?? '?'); }
         // Booster for this match, resolved up front — Wildcard/Free Hit
         // transfers are free of cost and don't draw against the season cap
         // (lock-matches bypasses transfer-count logging entirely for
@@ -7062,7 +7045,7 @@ p31,Sample Player,MI,bat,9.0,false
           '<td>' + liveCapCell + '</td>' +
           '<td>' + liveVcCell + '</td>' +
           '<td>' + liveBoostCell + '</td>' +
-          '<td class="pts">' + (totalBudget === null ? 'Unlimited' : Math.max(0, totalBudget - cumXfer)) + '</td>' +
+          '<td class="pts">' + (totalBudget === null ? 'Unlimited' : Math.max(0, totalBudget - regularCumXfer)) + '</td>' +
           '<td class="pts">' + liveRow.total.toFixed(1) + '</td>' +
           '<td class="pts">' + (running + liveRow.total).toFixed(1) + '</td>' +
           '</tr>';
@@ -7084,7 +7067,7 @@ p31,Sample Player,MI,bat,9.0,false
         '<td style="padding:6px 8px;"></td>' +
         '<td style="padding:6px 8px;"></td>' +
         '<td style="padding:6px 8px;">' + boosterTotalCell + '</td>' +
-        '<td class="pts" style="padding:6px 8px;">' + (totalBudget === null ? 'Unlimited' : Math.max(0, totalBudget - cumXfer)) + (totalPenalty ? ' <span style="color:var(--bad);font-size:9px;">(-' + totalPenalty + ')</span>' : '') + '</td>' +
+        '<td class="pts" style="padding:6px 8px;">' + (totalBudget === null ? 'Unlimited' : Math.max(0, totalBudget - regularCumXfer)) + (totalPenalty ? ' <span style="color:var(--bad);font-size:9px;">(-' + totalPenalty + ')</span>' : '') + '</td>' +
         '<td class="pts" style="padding:6px 8px;">' + grandTotal + '</td>' +
         '<td class="pts" style="padding:6px 8px;">' + grandTotal + '</td>' +
         '</tr>';
@@ -7095,6 +7078,9 @@ p31,Sample Player,MI,bat,9.0,false
         slTotalRow +
         '</thead>' +
         '</table>';
+
+      $('#slSeasonBestPts').textContent   = bestPts.toFixed(1) + ' pts';
+      $('#slSeasonBestMatch').textContent = bestMatchLabel;
 
       view.innerHTML = headerTable + liveBlockHtml + rows;
 
@@ -10417,7 +10403,6 @@ p31,Sample Player,MI,bat,9.0,false
       $('#pageTabHome').style.display    = ptab === 'home'    ? '' : 'none';
       $('#pageTabContest').style.display = ptab === 'contest' ? '' : 'none';
       $('#pageTabTeam').style.display    = ptab === 'team'    ? 'grid' : 'none';
-      $('#pageTabSeason').style.display  = ptab === 'season'  ? '' : 'none';
       if (ptab === 'home')    renderPageHomeTab();
       if (ptab === 'contest') renderPageContestTab();
       if (ptab === 'team')  {
@@ -10436,7 +10421,6 @@ p31,Sample Player,MI,bat,9.0,false
           }).catch(e => console.warn('Saved teams refresh failed.', e));
         }
       }
-      if (ptab === 'season')  renderPageSeasonTab();
     }
 
     document.querySelectorAll('.p-tab').forEach(t => {
@@ -11019,7 +11003,7 @@ p31,Sample Player,MI,bat,9.0,false
       });
     }
 
-    // ─── Season tab renderer ──────────────────────────────────────────────────
+    // ─── Season rank helper (used by My Team ▸ Season Long ▸ History) ────────
 
     // Current rank tile — pulled from the live SL leaderboard rather than
     // season totals, since rank depends on every squad in the contest, not
@@ -11034,225 +11018,9 @@ p31,Sample Player,MI,bat,9.0,false
         if (idx === -1) return null;
         return { rank: idx + 1, total: board.length };
       } catch (e) {
-        console.warn('[Season tab] rank lookup failed:', e.message);
+        console.warn('[SL History tab] rank lookup failed:', e.message);
         return null;
       }
-    }
-
-    async function renderPageSeasonTab() {
-      const historyEl = $('#seasonMatchHistory');
-      historyEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:16px 0;">Loading…</div>';
-
-      // Ensure season data is loaded
-      if (!state.sl?.seasonData && state.db && state.sl?.squad?.id) {
-        try {
-          state.sl.seasonData = await state.db.getSquadSeason(state.sl.squad.id);
-        } catch(e) {
-          historyEl.innerHTML = `<div style="color:var(--muted);font-size:13px;">Failed to load: ${escapeHtml(e.message)}</div>`;
-          return;
-        }
-      }
-      // Booster cache backing the per-match Booster column below — may already
-      // be warm from the My Team > Season tab (loadAndRenderSeason) or the
-      // Pick XI booster pill; load it here too so this tab works standalone.
-      if (!state.sl?.boosterActivations && state.db && state.sl?.squad?.id) {
-        state.sl.boosterActivations = await state.db.getBoosterActivations(state.sl.squad.id).catch(() => []);
-      }
-
-      const data = state.sl?.seasonData;
-
-      // Rank tile applies regardless of which branch below renders — it's
-      // driven by the contest leaderboard, not by this squad's own season data.
-      const rankInfo = await computeSeasonRank();
-      $('#seasonRank').textContent   = rankInfo ? `#${rankInfo.rank}` : '—';
-      $('#seasonRankOf').textContent = rankInfo ? `of ${rankInfo.total}` : '';
-
-      if (!data) {
-        const hasDraft = state.sl?.squad && (state.sl?.xiPlayers?.length ?? 0) > 0;
-        if (hasDraft) {
-          const draftCount  = state.sl.xiPlayers.length;
-          const capName     = PLAYERS.find(p => p.id === state.sl.xiCaptain)?.name?.split(' ').pop() ?? '—';
-          const vcName      = PLAYERS.find(p => p.id === state.sl.xiVc)?.name?.split(' ').pop() ?? '—';
-          // Zero-state metrics
-          $('#seasonTotalPts').textContent  = '0 pts';
-          $('#seasonMatchCount').textContent = 'No matches played yet';
-          $('#seasonXfers').textContent      = '0';
-          $('#seasonXferPenalty').textContent = '';
-          $('#seasonBestPts').textContent    = '—';
-          $('#seasonBestMatch').textContent  = '—';
-          historyEl.innerHTML = `
-            <div style="background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.3);border-radius:10px;padding:14px 16px;margin-bottom:16px;display:flex;gap:12px;align-items:flex-start;">
-              <span style="font-size:22px;line-height:1;">📋</span>
-              <div>
-                <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:5px;">Draft saved — awaiting first match lock</div>
-                <div style="font-size:12px;color:var(--muted);line-height:1.5;">
-                  ${draftCount}/11 players selected · C: ${escapeHtml(capName)} · VC: ${escapeHtml(vcName)}<br>
-                  Points will appear here after Match 1 is locked by the admin.
-                </div>
-              </div>
-            </div>`;
-        } else {
-          historyEl.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:16px 0;">No season data yet. Join a Season Long contest to see history here.</div>';
-        }
-        return;
-      }
-
-      // Populate metrics
-      $('#seasonTotalPts').textContent = (data.seasonTotal ?? 0) + ' pts';
-      $('#seasonMatchCount').textContent = `across ${data.matches?.length ?? 0} match${data.matches?.length !== 1 ? 'es' : ''}`;
-      const totalXfers = (data.transfers || []).length;
-      const totalPenalty = (data.transfers || []).reduce((s, t) => s + Number(t.points_deducted ?? 0), 0);
-      $('#seasonXfers').textContent = totalXfers;
-      $('#seasonXferPenalty').textContent = totalPenalty ? `−${totalPenalty} pts penalty` : '';
-
-      if (!data.matches?.length) {
-        // Season data exists (squad joined) but no matches scored yet — same pre-start banner
-        const draftCount  = state.sl?.xiPlayers?.length ?? 0;
-        const capName     = PLAYERS.find(p => p.id === state.sl?.xiCaptain)?.name?.split(' ').pop() ?? '—';
-        const vcName      = PLAYERS.find(p => p.id === state.sl?.xiVc)?.name?.split(' ').pop() ?? '—';
-        $('#seasonTotalPts').textContent   = (data.seasonTotal ?? 0) + ' pts';
-        $('#seasonMatchCount').textContent = 'No matches played yet';
-        $('#seasonXfers').textContent      = (data.transfers || []).length;
-        const totalPenalty = (data.transfers || []).reduce((s, t) => s + Number(t.points_deducted ?? 0), 0);
-        $('#seasonXferPenalty').textContent = totalPenalty ? `−${totalPenalty} pts penalty` : '';
-        $('#seasonBestPts').textContent     = '—';
-        $('#seasonBestMatch').textContent   = '—';
-        historyEl.innerHTML = `
-          <div style="background:rgba(201,168,76,0.1);border:1px solid rgba(201,168,76,0.3);border-radius:10px;padding:14px 16px;margin-bottom:16px;display:flex;gap:12px;align-items:flex-start;">
-            <span style="font-size:22px;line-height:1;">📋</span>
-            <div>
-              <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:5px;">Draft saved — awaiting first match lock</div>
-              <div style="font-size:12px;color:var(--muted);line-height:1.5;">
-                ${draftCount}/11 players selected · C: ${escapeHtml(capName)} · VC: ${escapeHtml(vcName)}<br>
-                Points will appear here after Match 1 is locked by the admin.
-              </div>
-            </div>
-          </div>`;
-        return;
-      }
-
-      // Find best match
-      const penMap = {};
-      (data.transfers || []).forEach(t => {
-        penMap[t.match_id] = (penMap[t.match_id] || 0) + Number(t.points_deducted ?? 0);
-      });
-      const roleOrderSeason = { wk: 0, bat: 1, ar: 2, bowl: 3 };
-      const shortNameSeason = (n) => (n || '').trim().split(/\s+/).pop() || '—';
-
-      // Same colgroup/column set as the Leaderboard tab's expand panel and the
-      // My Team > Season sub-tab, for a consistent look across all three SL
-      // match-history views: Match | Captain | Vice-Captain | Booster | Xfer | Net | Running.
-      const COLGROUP = '<colgroup><col><col style="width:56px"><col style="width:64px"><col style="width:72px"><col style="width:50px"><col style="width:58px"><col style="width:78px"></colgroup>';
-
-      let bestPts = 0, bestMatchLabel = '';
-      let running = 0;
-      const blocks = data.matches.map((m, i) => {
-        const pen = penMap[m.match_id] || 0;
-        const net = +(((m.xi_total ?? 0) - pen).toFixed(1));
-        running = +(running + net).toFixed(1);
-        const matchNum = m.match_number ?? (i + 1);
-        if (net > bestPts) { bestPts = net; bestMatchLabel = `M${matchNum}`; }
-        // Resolved early (also reused below for pitchTeam/boostCell) — a
-        // Wildcard/Free Hit match's transfers are free of cost and were
-        // never actually charged, so the count needs to read differently
-        // from a normal capped transfer. Same fix as the My Team > History
-        // sub-tab (renderSlSeasonTab) just above.
-        const matchBooster      = getCachedBoosterForMatch(m.match_id);
-        const bypassedThisMatch = matchBooster === 'wildcard' || matchBooster === 'free_hit';
-        const xferCount = (data.transfers || []).filter(t => t.match_id === m.match_id).length;
-        const xferCell   = !xferCount
-          ? '<span style="color:var(--muted);">0</span>'
-          : bypassedThisMatch
-            ? `<span title="Free of cost — ${escapeHtml(BOOSTER_META[matchBooster]?.label || matchBooster)} active">⚡${xferCount}</span>`
-            : xferCount;
-
-        const detailId    = 'pageSeasonDetail_' + (m.match_id || '').replace(/-/g, '');
-        const pitchPanelId = detailId + '_pitch';
-        const sortedPlayers = [...(m.players || [])].sort((a, b) => (roleOrderSeason[a.role] ?? 9) - (roleOrderSeason[b.role] ?? 9));
-        const pitchPlayers = sortedPlayers.map(p => ({
-          player_id : p.player_id,
-          name      : p.player_name,
-          role      : p.role,
-          team_id   : p.team_id,
-          batting   : p.batting,
-          bowling   : p.bowling,
-          fielding  : p.fielding,
-          raw_points: p.raw_points,
-          multiplier: p.multiplier,
-        }));
-        const captain   = sortedPlayers.find(p => p.is_captain) ?? null;
-        const vc        = sortedPlayers.find(p => p.is_vc) ?? null;
-        const captainId = captain?.player_id ?? null;
-        const vcId      = vc?.player_id ?? null;
-        const matchFmt  = (state.matches || []).find(x => x.id === m.match_id)?.format;
-        const fmt       = (matchFmt || state.format || 'T20').toUpperCase();
-        // matchBooster already resolved above (needed early for xferCell).
-        const pitchTeam = { players: pitchPlayers, captain_id: captainId, vice_captain_id: vcId, total_points: m.xi_total, booster: matchBooster };
-        const pitchDetailHtml = histTeamPanelHtml(pitchTeam, fmt);
-
-        const captainCell = captain ? `<span title="${escapeHtml(captain.player_name || '')}">${escapeHtml(shortNameSeason(captain.player_name))}</span>` : '—';
-        const vcCell      = vc      ? `<span title="${escapeHtml(vc.player_name || '')}">${escapeHtml(shortNameSeason(vc.player_name))}</span>`           : '—';
-        const boostCell    = matchBooster
-          ? `<span title="${escapeHtml(BOOSTER_META[matchBooster]?.label || matchBooster)}">${BOOSTER_META[matchBooster]?.icon || '★'}</span>`
-          : '<span style="color:var(--muted);">—</span>';
-
-        const matchRow =
-          '<tr class="sl-match-row" data-detail="' + detailId + '" data-pitch="' + pitchPanelId + '" style="cursor:pointer;" title="Click to expand">' +
-          '<td class="l">M' + matchNum + ' · ' + escapeHtml((m.home_team_id ?? '?') + ' vs ' + (m.away_team_id ?? '?')) + ' <span style="font-size:10px;color:var(--muted);">▾</span></td>' +
-          '<td>' + captainCell + '</td>' +
-          '<td>' + vcCell + '</td>' +
-          '<td>' + boostCell + '</td>' +
-          '<td>' + xferCell + '</td>' +
-          '<td class="pts">' + net.toFixed(1) + (pen > 0 ? ' <span style="color:var(--bad);font-size:9px;">(−' + pen + ')</span>' : '') + '</td>' +
-          '<td>' + running.toFixed(1) + '</td>' +
-          '</tr>';
-
-        const matchTable = '<table class="sl-season-table hist-match-table">' + COLGROUP + '<tbody>' + matchRow + '</tbody></table>';
-        const pitchPanel = '<div id="' + pitchPanelId + '" style="display:none;">' + pitchDetailHtml + '</div>';
-        return '<div class="hist-match-block" data-detail="' + detailId + '" data-pitch="' + pitchPanelId + '">' + matchTable + pitchPanel + '</div>';
-      });
-
-      $('#seasonBestPts').textContent = bestPts + ' pts';
-      $('#seasonBestMatch').textContent = bestMatchLabel;
-
-      const headerTable =
-        '<table class="sl-season-table hist-header-table">' + COLGROUP +
-        '<thead><tr><th class="l">Match</th><th>Captain</th><th>Vice-Captain</th><th>Booster</th><th>Xfer</th><th>Net</th><th>Running</th></tr></thead>' +
-        '</table>';
-
-      // data.matches is sorted ascending (oldest match first) so the running-total
-      // math above accumulates correctly — reverse only for display so the most
-      // recent match shows at the top, matching the in-app SL Season tab.
-      historyEl.innerHTML = headerTable + [...blocks].reverse().join('');
-
-      // Wire expand/collapse, accordion-style — same pattern as loadSLDetailInto
-      // / renderSlSeasonTab.
-      historyEl.querySelectorAll('.sl-match-row').forEach(row => {
-        row.addEventListener('click', () => {
-          const pitchPanel = historyEl.querySelector('#' + row.dataset.pitch);
-          if (!pitchPanel) return;
-          const opening = pitchPanel.style.display === 'none';
-
-          historyEl.querySelectorAll('.sl-match-row').forEach(otherRow => {
-            if (otherRow === row) return;
-            const otherPanel = historyEl.querySelector('#' + otherRow.dataset.pitch);
-            if (otherPanel) otherPanel.style.display = 'none';
-            otherRow.closest('.hist-match-block')?.classList.remove('open');
-            const otherCaret = otherRow.querySelector('span[style*="▾"], span[style*="▴"]');
-            if (otherCaret) otherCaret.textContent = '▾';
-          });
-
-          pitchPanel.style.display = opening ? '' : 'none';
-          row.closest('.hist-match-block')?.classList.toggle('open', opening);
-          const caret = row.querySelector('span[style*="▾"], span[style*="▴"]');
-          if (caret) caret.textContent = opening ? '▴' : '▾';
-          if (opening) {
-            requestAnimationFrame(() => {
-              pitchPanel.querySelectorAll('.pitch-oval-hist').forEach(ov => fitHistOval(ov));
-            });
-          }
-        });
-      });
     }
     // ── Login tab switcher ────────────────────────────────────────────────
     $('#tabSignIn').addEventListener('click', () => switchLoginTab('signin'));
