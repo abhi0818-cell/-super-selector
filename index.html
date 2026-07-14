@@ -10565,11 +10565,11 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     async function refreshNotificationsData() {
-      if (!db.isConfigured() || !state.currentUser) return;
+      if (!state.db || !state.db.isConfigured() || !state.currentUser) return;
       try {
         const [list, reads] = await Promise.all([
-          db.getNotifications(50),
-          db.getMyNotificationReads(),
+          state.db.getNotifications(50),
+          state.db.getMyNotificationReads(),
         ]);
         state.notifications = list || [];
         state.notificationReadIds = new Set(reads || []);
@@ -10640,9 +10640,9 @@ p31,Sample Player,MI,bat,9.0,false
       if (!dropdown) return;
       const opening = !dropdown.classList.contains('open');
       dropdown.classList.toggle('open', opening);
-      if (opening && state.notifications?.length) {
+      if (opening && state.notifications?.length && state.db) {
         const ids = state.notifications.map(n => n.id);
-        db.markNotificationsRead(ids).then(() => {
+        state.db.markNotificationsRead(ids).then(() => {
           state.notificationReadIds = new Set(ids);
           renderHomeTicker();
         }).catch(e => console.warn('[notifications] markRead failed:', e.message));
