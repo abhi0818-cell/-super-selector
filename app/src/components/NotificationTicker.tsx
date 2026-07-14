@@ -33,6 +33,7 @@ const C = {
 
 // Roughly constant scroll speed regardless of message length.
 const PX_PER_MS = 0.055;
+const TICKER_HEIGHT = 32;
 
 interface Props {
   items:     NotificationItem[];
@@ -146,7 +147,7 @@ const styles = StyleSheet.create({
   },
   container: {
     flex:            1,
-    height:          32,
+    height:          TICKER_HEIGHT,
     borderRadius:    radius.lg,
     borderWidth:      1,
     borderColor:      C.border,
@@ -169,14 +170,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   text: {
-    position:  'absolute',
-    top:        0,
-    left:       0,
-    height:    '100%',
-    textAlignVertical: 'center', // Android — Text ignores alignItems:center from a non-flex ancestor
-    color:      C.text,
-    fontSize:   fontSize.sm,
-    fontWeight: '700',
+    position:   'absolute',
+    top:         0,
+    left:        0,
+    // Vertically centers a single line of text within a fixed-height box,
+    // reliably on both platforms (unlike `top:0` + `textAlignVertical`,
+    // which is Android-only — iOS silently ignores it and stays top-aligned).
+    height:      TICKER_HEIGHT,
+    lineHeight:  TICKER_HEIGHT,
+    color:       C.text,
+    fontSize:    fontSize.sm,
+    fontWeight:  '700',
   },
   // Invisible, laid out with no width constraint purely so onLayout reports
   // the message's true single-line width — see the probe comment above.
