@@ -165,6 +165,30 @@
     .panel h2 .h-actions { display: flex; gap: 6px; }
     .panel h2 .h-actions button { font-size: 11px; padding: 4px 10px; text-transform: none; letter-spacing: 0; }
 
+    /* ── Upcoming-schedule preview drawer (opened from Player Pool heading) ── */
+    #pageTabTeam { position: relative; }
+    .schedule-drawer {
+      position: absolute; top: 0; right: 0; bottom: 0; width: 300px; max-width: 88vw;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 12px;
+      box-shadow: -6px 0 16px rgba(0,0,0,0.14);
+      transform: translateX(calc(100% + 12px)); transition: transform .25s ease;
+      display: flex; flex-direction: column; overflow: hidden; z-index: 20;
+    }
+    .schedule-drawer.open { transform: translateX(0); }
+    .schedule-drawer-hdr {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 12px 14px; border-bottom: 1px solid var(--border); background: var(--panel);
+    }
+    .schedule-drawer-title { font-size: 13px; font-weight: 700; }
+    .schedule-drawer-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .schedule-drawer-list { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .schedule-drawer-empty { padding: 28px 12px; text-align: center; font-size: 12px; color: var(--muted); }
+    .sched-card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 9px; display: flex; flex-direction: column; gap: 6px; }
+    .sched-card .sched-num { align-self: flex-start; font-size: 10px; font-weight: 700; background: var(--panel-2); color: var(--muted); padding: 2px 6px; border-radius: 5px; }
+    .sched-card .sched-vs { display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .sched-card .sched-vs .sched-vs-label { font-size: 10px; color: var(--muted); font-weight: 700; }
+    .sched-card .sched-time { text-align: center; font-size: 10px; color: var(--muted); }
+
     .filters { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--panel-2); }
     .filters input { flex: 1; min-width: 180px; }
     .filters .chip {
@@ -1391,7 +1415,11 @@
   <main id="pageTabTeam" style="display:none;">
     <!-- LEFT: Player picker -->
     <section class="panel" id="poolPanel" style="display:none;">
-      <h2>Player Pool</h2>
+      <h2>Player Pool
+        <span class="h-actions">
+          <button id="scheduleBtn" title="Preview upcoming match schedule">📅 Schedule</button>
+        </span>
+      </h2>
       <div class="pool-filters">
         <!-- Row 1: Search + disclosure pills (Type / Teams / Matches) -->
         <div class="pf-row" id="pfSearchPillsRow">
@@ -1667,6 +1695,20 @@
       </div><!-- end slPanel -->
 
     </section>
+
+    <!-- Upcoming match schedule preview — slide-in drawer, opened from the
+         Player Pool heading. Only ever shows upcoming (not live/completed)
+         matches; see renderScheduleDrawer(). -->
+    <div id="scheduleDrawer" class="schedule-drawer">
+      <div class="schedule-drawer-hdr">
+        <div>
+          <div class="schedule-drawer-title">Upcoming matches</div>
+          <div class="schedule-drawer-sub" id="scheduleDrawerSub"></div>
+        </div>
+        <button id="scheduleDrawerClose" class="ctrl-btn ctrl-btn-ghost" title="Close" style="padding:4px 8px !important;">✕</button>
+      </div>
+      <div id="scheduleDrawerList" class="schedule-drawer-list"></div>
+    </div>
   </main><!-- end #pageTabTeam -->
 
   <!-- ══ Season tab panel ══ -->
@@ -7793,6 +7835,65 @@ p31,Sample Player,MI,bat,9.0,false
       renderMatchIdDropdown();
     }
 
+    // ── Upcoming-schedule preview drawer ────────────────────────────────────
+    // Reuses the same "upcoming" definition as the match-filter chips above
+    // (renderMatchSelector) — anything not completed/live/in_progress and not
+    // yet locked — so the two stay in sync without a second source of truth.
+    function renderScheduleDrawer() {
+      const list = $('#scheduleDrawerList');
+      const sub  = $('#scheduleDrawerSub');
+      if (!list) return;
+
+      const HIDE_STATUS = new Set(['completed', 'live', 'in_progress']);
+      const upcoming = (state.matches || []).filter(m => !HIDE_STATUS.has(m.status) && !m.locked);
+
+      const hasNumber = m => m.match_number != null && String(m.match_number).trim() !== '?' && !isNaN(Number(m.match_number));
+      const sorted = [...upcoming].sort((a, b) => {
+        const aN = hasNumber(a), bN = hasNumber(b);
+        if (aN && bN) return Number(a.match_number) - Number(b.match_number);
+        if (aN) return -1;
+        if (bN) return 1;
+        return 0;
+      });
+
+      if (sub) sub.textContent = sorted.length ? `${sorted.length} fixture${sorted.length !== 1 ? 's' : ''}` : '';
+
+      if (!sorted.length) {
+        list.innerHTML = `<div class="schedule-drawer-empty">No upcoming matches scheduled.</div>`;
+        return;
+      }
+
+      list.innerHTML = sorted.map(m => {
+        const home = teamByCode(m.home_team_id);
+        const away = teamByCode(m.away_team_id);
+        const num  = m.match_number != null ? m.match_number : '?';
+        let when = '—';
+        if (m.start_time) {
+          const d = new Date(m.start_time);
+          const dateStr = d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+          const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          when = `${dateStr}, ${timeStr}`;
+        }
+        return `
+          <div class="sched-card">
+            <span class="sched-num">M${escapeHtml(String(num))}</span>
+            <div class="sched-vs">
+              ${jerseyHtml(home?.color, home?.color2, m.home_team_id || '—')}
+              <span class="sched-vs-label">vs</span>
+              ${jerseyHtml(away?.color, away?.color2, m.away_team_id || '—')}
+            </div>
+            <div class="sched-time">${escapeHtml(when)}</div>
+          </div>`;
+      }).join('');
+    }
+
+    function setScheduleOpen(open) {
+      const drawer = $('#scheduleDrawer');
+      if (!drawer) return;
+      if (open) renderScheduleDrawer();
+      drawer.classList.toggle('open', open);
+    }
+
     function renderMatchIdDropdown() {
       const sel = $('#matchId');
       if (!sel) return;
@@ -10301,6 +10402,9 @@ p31,Sample Player,MI,bat,9.0,false
       const btnDy = $('#editTeamBtnDaily');
       pool.style.display = open ? '' : 'none';
       main.classList.toggle('pool-open', open);
+      // Closing the pool should also collapse the schedule preview — it has
+      // no reason to stay open once there's no player list to peek behind.
+      if (!open) setScheduleOpen(false);
       // SL uses "Make Transfers" (matches mobile's terminology for season-long/
       // private squads — composition changes here are transfers). Daily keeps
       // "Edit Team" since it has no transfer concept.
@@ -10351,6 +10455,11 @@ p31,Sample Player,MI,bat,9.0,false
     $('#editTeamBtnDaily').addEventListener('click', () => {
       setPoolOpen($('#poolPanel').style.display === 'none');
     });
+
+    $('#scheduleBtn')?.addEventListener('click', () => {
+      setScheduleOpen(!$('#scheduleDrawer').classList.contains('open'));
+    });
+    $('#scheduleDrawerClose')?.addEventListener('click', () => setScheduleOpen(false));
 
     // Show the correct edit button depending on active mode when My Team tab opens
     function ensureEditTeamBtnVisible() {

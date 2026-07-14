@@ -11,6 +11,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Dimensions,
   FlatList,
   Pressable,
   ScrollView,
@@ -27,6 +29,7 @@ import PlayerCard from '../components/PlayerCard';
 import PlayerStatsModal from '../components/PlayerStatsModal';
 import BudgetBar from '../components/BudgetBar';
 import RoleStats from '../components/RoleStats';
+import Jersey from '../components/Jersey';
 import { fontSize, radius, spacing } from '../theme';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -60,9 +63,28 @@ const C = {
   active:  '#1C1F26',
 } as const;
 
+// Statuses that don't belong in the "upcoming" schedule preview — mirrors
+// the same set already used by playsAfterMap below, so "upcoming" means the
+// same thing everywhere in this screen.
+const UPCOMING_HIDE_STATUS = new Set(['completed', 'live', 'in_progress']);
+
+const SCREEN_W  = Dimensions.get('window').width;
+const DRAWER_W  = Math.min(340, Math.round(SCREEN_W * 0.84));
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function PlayerPickerScreen() {
+interface PlayerPickerScreenProps {
+  // Controlled from MyXIScreen's modal header (the "📅 Schedule" button sits
+  // there, next to Next →) — the drawer itself lives here since this is
+  // where the already-fetched `matches` + `players` (for team colors) are.
+  scheduleOpen?:     boolean;
+  onCloseSchedule?:  () => void;
+}
+
+export default function PlayerPickerScreen({
+  scheduleOpen = false,
+  onCloseSchedule,
+}: PlayerPickerScreenProps = {}) {
   const {
     players,
     selected,
@@ -246,11 +268,10 @@ export default function PlayerPickerScreen() {
     // Anchor on the current match number to exclude past matches that aren't
     // yet marked completed in the DB. Label uses 1-based ordinal position so
     // "Plays next" = slot 1, "After 2 matches" = slot 2, etc.
-    const DONE = new Set(['completed', 'live', 'in_progress']);
     const currentMatch = matches.find(m => m.id === currentMatchId);
     const activeMN = currentMatch?.matchNumber ?? 0;
     const upcoming = matches
-      .filter(m => !DONE.has(m.status) && (m.matchNumber ?? 0) >= activeMN)
+      .filter(m => !UPCOMING_HIDE_STATUS.has(m.status) && (m.matchNumber ?? 0) >= activeMN)
       .sort((a, b) => (a.matchNumber ?? 0) - (b.matchNumber ?? 0));
     const map = new Map<string, string>();
     const allTeams = new Set(matches.flatMap(m => [m.homeTeamId, m.awayTeamId].filter(Boolean)));
@@ -293,6 +314,49 @@ export default function PlayerPickerScreen() {
     sel.forEach(m => { if (m.homeTeamId) teamSet.add(m.homeTeamId); if (m.awayTeamId) teamSet.add(m.awayTeamId); });
     return `${filtered.length} players · ${[...teamSet].join(', ')}`;
   }, [selectedMatchIds, matches, filtered.length]);
+
+  // ── Schedule preview drawer ─────────────────────────────────────────────────
+
+  // Team colors keyed by code, derived from the player pool we already have
+  // in memory — same colors PlayerCard's jerseys use, no extra fetch needed.
+  const teamColorMap = useMemo(() => {
+    const map = new Map<string, { color1: string | null; color2: string | null }>();
+    players.forEach(p => {
+      if (p.team && !map.has(p.team)) {
+        map.set(p.team, { color1: p.teamColor, color2: p.teamColor2 });
+      }
+    });
+    return map;
+  }, [players]);
+
+  // Every upcoming (not completed/live/in_progress) match, all of them —
+  // the drawer scrolls rather than truncating to a fixed count.
+  const upcomingMatches = useMemo(() => {
+    return matches
+      .filter(m => !UPCOMING_HIDE_STATUS.has(m.status))
+      .sort((a, b) => (a.matchNumber ?? 0) - (b.matchNumber ?? 0));
+  }, [matches]);
+
+  const scheduleAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(scheduleAnim, {
+      toValue:      scheduleOpen ? 1 : 0,
+      duration:     240,
+      useNativeDriver: true,
+    }).start();
+  }, [scheduleOpen, scheduleAnim]);
+  const drawerTranslateX = scheduleAnim.interpolate({
+    inputRange:  [0, 1],
+    outputRange: [DRAWER_W + spacing.lg, 0],
+  });
+
+  const formatMatchWhen = (iso: string | null): string => {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    const dateStr = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+    const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `${dateStr} · ${timeStr}`;
+  };
 
   return (
     <View style={styles.container}>
@@ -589,6 +653,68 @@ export default function PlayerPickerScreen() {
         tournamentId={tournamentId}
         onClose={() => setStatsPlayer(null)}
       />
+
+      {/* Schedule preview drawer — slides in from the right over the player
+          list. Opened via the "📅 Schedule" button in MyXIScreen's modal
+          header; closing (✕ or the scrim) collapses it back to team
+          selection without losing any in-progress picks underneath. */}
+      {scheduleOpen && (
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={onCloseSchedule}
+          accessibilityLabel="Close schedule preview"
+        >
+          <View style={styles.scheduleScrim} />
+        </Pressable>
+      )}
+      <Animated.View
+        style={[
+          styles.scheduleDrawer,
+          { width: DRAWER_W, transform: [{ translateX: drawerTranslateX }] },
+        ]}
+        pointerEvents={scheduleOpen ? 'auto' : 'none'}
+      >
+        <View style={styles.scheduleDrawerHeader}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.scheduleDrawerTitle}>Upcoming matches</Text>
+            <Text style={styles.scheduleDrawerSub}>
+              {upcomingMatches.length} fixture{upcomingMatches.length !== 1 ? 's' : ''}
+            </Text>
+          </View>
+          <Pressable
+            onPress={onCloseSchedule}
+            style={styles.scheduleCloseBtn}
+            accessibilityLabel="Close schedule preview"
+          >
+            <Text style={styles.scheduleCloseBtnText}>✕</Text>
+          </Pressable>
+        </View>
+
+        <ScrollView
+          contentContainerStyle={styles.scheduleDrawerList}
+          showsVerticalScrollIndicator={false}
+        >
+          {upcomingMatches.length === 0 ? (
+            <Text style={styles.scheduleEmptyText}>No upcoming matches scheduled.</Text>
+          ) : (
+            upcomingMatches.map(m => {
+              const home = teamColorMap.get(m.homeTeamId);
+              const away = teamColorMap.get(m.awayTeamId);
+              return (
+                <View key={m.id} style={styles.schedCard}>
+                  <Text style={styles.schedNum}>M{m.matchNumber ?? '?'}</Text>
+                  <View style={styles.schedVsRow}>
+                    <Jersey code={m.homeTeamId} color1={home?.color1} color2={home?.color2} size={32} variant="pool" />
+                    <Text style={styles.schedVsLabel}>vs</Text>
+                    <Jersey code={m.awayTeamId} color1={away?.color1} color2={away?.color2} size={32} variant="pool" />
+                  </View>
+                  <Text style={styles.schedTime}>{formatMatchWhen(m.startTime)}</Text>
+                </View>
+              );
+            })
+          )}
+        </ScrollView>
+      </Animated.View>
     </View>
   );
 }
@@ -873,5 +999,102 @@ const styles = StyleSheet.create({
     fontSize:   fontSize.base,
     textAlign:  'center',
     marginTop:  spacing.xxl,
+  },
+
+  // Schedule preview drawer
+  scheduleScrim: {
+    flex:            1,
+    backgroundColor: 'rgba(0,0,0,0.18)',
+  },
+  scheduleDrawer: {
+    position:        'absolute',
+    top:              0,
+    right:            0,
+    bottom:           0,
+    backgroundColor:  '#F5F0E0',
+    borderLeftWidth:  1,
+    borderLeftColor:  C.border,
+    shadowColor:      '#000',
+    shadowOffset:     { width: -4, height: 0 },
+    shadowOpacity:    0.18,
+    shadowRadius:     12,
+    elevation:        12,
+  },
+  scheduleDrawerHeader: {
+    flexDirection:      'row',
+    alignItems:          'center',
+    gap:                 spacing.sm,
+    paddingHorizontal:   spacing.lg,
+    paddingVertical:     spacing.md,
+    borderBottomWidth:   1,
+    borderBottomColor:   C.border,
+    backgroundColor:     '#FFFFFF',
+  },
+  scheduleDrawerTitle: {
+    color:      C.text,
+    fontSize:   fontSize.base,
+    fontWeight: '800',
+  },
+  scheduleDrawerSub: {
+    color:     C.muted,
+    fontSize:  fontSize.xs,
+    marginTop: 2,
+  },
+  scheduleCloseBtn: {
+    width:           28,
+    height:          28,
+    borderRadius:    radius.full,
+    backgroundColor: 'rgba(28,31,38,0.06)',
+    alignItems:      'center',
+    justifyContent:  'center',
+  },
+  scheduleCloseBtnText: {
+    color:      C.text,
+    fontSize:   fontSize.sm,
+    fontWeight: '700',
+  },
+  scheduleDrawerList: {
+    padding: spacing.md,
+    gap:     spacing.sm,
+  },
+  scheduleEmptyText: {
+    color:      C.muted,
+    fontSize:   fontSize.sm,
+    textAlign:  'center',
+    marginTop:  spacing.xxl,
+  },
+  schedCard: {
+    backgroundColor: '#FFFFFF',
+    borderWidth:     1,
+    borderColor:     C.border,
+    borderRadius:    radius.lg,
+    padding:         spacing.sm + 2,
+    gap:             spacing.xs + 2,
+  },
+  schedNum: {
+    alignSelf:         'flex-start',
+    color:             C.muted,
+    fontSize:          fontSize.xs,
+    fontWeight:        '700',
+    backgroundColor:   'rgba(0,0,0,0.04)',
+    paddingHorizontal: spacing.xs + 2,
+    paddingVertical:   2,
+    borderRadius:      radius.sm,
+  },
+  schedVsRow: {
+    flexDirection:  'row',
+    alignItems:     'center',
+    justifyContent: 'center',
+    gap:            spacing.sm,
+  },
+  schedVsLabel: {
+    color:      C.muted,
+    fontSize:   fontSize.xs,
+    fontWeight: '700',
+  },
+  schedTime: {
+    color:     C.muted,
+    fontSize:  fontSize.xs,
+    textAlign: 'center',
   },
 });

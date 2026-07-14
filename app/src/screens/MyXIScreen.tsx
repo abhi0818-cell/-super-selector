@@ -119,6 +119,10 @@ export default function MyXIScreen({ route }: Props) {
   } = useTeamStore();
 
   const [pickerOpen, setPickerOpen]       = useState(false);
+  // Match-schedule preview drawer, opened from the picker modal's header.
+  // Owned here (not inside PlayerPickerScreen) so closing/reopening the
+  // picker always starts with the drawer collapsed.
+  const [scheduleOpen, setScheduleOpen]   = useState(false);
   const [confirmOpen, setConfirmOpen]     = useState(false);
   const [snapshot, setSnapshot]           = useState<SelectedPlayer[]>([]);
   const autoOpenHandled = useRef(false);
@@ -150,6 +154,7 @@ export default function MyXIScreen({ route }: Props) {
 
   const handlePickerDone = () => {
     setPickerOpen(false);
+    setScheduleOpen(false);
     setConfirmOpen(true);
   };
 
@@ -230,6 +235,7 @@ export default function MyXIScreen({ route }: Props) {
 
   const handlePickerCancel = useCallback(async () => {
     setPickerOpen(false);
+    setScheduleOpen(false);
     await revertXI();
   }, [revertXI]);
 
@@ -880,13 +886,21 @@ export default function MyXIScreen({ route }: Props) {
                   <Text style={styles.cancelBtnText}>✕</Text>
                 </Pressable>
                 <View style={styles.modalHeaderLeft}>
-                  <Text style={styles.modalTitle}>{modalTitle}</Text>
+                  <Text style={styles.modalTitle} numberOfLines={1}>{modalTitle}</Text>
                   {activeContext && (
-                    <Text style={styles.modalSubtitle}>
+                    <Text style={styles.modalSubtitle} numberOfLines={1}>
                       {activeContext.leagueName}
                     </Text>
                   )}
                 </View>
+                <Pressable
+                  onPress={() => setScheduleOpen(o => !o)}
+                  style={[styles.scheduleBtn, scheduleOpen && styles.scheduleBtnActive]}
+                >
+                  <Text style={[styles.scheduleBtnText, scheduleOpen && styles.scheduleBtnTextActive]}>
+                    📅 Schedule
+                  </Text>
+                </Pressable>
                 <Pressable onPress={handlePickerDone} style={styles.doneBtnWrap}>
                   <LinearGradient colors={G.doneBtn} style={styles.doneBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
                     <Text style={styles.doneBtnText}>Next  →</Text>
@@ -895,7 +909,10 @@ export default function MyXIScreen({ route }: Props) {
               </LinearGradient>
 
               {/* Picker content */}
-              <PlayerPickerScreen />
+              <PlayerPickerScreen
+                scheduleOpen={scheduleOpen}
+                onCloseSchedule={() => setScheduleOpen(false)}
+              />
             </SafeAreaView>
           </View>
         </Modal>
@@ -1142,7 +1159,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(201,168,76,0.25)',
   },
-  modalHeaderLeft: { gap: 2 },
+  modalHeaderLeft: { flex: 1, flexShrink: 1, gap: 2 },
   modalTitle:    { color: C.text, fontSize: fontSize.lg, fontWeight: '800' },
   modalSubtitle: { color: C.muted, fontSize: fontSize.sm },
   cancelBtn: {
@@ -1168,6 +1185,26 @@ const styles = StyleSheet.create({
     paddingVertical:   spacing.sm,
   },
   doneBtnText: { color: '#fff', fontSize: fontSize.base, fontWeight: '700' },
+  scheduleBtn: {
+    borderRadius:      radius.md,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical:   spacing.sm,
+    backgroundColor:   'rgba(201,168,76,0.12)',
+    borderWidth:       1,
+    borderColor:       C.accent,
+    marginRight:       spacing.sm,
+  },
+  scheduleBtnActive: {
+    backgroundColor: C.accent,
+  },
+  scheduleBtnText: {
+    color:      C.gold,
+    fontSize:   fontSize.xs,
+    fontWeight: '700',
+  },
+  scheduleBtnTextActive: {
+    color: C.text,
+  },
 
   // Info strip (countdown + transfers) — wraps when there are 4+ pills
   infoStrip: {
