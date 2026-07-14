@@ -13,6 +13,7 @@ import React, { useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
   TextInput, FlatList, Alert, StyleSheet, SafeAreaView,
+  KeyboardAvoidingView, Keyboard, Platform, TouchableWithoutFeedback,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
@@ -481,6 +482,8 @@ function NotifySection() {
         value={title}
         onChangeText={setTitle}
         maxLength={80}
+        returnKeyType="done"
+        blurOnSubmit
       />
       <TextInput
         style={[s.notifyInput, s.notifyBody]}
@@ -583,41 +586,53 @@ export default function AdminScreen() {
   return (
     <SafeAreaView style={s.screen}>
       <Text style={s.title}>⚙️ Admin</Text>
-      <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      >
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+          <ScrollView
+            contentContainerStyle={s.scroll}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+          >
 
-        <Section
-          title="Match Lock"
-          open={openSection === 'lock'}
-          onToggle={() => toggle('lock')}
-        >
-          <MatchLockSection matches={matches} loading={matchLoading} />
-        </Section>
+            <Section
+              title="Match Lock"
+              open={openSection === 'lock'}
+              onToggle={() => toggle('lock')}
+            >
+              <MatchLockSection matches={matches} loading={matchLoading} />
+            </Section>
 
-        <Section
-          title="Fetch Scores"
-          open={openSection === 'fetch'}
-          onToggle={() => toggle('fetch')}
-        >
-          <FetchScoresSection matches={matches} loading={matchLoading} />
-        </Section>
+            <Section
+              title="Fetch Scores"
+              open={openSection === 'fetch'}
+              onToggle={() => toggle('fetch')}
+            >
+              <FetchScoresSection matches={matches} loading={matchLoading} />
+            </Section>
 
-        <Section
-          title="Player Map"
-          open={openSection === 'map'}
-          onToggle={() => toggle('map')}
-        >
-          <PlayerMapSection tournamentId={selectedTournamentId ?? null} />
-        </Section>
+            <Section
+              title="Player Map"
+              open={openSection === 'map'}
+              onToggle={() => toggle('map')}
+            >
+              <PlayerMapSection tournamentId={selectedTournamentId ?? null} />
+            </Section>
 
-        <Section
-          title="Notify"
-          open={openSection === 'notify'}
-          onToggle={() => toggle('notify')}
-        >
-          <NotifySection />
-        </Section>
+            <Section
+              title="Notify"
+              open={openSection === 'notify'}
+              onToggle={() => toggle('notify')}
+            >
+              <NotifySection />
+            </Section>
 
-      </ScrollView>
+          </ScrollView>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
