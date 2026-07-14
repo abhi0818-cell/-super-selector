@@ -428,10 +428,13 @@ function PlayerMapSection({ tournamentId }: { tournamentId: string | null }) {
 function NotifySection() {
   const [title, setTitle]   = useState('');
   const [body, setBody]     = useState('');
+  const [tickerHours, setTickerHours] = useState('6');
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<string | null>(null);
 
-  const canSend = title.trim().length > 0 && body.trim().length > 0 && !sending;
+  const parsedHours = Number(tickerHours);
+  const validHours  = Number.isFinite(parsedHours) && parsedHours >= 0.25 && parsedHours <= 72;
+  const canSend = title.trim().length > 0 && body.trim().length > 0 && validHours && !sending;
 
   async function send() {
     Alert.alert(
@@ -449,12 +452,13 @@ function NotifySection() {
     setResult(null);
     try {
       const { data, error } = await supabase.functions.invoke('send-push-notification', {
-        body: { title: title.trim(), body: body.trim() },
+        body: { title: title.trim(), body: body.trim(), tickerHours: parsedHours },
       });
       if (error) throw error;
       setResult(`Sent ${data?.sent ?? 0} · Failed ${data?.failed ?? 0}`);
       setTitle('');
       setBody('');
+      setTickerHours('6');
     } catch (e: any) {
       setResult(`Error: ${e?.message ?? 'unknown'}`);
     } finally {
@@ -465,7 +469,9 @@ function NotifySection() {
   return (
     <View>
       <Text style={s.hint}>
-        Sends a push notification to every device currently registered across all users.
+        Sends a push notification to every device currently registered across all users, and
+        scrolls it on the HomeScreen ticker for the duration below — independent of whether
+        someone's already opened it.
       </Text>
 
       <TextInput
@@ -485,6 +491,20 @@ function NotifySection() {
         multiline
         maxLength={200}
       />
+
+      <View style={s.notifyDurationRow}>
+        <Text style={s.notifyDurationLabel}>Show on Home for (hours)</Text>
+        <TextInput
+          style={s.notifyDurationInput}
+          value={tickerHours}
+          onChangeText={setTickerHours}
+          keyboardType="numeric"
+          maxLength={4}
+        />
+      </View>
+      {!validHours && (
+        <Text style={[s.resultText, { color: C.bad }]}>Enter a duration between 0.25 and 72 hours</Text>
+      )}
 
       <Pressable
         style={[s.primaryBtn, !canSend && s.btnDisabled]}
@@ -667,6 +687,9 @@ const s = StyleSheet.create({
   // Notify
   notifyInput: { backgroundColor: C.panel2, borderWidth: 1, borderColor: C.border, borderRadius: radius.md, padding: spacing.sm, fontSize: fontSize.base, color: C.text, marginBottom: spacing.sm },
   notifyBody:  { minHeight: 70, textAlignVertical: 'top' },
+  notifyDurationRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
+  notifyDurationLabel: { fontSize: fontSize.sm, color: C.text, flex: 1 },
+  notifyDurationInput: { width: 64, backgroundColor: C.panel2, borderWidth: 1, borderColor: C.border, borderRadius: radius.md, padding: spacing.sm, fontSize: fontSize.base, color: C.text, textAlign: 'center' },
 
   // Resolve panel (inline player search)
   resolvePanel:    { marginTop: spacing.sm, backgroundColor: C.panel2, borderRadius: radius.md, padding: spacing.sm },

@@ -74,10 +74,20 @@ Deno.serve(async (req: Request) => {
     if (user.email !== ADMIN_EMAIL) return jsonResponse({ ok: false, error: 'Admin access only' }, 403)
 
     // ── 2. Parse payload ────────────────────────────────────────────────────
-    const body = await req.json().catch(() => ({})) as { title?: string; body?: string; data?: Record<string, unknown> }
+    const body = await req.json().catch(() => ({})) as {
+      title?: string; body?: string; data?: Record<string, unknown>; tickerHours?: number
+    }
     const title = (body.title ?? '').trim()
     const message = (body.body ?? '').trim()
     if (!title || !message) return jsonResponse({ ok: false, error: 'title and body are required' }, 400)
+
+    // How long this stays on the HomeScreen ticker, independent of read
+    // state (migration_v38). Clamped to a sane range — 0.25h (15min) to
+    // 72h — so a bad client value can't leave something stuck for weeks.
+    const rawTickerHours = Number(body.tickerHours)
+    const tickerHours = Number.isFinite(rawTickerHours)
+      ? Math.min(72, Math.max(0.25, rawTickerHours))
+      : 6
 
     // ── 3. Load recipient tokens ────────────────────────────────────────────
     const { data: tokenRows, error: tokErr } = await sb
@@ -91,6 +101,7 @@ Deno.serve(async (req: Request) => {
     if (tokens.length === 0) {
       await sb.from('notifications_log').insert({
         title, body: message, target: 'all', sent_by: user.id, sent_count: 0, failed_count: 0,
+        ticker_hours: tickerHours,
       })
       return jsonResponse({ ok: true, message: 'No registered devices', sent: 0, failed: 0 })
     }
@@ -152,6 +163,7 @@ Deno.serve(async (req: Request) => {
     await sb.from('notifications_log').insert({
       title, body: message, target: 'all', sent_by: user.id,
       sent_count: sentCount, failed_count: failedCount,
+      ticker_hours: tickerHours,
     })
 
     return jsonResponse({ ok: true, sent: sentCount, failed: failedCount, pruned: deadTokens.length })

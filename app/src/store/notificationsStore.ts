@@ -13,11 +13,12 @@ import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 
 export interface NotificationItem {
-  id:        string;
-  title:     string;
-  body:      string;
-  createdAt: string;
-  read:      boolean;
+  id:          string;
+  title:       string;
+  body:        string;
+  createdAt:   string;
+  read:        boolean;
+  tickerHours: number;   // how long this stays on the HomeScreen ticker (migration_v38) — independent of `read`
 }
 
 interface NotificationsState {
@@ -32,6 +33,14 @@ interface NotificationsState {
 }
 
 const LIMIT = 50;
+
+// Ticker visibility is time-based, not read-based — a notification keeps
+// scrolling on Home until its own ticker_hours window elapses, regardless
+// of whether the current user (or anyone) has already tapped it open.
+export function isTickerActive(item: NotificationItem, now: number = Date.now()): boolean {
+  const expiresAt = new Date(item.createdAt).getTime() + item.tickerHours * 60 * 60 * 1000;
+  return now < expiresAt;
+}
 
 export const useNotificationsStore = create<NotificationsState>((set, get) => ({
   items:         [],
@@ -48,7 +57,7 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
       const [{ data: log, error: logErr }, { data: reads, error: readErr }] = await Promise.all([
         supabase
           .from('notifications_log')
-          .select('id, title, body, created_at')
+          .select('id, title, body, created_at, ticker_hours')
           .order('created_at', { ascending: false })
           .limit(LIMIT),
         supabase
@@ -63,11 +72,12 @@ export const useNotificationsStore = create<NotificationsState>((set, get) => ({
       const readIds = new Set((reads ?? []).map((r: any) => r.notification_id));
 
       const items: NotificationItem[] = (log ?? []).map((n: any) => ({
-        id:        n.id,
-        title:     n.title,
-        body:      n.body,
-        createdAt: n.created_at,
-        read:      readIds.has(n.id),
+        id:          n.id,
+        title:       n.title,
+        body:        n.body,
+        createdAt:   n.created_at,
+        read:        readIds.has(n.id),
+        tickerHours: Number(n.ticker_hours ?? 6),
       }));
 
       set({

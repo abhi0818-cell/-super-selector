@@ -28,7 +28,7 @@ import {
   toContestContext,
 } from '../store/contestStore';
 import { useLeaderboardStore } from '../store/leaderboardStore';
-import { useNotificationsStore } from '../store/notificationsStore';
+import { useNotificationsStore, isTickerActive } from '../store/notificationsStore';
 import LeagueSelector from '../components/LeagueSelector';
 import MyLiveTeamModal from '../components/MyLiveTeamModal';
 import NotificationTicker from '../components/NotificationTicker';
@@ -602,6 +602,10 @@ export default function HomeScreen() {
   const [selectorContests, setSelectorContests] = useState<RealContest[]>([]);
   const [liveModalVisible, setLiveModalVisible] = useState(false);
   const [notifModalVisible, setNotifModalVisible] = useState(false);
+  // Session-local — closing the ticker just hides it for this app session;
+  // it isn't a server-side "read," so it'll reappear (still within its
+  // ticker_hours window) if the app is fully restarted.
+  const [dismissedTickerIds, setDismissedTickerIds] = useState<Set<string>>(new Set());
 
   const firstName        = user?.email?.split('@')[0] ?? 'Player';
   const teamReady        = validation.valid;
@@ -731,10 +735,22 @@ export default function HomeScreen() {
         </View>
 
         {/* ── Notification ticker ───────────────────────────────────────── */}
-        <NotificationTicker
-          items={notifications.filter(n => !n.read)}
-          onPress={openNotifications}
-        />
+        {/* Time-based, not read-based — stays up for each notification's own
+            ticker_hours window regardless of whether it's been tapped open. */}
+        {(() => {
+          const tickerItems = notifications.filter(n => isTickerActive(n) && !dismissedTickerIds.has(n.id));
+          return (
+            <NotificationTicker
+              items={tickerItems}
+              onPress={openNotifications}
+              onDismiss={() => setDismissedTickerIds(prev => {
+                const next = new Set(prev);
+                tickerItems.forEach(n => next.add(n.id));
+                return next;
+              })}
+            />
+          );
+        })()}
 
         {/* ── Tournament context bar ────────────────────────────────────── */}
         {activeTournament && (

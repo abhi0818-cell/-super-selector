@@ -5,15 +5,22 @@
  * continuously-scrolling line (classic news-ticker effect), so a push the
  * user dismissed or missed is still impossible to miss once they open the
  * app. Tapping it opens NotificationsModal (full history) and marks
- * everything as read.
+ * everything as read (clears the unread badge — doesn't affect this
+ * component). Visibility itself is time-based (ticker_hours per
+ * notification, migration_v38) and computed by the caller via
+ * isTickerActive() — this component just renders whatever `items` it's
+ * handed. The ✕ button calls onDismiss to hide the current items for the
+ * rest of this app session only (not persisted — a fresh launch, or the
+ * ticker_hours window simply elapsing, are the only ways it stays hidden
+ * for good).
  *
  * Pulls from notificationsStore, which already backs the send-push-
  * notification → notifications_log / notification_reads pipeline
- * (migration_v36/v37) — this component adds no new data fetching of its own.
+ * (migration_v36/v37/v38) — this component adds no new data fetching of its own.
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Pressable, StyleSheet, View } from 'react-native';
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { NotificationItem } from '../store/notificationsStore';
 import { fontSize, radius, spacing } from '../theme';
 
@@ -28,11 +35,12 @@ const C = {
 const PX_PER_MS = 0.055;
 
 interface Props {
-  items:   NotificationItem[];
-  onPress: () => void;
+  items:     NotificationItem[];
+  onPress:   () => void;
+  onDismiss: () => void;
 }
 
-export default function NotificationTicker({ items, onPress }: Props) {
+export default function NotificationTicker({ items, onPress, onDismiss }: Props) {
   const translateX       = useRef(new Animated.Value(0)).current;
   const [containerWidth, setContainerWidth] = useState(0);
   const [textWidth, setTextWidth]           = useState(0);
@@ -70,25 +78,43 @@ export default function NotificationTicker({ items, onPress }: Props) {
   if (!message) return null;
 
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => pressed && { opacity: 0.85 }}>
-      <View
-        style={styles.container}
-        onLayout={e => setContainerWidth(e.nativeEvent.layout.width)}
+    <View style={styles.wrap}>
+      <Pressable
+        onPress={onPress}
+        style={({ pressed }) => [{ flex: 1 }, pressed && { opacity: 0.85 }]}
       >
-        <Animated.Text
-          style={[styles.text, { transform: [{ translateX }] }]}
-          numberOfLines={1}
-          onLayout={e => setTextWidth(e.nativeEvent.layout.width)}
+        <View
+          style={styles.container}
+          onLayout={e => setContainerWidth(e.nativeEvent.layout.width)}
         >
-          {message}
-        </Animated.Text>
-      </View>
-    </Pressable>
+          <Animated.Text
+            style={[styles.text, { transform: [{ translateX }] }]}
+            onLayout={e => setTextWidth(e.nativeEvent.layout.width)}
+          >
+            {message}
+          </Animated.Text>
+        </View>
+      </Pressable>
+      <Pressable
+        onPress={onDismiss}
+        hitSlop={8}
+        style={({ pressed }) => [styles.dismissBtn, pressed && { opacity: 0.6 }]}
+      >
+        <Text style={styles.dismissText}>✕</Text>
+      </Pressable>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  wrap: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:            spacing.xs,
+    marginBottom:   spacing.xs,
+  },
   container: {
+    flex:            1,
     height:          32,
     borderRadius:    radius.lg,
     borderWidth:      1,
@@ -96,12 +122,32 @@ const styles = StyleSheet.create({
     backgroundColor:  C.bg,
     overflow:         'hidden',
     justifyContent:   'center',
-    marginBottom:     spacing.xs,
+  },
+  dismissBtn: {
+    width:            24,
+    height:           24,
+    borderRadius:     radius.full,
+    backgroundColor:  'rgba(0,0,0,0.06)',
+    alignItems:       'center',
+    justifyContent:   'center',
+    flexShrink:       0,
+  },
+  dismissText: {
+    fontSize:   11,
+    color:      C.text,
+    fontWeight: '700',
   },
   text: {
     position:    'absolute',
+    alignSelf:    'flex-start', // don't stretch to container width — it'd
+                                 // otherwise clip/wrap content that's meant
+                                 // to render at its full intrinsic width and
+                                 // scroll past the edges
     color:        C.text,
     fontSize:     fontSize.sm,
     fontWeight:   '700',
+    // Single line, no wrapping — a marquee that wraps defeats the scroll.
+    flexShrink:   0,
+    flexWrap:     'nowrap',
   },
 });
