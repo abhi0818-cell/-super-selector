@@ -4688,5 +4688,48 @@ export function createDb(cfg = {}) {
 
       return { tablesCleared: cleared, errors };
     },
+
+    // ─── Notifications ────────────────────────────────────────────────────
+    // Backs the HomeScreen ticker (mirrors the Expo app's notificationsStore).
+    // notifications_log is admin-broadcast history (migration_v36), readable
+    // by every authenticated user; notification_reads (migration_v37) tracks
+    // per-user read state for the inbox's unread highlight only — it does
+    // NOT gate ticker visibility, which is purely time-based via
+    // ticker_hours (migration_v38) and computed by the caller.
+
+    /** Most recent admin-sent notifications, newest first. */
+    async getNotifications(limit = 50) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('notifications_log')
+        .select('id, title, body, created_at, ticker_hours')
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      return data;
+    },
+
+    /** Notification ids the current user has already opened. */
+    async getMyNotificationReads() {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('notification_reads')
+        .select('notification_id');
+      if (error) throw error;
+      return (data || []).map(r => r.notification_id);
+    },
+
+    /** Marks a batch of notification ids as read for the current user. */
+    async markNotificationsRead(notificationIds) {
+      if (!notificationIds?.length) return;
+      const sb = await getClient();
+      const { data: { user } } = await sb.auth.getUser();
+      if (!user) return;
+      const rows = notificationIds.map(id => ({ user_id: user.id, notification_id: id }));
+      const { error } = await sb
+        .from('notification_reads')
+        .upsert(rows, { onConflict: 'user_id,notification_id' });
+      if (error) console.warn('[db] markNotificationsRead failed:', error.message);
+    },
   };
 }

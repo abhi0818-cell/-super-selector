@@ -81,6 +81,46 @@
     .home-greeting { font-size: 20px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
     .home-sub { font-size: 13px; color: var(--muted); margin-bottom: 24px; }
     .home-section-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin-bottom: 10px; }
+
+    /* ── Notification ticker ─────────────────────────────────────────────── */
+    .home-ticker-wrap { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+    .home-ticker {
+      flex: 1; height: 34px; overflow: hidden; position: relative;
+      background: rgba(201,168,76,0.12); border: 1px solid rgba(201,168,76,0.35);
+      border-radius: 10px; cursor: pointer;
+    }
+    .home-ticker-text {
+      position: absolute; top: 0; left: 0; height: 100%;
+      display: flex; align-items: center; white-space: nowrap;
+      font-size: 13px; font-weight: 600; color: var(--text);
+      will-change: transform;
+      /* animation (name/duration) is set inline by JS — needs a fresh
+         duration per message, computed from measured text width */
+    }
+    @keyframes home-ticker-scroll {
+      from { transform: translateX(var(--ticker-start, 100%)); }
+      to   { transform: translateX(var(--ticker-end, -100%)); }
+    }
+    .home-ticker-dismiss {
+      width: 24px; height: 24px; flex-shrink: 0; border-radius: 50%;
+      border: none; background: rgba(0,0,0,0.06); color: var(--text);
+      font-size: 11px; font-weight: 700; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .home-ticker-dismiss:hover { background: rgba(0,0,0,0.12); }
+    .home-ticker-dropdown {
+      display: none; margin-bottom: 16px; margin-top: -10px;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      max-height: 280px; overflow-y: auto;
+    }
+    .home-ticker-dropdown.open { display: block; }
+    .home-ticker-item { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+    .home-ticker-item:last-child { border-bottom: none; }
+    .home-ticker-item-top { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+    .home-ticker-item-title { font-size: 13px; font-weight: 700; color: var(--text); }
+    .home-ticker-item-time { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+    .home-ticker-item-body { font-size: 12px; color: var(--text); opacity: 0.85; margin-top: 2px; }
+    .home-ticker-empty { padding: 16px; text-align: center; font-size: 12px; color: var(--muted); }
     .tournament-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; margin-bottom: 32px; }
     .t-card {
       background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
@@ -1392,6 +1432,15 @@
   <div id="pageTabHome" style="">
     <div class="home-greeting" id="homeGreeting">Welcome back</div>
     <div class="home-sub">Select a tournament to get started</div>
+
+    <div class="home-ticker-wrap" id="homeTickerWrap" style="display:none;">
+      <div class="home-ticker" id="homeTicker" title="Click to view all">
+        <div class="home-ticker-text" id="homeTickerText"></div>
+      </div>
+      <button class="home-ticker-dismiss" id="homeTickerDismiss" title="Dismiss">✕</button>
+    </div>
+    <div class="home-ticker-dropdown" id="homeTickerDropdown"></div>
+
     <div class="home-section-label" id="homeActiveLabel">Active tournaments</div>
     <div class="tournament-cards" id="homeTournamentCards">
       <div class="t-card" style="opacity:0.5;cursor:default;">
@@ -2127,7 +2176,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=119';
+    import { createDb, NotConfiguredError } from './db.js?v=120';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -3736,6 +3785,7 @@ p31,Sample Player,MI,bat,9.0,false
         // Matches just landed — refresh the Home tab so "Next match" shows immediately
         // instead of "No upcoming matches" until the user happens to switch tabs.
         renderPageHomeTab();
+        refreshNotificationsData().catch(e => console.warn('Notifications pre-load failed.', e));
         try {
           const all = await db.getAllUserTeamMatchScores();
           state.xiScoresByMatch = {};
@@ -10482,6 +10532,135 @@ p31,Sample Player,MI,bat,9.0,false
 
     // Contest name in Contest tab → click opens the existing leaderboard modal (full view)
     $('#inlineContestName').addEventListener('click', openLeaderboard);
+
+    // ─── Notification ticker ───────────────────────────────────────────────────
+    // Web counterpart to the Expo app's NotificationTicker/notificationsStore.
+    // Visibility is time-based (ticker_hours per notification, migration_v38),
+    // independent of read state — read state (notification_reads) only drives
+    // the dropdown's unread highlight, never whether the ticker itself shows.
+    // Dismissing is session-only (sessionStorage) — reappears on a fresh tab
+    // if the notification's ticker_hours window hasn't elapsed yet.
+
+    const TICKER_DISMISSED_KEY = 'ss_ticker_dismissed';
+    let tickerDismissedIds;
+    try {
+      tickerDismissedIds = new Set(JSON.parse(sessionStorage.getItem(TICKER_DISMISSED_KEY) || '[]'));
+    } catch (e) { tickerDismissedIds = new Set(); }
+
+    function saveTickerDismissed() {
+      try { sessionStorage.setItem(TICKER_DISMISSED_KEY, JSON.stringify([...tickerDismissedIds])); } catch (e) {}
+    }
+
+    function isTickerActive(n) {
+      const expiresAt = new Date(n.created_at).getTime() + Number(n.ticker_hours ?? 6) * 3600000;
+      return Date.now() < expiresAt;
+    }
+
+    function timeAgoLabel(iso) {
+      const d = new Date(iso);
+      const sameDay = d.toDateString() === new Date().toDateString();
+      return sameDay
+        ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+        : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    }
+
+    async function refreshNotificationsData() {
+      if (!db.isConfigured() || !state.currentUser) return;
+      try {
+        const [list, reads] = await Promise.all([
+          db.getNotifications(50),
+          db.getMyNotificationReads(),
+        ]);
+        state.notifications = list || [];
+        state.notificationReadIds = new Set(reads || []);
+      } catch (e) {
+        console.warn('[notifications] refresh failed:', e.message);
+      }
+      renderHomeTicker();
+    }
+
+    function renderHomeTicker() {
+      const wrap = $('#homeTickerWrap');
+      const tickerEl = $('#homeTicker');
+      const textEl = $('#homeTickerText');
+      const dropdown = $('#homeTickerDropdown');
+      if (!wrap || !tickerEl || !textEl) return;
+
+      const all = state.notifications || [];
+      const active = all.filter(n => isTickerActive(n) && !tickerDismissedIds.has(n.id));
+
+      if (!active.length) {
+        wrap.style.display = 'none';
+        textEl.style.animation = 'none';
+      } else {
+        const shown = active.slice(0, 5);
+        const message = shown.map(n => `🔔 ${n.title} — ${n.body}`).join('     •     ');
+        textEl.textContent = message;
+        wrap.style.display = 'flex';
+
+        requestAnimationFrame(() => {
+          const containerWidth = tickerEl.clientWidth;
+          const textWidth = textEl.scrollWidth;
+          if (!containerWidth || !textWidth) return;
+          const distance = containerWidth + textWidth;
+          const pxPerMs = 0.055;
+          const duration = Math.max(4, distance / pxPerMs / 1000);
+          textEl.style.setProperty('--ticker-start', `${containerWidth}px`);
+          textEl.style.setProperty('--ticker-end', `${-textWidth}px`);
+          // Reset then re-apply so the animation restarts cleanly when the
+          // message text changes (otherwise the browser keeps the old run).
+          textEl.style.animation = 'none';
+          void textEl.offsetWidth; // force reflow
+          textEl.style.animation = `home-ticker-scroll ${duration}s linear infinite`;
+        });
+      }
+
+      // Dropdown list — always reflects the full recent history (not just
+      // active-ticker ones), same as the mobile inbox modal.
+      if (dropdown) {
+        if (!all.length) {
+          dropdown.innerHTML = `<div class="home-ticker-empty">No notifications yet.</div>`;
+        } else {
+          dropdown.innerHTML = all.map(n => {
+            const unread = !state.notificationReadIds?.has(n.id);
+            return `<div class="home-ticker-item" style="${unread ? 'background:rgba(201,168,76,0.08);' : ''}">
+              <div class="home-ticker-item-top">
+                <span class="home-ticker-item-title">${escapeHtml(n.title)}</span>
+                <span class="home-ticker-item-time">${timeAgoLabel(n.created_at)}</span>
+              </div>
+              <div class="home-ticker-item-body">${escapeHtml(n.body)}</div>
+            </div>`;
+          }).join('');
+        }
+      }
+    }
+
+    function toggleTickerDropdown() {
+      const dropdown = $('#homeTickerDropdown');
+      if (!dropdown) return;
+      const opening = !dropdown.classList.contains('open');
+      dropdown.classList.toggle('open', opening);
+      if (opening && state.notifications?.length) {
+        const ids = state.notifications.map(n => n.id);
+        db.markNotificationsRead(ids).then(() => {
+          state.notificationReadIds = new Set(ids);
+          renderHomeTicker();
+        }).catch(e => console.warn('[notifications] markRead failed:', e.message));
+      }
+    }
+
+    $('#homeTicker')?.addEventListener('click', toggleTickerDropdown);
+    $('#homeTickerDismiss')?.addEventListener('click', e => {
+      e.stopPropagation();
+      const active = (state.notifications || []).filter(n => isTickerActive(n) && !tickerDismissedIds.has(n.id));
+      active.forEach(n => tickerDismissedIds.add(n.id));
+      saveTickerDismissed();
+      renderHomeTicker();
+    });
+
+    // Re-check every 60s so an expired ticker clears itself, and a
+    // newly-sent notification shows up, without requiring navigation.
+    setInterval(() => refreshNotificationsData().catch(() => {}), 60_000);
 
     // ─── Home tab renderer ───────────────────────────────────────────────────
     function renderPageHomeTab() {
