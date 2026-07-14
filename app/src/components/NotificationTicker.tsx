@@ -48,9 +48,17 @@ export default function NotificationTicker({ items, onPress, onDismiss }: Props)
 
   // Most recent notifications first, joined into one loopable line. Capped
   // at 5 — a ticker showing 50 items would take minutes to cycle once.
+  //
+  // Body text is free-form multiline input (the admin's Message field is a
+  // multiline TextInput, and that's correct for the push notification itself
+  // and the inbox modal) — but RN's Text renders literal "\n" as a real line
+  // break with no equivalent to CSS's `white-space: nowrap` collapsing it, so
+  // any newline here would break the single-line marquee. Collapse all
+  // whitespace runs (including newlines) to a single space before display.
+  const singleLine = (s: string) => s.replace(/\s+/g, ' ').trim();
   const message = items
     .slice(0, 5)
-    .map(i => `🔔 ${i.title} — ${i.body}`)
+    .map(i => `🔔 ${singleLine(i.title)} — ${singleLine(i.body)}`)
     .join('     •     ');
 
   useEffect(() => {
