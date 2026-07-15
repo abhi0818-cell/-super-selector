@@ -64,6 +64,7 @@ interface Draft {
   player_ids: string[];
   captain_id: string | null;
   vc_id: string | null;
+  target_match_id: string | null;
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -234,7 +235,7 @@ Deno.serve(async (req) => {
         // ── Read draft ───────────────────────────────────────────────────────
         const { data: draft } = await sb
           .from('squad_draft_xi')
-          .select('player_ids, captain_id, vc_id')
+          .select('player_ids, captain_id, vc_id, target_match_id')
           .eq('squad_id', squad.id)
           .maybeSingle() as { data: Draft | null };
 
@@ -244,6 +245,68 @@ Deno.serve(async (req) => {
           );
           summary.squadsSkipped++;
           continue;
+        }
+
+        // ── Find previous locked XI (transfer baseline) ──────────────────────
+        const { data: prevXIRows } = await sb
+          .from('user_match_xi')
+          .select('player_id, match_id, is_captain, is_vc')
+          .eq('squad_id', squad.id);
+
+        let prevPlayerIds: string[] = [];
+        let prevCaptainId: string | null = null;
+        let prevVcId: string | null = null;
+        let prevMatchId: string | null = null;
+        if (prevXIRows?.length) {
+          const lockedMatchIds = new Set(prevXIRows.map((r: any) => r.match_id));
+          const validPrevMatches = tournamentMatches.filter(m =>
+            m.id !== match.id &&
+            lockedMatchIds.has(m.id) &&
+            (m.match_number ?? 0) < (match.match_number ?? 0) &&
+            (m.lock_time ?? m.start_time) && new Date((m.lock_time ?? m.start_time)!).getTime() <= nowMs,
+          );
+          if (validPrevMatches.length) {
+            const lastPrev = validPrevMatches[validPrevMatches.length - 1];
+            prevMatchId    = lastPrev.id;
+            const lastPrevRows = prevXIRows.filter((r: any) => r.match_id === lastPrev.id);
+            prevPlayerIds  = lastPrevRows.map((r: any) => r.player_id);
+            prevCaptainId  = lastPrevRows.find((r: any) => r.is_captain)?.player_id ?? null;
+            prevVcId       = lastPrevRows.find((r: any) => r.is_vc)?.player_id ?? null;
+          }
+        }
+
+        // ── GUARANTEE: only ever lock in a draft that was explicitly Saved for
+        // THIS match (mirrors db.js's lockMatchXI — see migration_v35). squad_draft_xi
+        // is one shared row per squad with no inherent match association beyond
+        // target_match_id — without this check, whichever match's lock happens to
+        // run next just grabs "whatever's currently in the draft" (e.g. a web edit
+        // saved for a LATER match, or one that raced a mobile save) and locks it
+        // in, producing an XI the user never actually confirmed for this match —
+        // the "stray transfers" bug. If the draft doesn't match, don't guess: carry
+        // the previous locked XI forward unchanged (0 transfers). Only skip the
+        // squad entirely if there's also no previous locked XI to fall back on.
+        let xiPlayerIds = draft.player_ids;
+        let xiCaptainId = draft.captain_id;
+        let xiVcId      = draft.vc_id;
+        if (draft.target_match_id !== match.id) {
+          if (prevPlayerIds.length === 11) {
+            xiPlayerIds = prevPlayerIds;
+            xiCaptainId = prevCaptainId;
+            xiVcId      = prevVcId;
+            console.warn(
+              `[lock-matches] Squad ${squad.id} M${match.match_number}: draft.target_match_id ` +
+              `(${draft.target_match_id}) does not match the match being locked (${match.id}) — ` +
+              `carrying forward the previous locked XI (match ${prevMatchId}) instead of trusting ` +
+              `an unconfirmed draft.`
+            );
+          } else {
+            summary.errors.push(
+              `Squad ${squad.id} M${match.match_number}: no XI explicitly saved for this match, and ` +
+              `no previous locked XI to carry forward — skipped`
+            );
+            summary.squadsSkipped++;
+            continue;
+          }
         }
 
         // ── Check active booster ────────────────────────────────────────────
@@ -257,7 +320,9 @@ Deno.serve(async (req) => {
         const activeBooster   = boosterRow?.booster ?? null;
         const bypassTransfers = activeBooster === 'wildcard' || activeBooster === 'free_hit';
 
-        // Free Hit: snapshot the draft now before locking (same as slLockForMatch does)
+        // Free Hit: snapshot the XI actually being locked (post-guarantee-check),
+        // not the raw draft — if the draft got overridden by the carry-forward
+        // fallback above, the snapshot must match what's really locked in.
         if (activeBooster === 'free_hit') {
           try {
             await sb.from('user_booster_activations')
@@ -270,35 +335,10 @@ Deno.serve(async (req) => {
               squad_id  : squad.id,
               match_id  : match.id,
               booster   : 'free_hit',
-              snapshot  : { playerIds: draft.player_ids, captainId: draft.captain_id, vcId: draft.vc_id },
+              snapshot  : { playerIds: xiPlayerIds, captainId: xiCaptainId, vcId: xiVcId },
             });
           } catch (e: any) {
             console.warn(`[lock-matches] free_hit snapshot failed for squad ${squad.id}:`, e.message);
-          }
-        }
-
-        // ── Find previous locked XI (transfer baseline) ──────────────────────
-        const { data: prevXIRows } = await sb
-          .from('user_match_xi')
-          .select('player_id, match_id')
-          .eq('squad_id', squad.id);
-
-        let prevPlayerIds: string[] = [];
-        let prevMatchId: string | null = null;
-        if (prevXIRows?.length) {
-          const lockedMatchIds = new Set(prevXIRows.map((r: any) => r.match_id));
-          const validPrevMatches = tournamentMatches.filter(m =>
-            m.id !== match.id &&
-            lockedMatchIds.has(m.id) &&
-            (m.match_number ?? 0) < (match.match_number ?? 0) &&
-            (m.lock_time ?? m.start_time) && new Date((m.lock_time ?? m.start_time)!).getTime() <= nowMs,
-          );
-          if (validPrevMatches.length) {
-            const lastPrev = validPrevMatches[validPrevMatches.length - 1];
-            prevMatchId    = lastPrev.id;
-            prevPlayerIds  = prevXIRows
-              .filter((r: any) => r.match_id === lastPrev.id)
-              .map((r: any) => r.player_id);
           }
         }
 
@@ -345,12 +385,12 @@ Deno.serve(async (req) => {
             .eq('squad_id', squad.id)
             .eq('match_id', match.id);
 
-          const xiRows = draft.player_ids.map(pid => ({
+          const xiRows = xiPlayerIds.map(pid => ({
             squad_id  : squad.id,
             match_id  : match.id,
             player_id : pid,
-            is_captain: pid === draft.captain_id,
-            is_vc     : pid === draft.vc_id,
+            is_captain: pid === xiCaptainId,
+            is_vc     : pid === xiVcId,
             role      : 'bat',
           }));
           const { error: ie } = await sb.from('user_match_xi').insert(xiRows);
@@ -359,9 +399,9 @@ Deno.serve(async (req) => {
           // ── Transfer counting ──────────────────────────────────────────────
           if (!bypassTransfers && baselineIds.length > 0) {
             const prevSet = new Set(baselineIds);
-            const currSet = new Set(draft.player_ids);
+            const currSet = new Set(xiPlayerIds);
             const playersOut     = baselineIds.filter(id => !currSet.has(id));
-            const playersIn      = draft.player_ids.filter(id => !prevSet.has(id));
+            const playersIn      = xiPlayerIds.filter(id => !prevSet.has(id));
             const transfersMade  = Math.min(playersOut.length, playersIn.length);
 
             if (transfersMade > 0) {
@@ -415,8 +455,8 @@ Deno.serve(async (req) => {
           if (teamRows?.length) {
             teamId = teamRows[0].id;
             await sb.from('user_teams').update({
-              captain_id      : draft.captain_id,
-              vice_captain_id : draft.vc_id,
+              captain_id      : xiCaptainId,
+              vice_captain_id : xiVcId,
             }).eq('id', teamId);
             await sb.from('user_team_players').delete().eq('user_team_id', teamId);
           } else {
@@ -428,8 +468,8 @@ Deno.serve(async (req) => {
                 user_id         : squad.user_id,
                 name            : 'SL Team',
                 format          : 'T20',
-                captain_id      : draft.captain_id,
-                vice_captain_id : draft.vc_id,
+                captain_id      : xiCaptainId,
+                vice_captain_id : xiVcId,
               })
               .select('id')
               .single();
@@ -437,7 +477,7 @@ Deno.serve(async (req) => {
             teamId = newTeam.id;
           }
 
-          const playerRows = draft.player_ids.map(pid => ({
+          const playerRows = xiPlayerIds.map(pid => ({
             user_team_id: teamId,
             player_id   : pid,
           }));
@@ -463,12 +503,12 @@ Deno.serve(async (req) => {
               await sb.from('user_match_xi').delete()
                 .eq('squad_id', ss.id).eq('match_id', match.id);
 
-              const ssRows = draft.player_ids.map(pid => ({
+              const ssRows = xiPlayerIds.map(pid => ({
                 squad_id  : ss.id,
                 match_id  : match.id,
                 player_id : pid,
-                is_captain: pid === draft.captain_id,
-                is_vc     : pid === draft.vc_id,
+                is_captain: pid === xiCaptainId,
+                is_vc     : pid === xiVcId,
                 role      : 'bat',
               }));
               await sb.from('user_match_xi').insert(ssRows);
