@@ -22,7 +22,7 @@ import {
   View,
 } from 'react-native';
 import { Player, PlayerRole } from '../types';
-import { useTeamStore, RULES, canAddPlayer } from '../store/teamStore';
+import { useTeamStore, RULES, canAddPlayer, getDomesticLabel } from '../store/teamStore';
 import { useContestStore } from '../store/contestStore';
 import { supabase } from '../lib/supabase';
 import PlayerCard from '../components/PlayerCard';
@@ -104,6 +104,7 @@ export default function PlayerPickerScreen({
   const [search, setSearch]         = useState('');
   const [roleFilter, setRoleFilter] = useState<RoleFilter>('ALL');
   const [overseasOnly, setOverseasOnly] = useState(false);
+  const [domesticOnly, setDomesticOnly] = useState(false);
   const [statsPlayer, setStatsPlayer]   = useState<Player | null>(null);
 
   // Single-select team filter (independent of the match-derived team filter below).
@@ -239,10 +240,11 @@ export default function PlayerPickerScreen({
       if (creditsFilter === 'GT10' && !(p.credits > 10)) return false;
       if (roleFilter !== 'ALL' && p.role !== roleFilter) return false;
       if (overseasOnly && !p.overseas) return false;
+      if (domesticOnly && p.overseas) return false;
       if (q && !p.name.toLowerCase().includes(q) && !p.team.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [players, matchTeams, teamFilter, creditsFilter, roleFilter, overseasOnly, search]);
+  }, [players, matchTeams, teamFilter, creditsFilter, roleFilter, overseasOnly, domesticOnly, search]);
 
   const isDisabled = useCallback((player: Player): boolean => {
     if (selectedIds.has(player.id)) return false;
@@ -502,6 +504,23 @@ export default function PlayerPickerScreen({
                   ✈️{' '}
                   <Text style={[styles.chipCount, overseasOnly && styles.chipCountActive]}>
                     OS
+                  </Text>
+                </Text>
+              </Pressable>
+            )}
+
+            {/* Non-overseas filter chip — same visibility condition as the OS
+                chip above, labeled per-tournament via getDomesticLabel()
+                (e.g. "US" for MLC, "Indian" for IPL). */}
+            {osCap > 0 && (
+              <Pressable
+                style={[styles.chip, styles.domesticChip, domesticOnly && styles.domesticChipActive]}
+                onPress={() => setDomesticOnly(v => !v)}
+              >
+                <Text style={[styles.chipText, domesticOnly && styles.chipTextActive]}>
+                  🏠{' '}
+                  <Text style={[styles.chipCount, domesticOnly && styles.chipCountActive]}>
+                    {getDomesticLabel()}
                   </Text>
                 </Text>
               </Pressable>
@@ -986,6 +1005,13 @@ const styles = StyleSheet.create({
   osChipActive: {
     backgroundColor: C.accent,
     borderColor:     C.accent,
+  },
+  domesticChip: {
+    borderColor: C.border,
+  },
+  domesticChipActive: {
+    backgroundColor: C.good,
+    borderColor:     C.good,
   },
 
   // List

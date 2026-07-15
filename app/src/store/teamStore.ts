@@ -39,7 +39,13 @@ const RULES: SelectionRules = {
   role:       { wk: [1, 4], bat: [3, 6], ar: [1, 4], bowl: [3, 6] },
   maxPerTeam: 7,
   maxOverseas: { T20: 4, ODI: 11, TEST: 11 },
+  domesticLabel: null,
 };
+
+/** Display label for the active tournament's "non-overseas" bucket (e.g. 'US', 'Indian'). */
+function getDomesticLabel(): string {
+  return RULES.domesticLabel ?? 'Domestic';
+}
 
 // ─── Validation ───────────────────────────────────────────────────────────────
 
@@ -367,10 +373,10 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         return;
       }
 
-      // Load tournament config: format + overseas cap
+      // Load tournament config: format + overseas cap + non-overseas label
       const { data: tData } = await supabase
         .from('tournaments')
-        .select('format, max_overseas_in_xi')
+        .select('format, max_overseas_in_xi, domestic_label')
         .eq('id', tournamentId)
         .single();
 
@@ -381,6 +387,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         if (typeof cap === 'number') {
           RULES.maxOverseas[fmt] = cap;
         }
+        RULES.domesticLabel = tData.domestic_label ?? null;
       }
 
       // Next upcoming match — i.e. the next one to actually pick/edit an XI for.
@@ -959,4 +966,4 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   },
 }));
 
-export { RULES };
+export { RULES, getDomesticLabel };

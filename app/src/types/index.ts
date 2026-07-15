@@ -80,6 +80,9 @@ export interface SelectionRules {
   role: Record<PlayerRole, [number, number]>;
   maxPerTeam: number;
   maxOverseas: Record<MatchFormat, number>;
+  // Per-tournament display label for the "non-overseas" bucket (e.g. 'US' for
+  // MLC, 'Indian' for IPL) — cosmetic only, doesn't affect maxOverseas/is_overseas.
+  domesticLabel: string | null;
 }
 
 export interface ValidationResult {

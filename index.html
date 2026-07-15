@@ -192,6 +192,7 @@
     .pf-chip:hover { border-color: var(--accent); color: var(--text); }
     .pf-chip.active { background: var(--accent); color: #1C1F26; border-color: var(--accent); font-weight: 600; }
     .pf-chip.os-active { background: #BA7517; color: #fff; border-color: #BA7517; font-weight: 600; }
+    .pf-chip.dom-active { background: var(--good); color: #fff; border-color: var(--good); font-weight: 600; }
     /* alias so existing renderMatchSelector output still works */
     .match-chip { padding: 4px 9px; border-radius: 99px; font-size: 11px; cursor: pointer; user-select: none; background: var(--panel); border: 1px solid var(--border); color: var(--muted); white-space: nowrap; transition: background .12s, color .12s, border-color .12s; }
     .match-chip:hover { border-color: var(--accent); color: var(--text); }
@@ -1482,6 +1483,7 @@
             <span class="pf-chip" data-role="ar">AR</span>
             <span class="pf-chip" data-role="bowl">BOWL</span>
             <span class="pf-chip" id="osFilterChip" style="display:none;" title="Show overseas only">✈ OS</span>
+            <span class="pf-chip" id="domesticFilterChip" style="display:none;" title="Show non-overseas only">🏠 Domestic</span>
           </div>
         </div>
         <!-- Teams panel — hidden until its pill is toggled on -->
@@ -2674,6 +2676,10 @@ p31,Sample Player,MI,bat,9.0,false
       maxPerTeam: 7,
       // Format-level defaults — overridden per-tournament via maxOverseas._tournament
       maxOverseas: { T20: 4, ODI: 11, TEST: 11, _tournament: null },
+      // Per-tournament display label for the "non-overseas" bucket (e.g. 'US'
+      // for MLC, 'Indian' for IPL) — set via applyTournamentFormat(). Cosmetic
+      // only; is_overseas/getOverseasCap() are unaffected by this.
+      domesticLabel: { _tournament: null },
     };
 
     /** Returns the effective overseas cap for the current tournament+format. */
@@ -2682,6 +2688,11 @@ p31,Sample Player,MI,bat,9.0,false
         return RULES.maxOverseas._tournament;
       }
       return RULES.maxOverseas[state.format] ?? 11;
+    }
+
+    /** Returns the display label for non-overseas players in the active tournament. */
+    function getDomesticLabel() {
+      return RULES.domesticLabel._tournament || 'Domestic';
     }
 
     // True only when this tournament/format actually enforces an overseas cap —
@@ -2714,6 +2725,7 @@ p31,Sample Player,MI,bat,9.0,false
       format: 'T20',
       filterRole: 'ALL',
       filterOS: false,
+      filterDomestic: false,
       selectedMatchIds: new Set(), // multi-select match filter; empty = show all
       matchChipPage: 0,            // pagination for match chip bar (15 per page)
       search: '',
@@ -3950,11 +3962,20 @@ p31,Sample Player,MI,bat,9.0,false
 
       // Show / hide OS chip; use amber active class
       const osChip = $('#osFilterChip');
+      const hasCap = getOverseasCap() > 0 && getOverseasCap() < 11;
       if (osChip) {
-        const hasCap = getOverseasCap() > 0 && getOverseasCap() < 11;
         osChip.style.display = hasCap ? '' : 'none';
         osChip.classList.toggle('os-active', state.filterOS);
         osChip.classList.remove('active'); // ensure gold variant never sticks
+      }
+      // Show / hide the non-overseas chip alongside it, labeled per-tournament
+      // (e.g. "🏠 US" for MLC, "🏠 Indian" for IPL) via getDomesticLabel().
+      const domChip = $('#domesticFilterChip');
+      if (domChip) {
+        domChip.style.display = hasCap ? '' : 'none';
+        domChip.textContent = `🏠 ${getDomesticLabel()}`;
+        domChip.classList.toggle('dom-active', state.filterDomestic);
+        domChip.classList.remove('active');
       }
     }
 
@@ -4025,6 +4046,7 @@ p31,Sample Player,MI,bat,9.0,false
       // Always update overseas cap — two same-format tournaments (e.g. IPL T20 → MLC T20)
       // can have different caps, so this must run even when the format hasn't changed.
       RULES.maxOverseas._tournament = tournament.max_overseas_in_xi ?? null;
+      RULES.domesticLabel._tournament = tournament.domestic_label ?? null;
       if (state.format === fmt && state.rulesEditing === fmt) return; // no-op for format-only changes
       state.format       = fmt;
       state.rulesEditing = fmt;
@@ -4146,6 +4168,20 @@ p31,Sample Player,MI,bat,9.0,false
               <button class="os-cap-save" data-tid="${t.id}"
                       style="font-size:11px; padding:4px 10px; white-space:nowrap;">Save</button>
               <span class="os-cap-status" data-tid="${t.id}" style="font-size:11px; color:var(--muted);"></span>
+            </div>
+            <!-- Domestic label row — what "non-overseas" is called for this
+                 competition (e.g. US for MLC, Indian for IPL). Cosmetic only:
+                 does not change is_overseas or the overseas cap above. -->
+            <div style="display:flex; align-items:center; gap:6px; margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
+              <span style="font-size:11px; color:var(--muted); white-space:nowrap;">Non-overseas label</span>
+              <input type="text" maxlength="20" class="domestic-label-input" data-tid="${t.id}"
+                     value="${escapeHtml(t.domestic_label || '')}"
+                     placeholder="e.g. US, Indian, South African"
+                     style="width:170px; font-size:12px; padding:4px 8px;"
+                     title="Shown on the player pool's non-overseas filter chip; falls back to \'Domestic\' if blank" />
+              <button class="domestic-label-save" data-tid="${t.id}"
+                      style="font-size:11px; padding:4px 10px; white-space:nowrap;">Save</button>
+              <span class="domestic-label-status" data-tid="${t.id}" style="font-size:11px; color:var(--muted);"></span>
             </div>
             <!-- Scraper toggle row -->
             <div style="display:flex; align-items:center; gap:8px; margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
@@ -4308,6 +4344,35 @@ p31,Sample Player,MI,bat,9.0,false
             }
             if (statusEl) {
               statusEl.textContent = cap === null ? '✓ Reset to format default' : `✓ Cap set to ${cap}`;
+              statusEl.style.color = 'var(--good)';
+            }
+          } catch (err) {
+            if (statusEl) { statusEl.textContent = 'Failed: ' + err.message; statusEl.style.color = 'var(--bad)'; }
+          } finally { btn.disabled = false; }
+        });
+      });
+      // Wire domestic-label save buttons
+      list.querySelectorAll('.domestic-label-save').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const tid      = btn.dataset.tid;
+          const input    = list.querySelector(`.domestic-label-input[data-tid="${tid}"]`);
+          const statusEl = list.querySelector(`.domestic-label-status[data-tid="${tid}"]`);
+          const label    = input?.value.trim() || null;
+          btn.disabled = true;
+          if (statusEl) { statusEl.textContent = 'Saving…'; statusEl.style.color = 'var(--muted)'; }
+          try {
+            await state.db.updateTournamentDomesticLabel(tid, label);
+            const t = state.tournaments.find(x => x.id === tid);
+            if (t) t.domestic_label = label;
+            // If active tournament, update live RULES so the pool filter chip
+            // and player-card badges reflect it immediately.
+            if (tid === state.activeTournamentId) {
+              RULES.domesticLabel._tournament = label;
+              renderTeamFilter();
+              renderPool();
+            }
+            if (statusEl) {
+              statusEl.textContent = label ? `✓ Labeled "${label}"` : '✓ Reset to "Domestic"';
               statusEl.style.color = 'var(--good)';
             }
           } catch (err) {
@@ -5088,6 +5153,7 @@ p31,Sample Player,MI,bat,9.0,false
       state.filterTeam    = 'ALL';
       state.filterCredits = 'ALL';
       state.filterOS   = false;
+      state.filterDomestic = false;
       state.selectedMatchIds = new Set();
       state.matchChipPage = 0;
       const tournament = state.tournaments.find(t => t.id === id);
@@ -8486,6 +8552,7 @@ p31,Sample Player,MI,bat,9.0,false
         if (state.filterCredits === 'MID'  && !(p.credits >= 8 && p.credits <= 10)) return false;
         if (state.filterCredits === 'GT10' && !(p.credits > 10)) return false;
         if (state.filterOS && !p.overseas) return false;
+        if (state.filterDomestic && p.overseas) return false;
         if (matchTeams && !matchTeams.has(p.team)) return false;
         if (term && !(p.name.toLowerCase().includes(term) || p.team.toLowerCase().includes(term))) return false;
         return true;
@@ -10121,6 +10188,14 @@ p31,Sample Player,MI,bat,9.0,false
     if (_osChip) _osChip.addEventListener('click', () => {
       state.filterOS = !state.filterOS;
       _osChip.classList.toggle('os-active', state.filterOS);
+      renderPool();
+    });
+    // Non-overseas filter chip (toggle — green active class), label driven
+    // by the active tournament's domestic_label (see getDomesticLabel()).
+    const _domChip = $('#domesticFilterChip');
+    if (_domChip) _domChip.addEventListener('click', () => {
+      state.filterDomestic = !state.filterDomestic;
+      _domChip.classList.toggle('dom-active', state.filterDomestic);
       renderPool();
     });
     $('#search').addEventListener('input', e => { state.search = e.target.value; renderPool(); });

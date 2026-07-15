@@ -1184,6 +1184,7 @@ export function createDb(cfg = {}) {
         start_date          : input.startDate        ?? null,
         end_date            : input.endDate          ?? null,
         max_overseas_in_xi  : input.maxOverseasInXi  ?? null,
+        domestic_label      : input.domesticLabel    ?? null,
       };
       const { data, error } = await sb.from('tournaments').insert(row).select().single();
       if (error) throw error;
@@ -1200,6 +1201,24 @@ export function createDb(cfg = {}) {
       const { data, error } = await sb
         .from('tournaments')
         .update({ max_overseas_in_xi: cap ?? null })
+        .eq('id', id)
+        .select('id');
+      if (error) throw error;
+      if (!data || data.length === 0) throw new Error('No rows updated — check RLS policies.');
+    },
+
+    /**
+     * Update the display label for this tournament's "non-overseas" bucket
+     * (e.g. 'US' for MLC, 'Indian' for IPL). Purely cosmetic — the underlying
+     * is_overseas boolean and overseas-cap enforcement are unaffected.
+     * @param {string}      id     Tournament UUID
+     * @param {string|null} label  Display label, or null to fall back to "Domestic"
+     */
+    async updateTournamentDomesticLabel(id, label) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('tournaments')
+        .update({ domestic_label: label || null })
         .eq('id', id)
         .select('id');
       if (error) throw error;
