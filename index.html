@@ -3127,11 +3127,34 @@ p31,Sample Player,MI,bat,9.0,false
       }
     }
 
-    /** Renders the SL season-by-season detail panel (unchanged behaviour) into `cell`. */
-    async function loadSLDetailInto(cell, squadId, detailIdPrefix, el) {
+    /**
+     * Renders the SL season-by-season detail panel into `cell`.
+     * `contestId` resolves this squad's transfer rules (free_transfers_per_match /
+     * playoff_first_match_unlimited) from state.sl.contests, so the Xfer column
+     * can tell a real capped transfer apart from one made in a match where every
+     * transfer is free — see the Xfer-column comment below for why that matters.
+     */
+    async function loadSLDetailInto(cell, squadId, detailIdPrefix, el, contestId) {
       cell.innerHTML = '<div style="padding:10px 8px;color:var(--muted);font-size:12px;">Loading…</div>';
       try {
         const season = await state.db.getSquadSeason(squadId);
+
+        // Transfer-rules context for this squad's contest — resolves whether a
+        // given match's transfers are capped or unlimited. free_transfers_per_match
+        // === null means EVERY match in this contest is unlimited (only the season
+        // total caps anything); playoff_first_match_unlimited carves out just the
+        // playoff opener as its own unlimited, uncapped window even when the rest
+        // of the contest has per-match caps. Mirrors the same fields/logic already
+        // used for the "Xfers Left" countdown in the My Squad season view.
+        const contest         = (state.sl?.contests || []).find(c => c.id === contestId) || {};
+        const freePerMatch    = contest.free_transfers_per_match ?? null;
+        const playoffStartMN  = contest.playoff_start_match_number ?? null;
+        const playoffFirstUnlim = !!contest.playoff_first_match_unlimited;
+        const isUnlimitedMatch = (matchNumber) => {
+          if (freePerMatch === null) return true; // whole contest is unlimited per match
+          const isPlayoffMatch = playoffStartMN !== null && (matchNumber ?? 0) >= playoffStartMN;
+          return isPlayoffMatch && playoffFirstUnlim && matchNumber === playoffStartMN;
+        };
 
         // Only show matches that have actually locked (started). user_match_xi/
         // user_transfers/user_booster_activations can all have rows for a match
@@ -3232,7 +3255,15 @@ p31,Sample Player,MI,bat,9.0,false
               ? boosters.map(b => `<span title="${escapeHtml(BOOSTER_META[b]?.label || b)}">${BOOSTER_META[b]?.icon || '★'}</span>`).join('')
               : '<span style="color:var(--muted);">—</span>';
             const xferCount   = xferCountByMatch[m.match_id] || 0;
-            const xferCell    = xferCount || '<span style="color:var(--muted);">0</span>';
+            // Show '-' for matches where every transfer is free/unlimited (whole
+            // contest, or the playoff opener under playoff_first_match_unlimited) —
+            // a raw count there reads like a real capped transfer was spent when
+            // none was, e.g. M31 in a contest with free_transfers_per_match=null
+            // showing "×7 xfer" even though nothing was actually charged. Matches
+            // how the "Xfers Left" countdown already renders '-' for these windows.
+            const xferCell    = isUnlimitedMatch(m.match_number)
+              ? '<span style="color:var(--muted);">-</span>'
+              : (xferCount || '<span style="color:var(--muted);">0</span>');
 
             const matchRow =
               '<tr class="sl-match-row" data-detail="' + innerDetailId + '" data-pitch="' + pitchPanelId + '" style="cursor:pointer;" title="Click to expand">' +
@@ -3394,7 +3425,7 @@ p31,Sample Player,MI,bat,9.0,false
             detailRow.style.display = '';
             const cell = detailRow.querySelector('td');
             if (row.dataset.kind === 'sl') {
-              await loadSLDetailInto(cell, row.dataset.entity, row.dataset.detail, el);
+              await loadSLDetailInto(cell, row.dataset.entity, row.dataset.detail, el, lbState.tab);
             } else {
               await loadDailyDetailInto(cell, row.dataset.entity, dailyMatchId);
             }
@@ -3414,7 +3445,7 @@ p31,Sample Player,MI,bat,9.0,false
           if (caret) caret.textContent = '▴';
           const cell = detailRow.querySelector('td');
           if (row.dataset.kind === 'sl') {
-            await loadSLDetailInto(cell, row.dataset.entity, row.dataset.detail, el);
+            await loadSLDetailInto(cell, row.dataset.entity, row.dataset.detail, el, lbState.tab);
           } else {
             await loadDailyDetailInto(cell, row.dataset.entity, dailyMatchId);
           }
@@ -10973,7 +11004,7 @@ p31,Sample Player,MI,bat,9.0,false
                 <div id="${detailId}" style="grid-column:1/-1;display:none;border-bottom:1px solid var(--border);"></div>`;
             }).join('')}
           </div>`;
-          wireInlineLbExpand(content, null);
+          wireInlineLbExpand(content, null, contestId);
           return;
         }
 
@@ -11051,8 +11082,10 @@ p31,Sample Player,MI,bat,9.0,false
      * mirroring the full leaderboard popup's `.lb-expandable` rows: clicking a
      * squad/team name toggles a detail panel showing per-player points. `dailyMatchId`
      * is only needed for the 'daily' kind (squad detail lookups don't need a match id).
+     * `contestId` is only needed for the 'sl' kind — resolves transfer-rules context
+     * (see loadSLDetailInto) for the Xfer column's unlimited-match display.
      */
-    function wireInlineLbExpand(content, dailyMatchId) {
+    function wireInlineLbExpand(content, dailyMatchId, contestId) {
       content.querySelectorAll('.inline-lb-row').forEach(row => {
         row.addEventListener('click', async () => {
           const key       = row.dataset.key;
@@ -11070,7 +11103,7 @@ p31,Sample Player,MI,bat,9.0,false
           if (caret) caret.textContent = '▴';
           detailRow.style.display = '';
           if (row.dataset.kind === 'sl') {
-            await loadSLDetailInto(detailRow, row.dataset.entity, row.dataset.detail, content);
+            await loadSLDetailInto(detailRow, row.dataset.entity, row.dataset.detail, content, contestId);
           } else {
             await loadDailyDetailInto(detailRow, row.dataset.entity, dailyMatchId);
           }
