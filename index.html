@@ -2075,7 +2075,8 @@ p31,Sample Player,MI,bat,9.0,false
             <span id="teamsMismatchStatus" style="color:var(--muted); font-size:11px;"></span>
           </div>
         </div>
-        <div style="color:var(--muted); font-size:12px;">More review queues (Unmatched Players, Fielding Issues, Recoverable Stats, Duplicate Players) — coming in a follow-up pass.</div>
+        <div id="reviewQueuesList"></div>
+        <div style="color:var(--muted); font-size:12px; margin-top:8px;">Duplicate Players review — coming in a follow-up pass.</div>
       </div>
 
       <!-- Danger Zone tab — destructive, end-of-season actions -->
@@ -4290,86 +4291,9 @@ p31,Sample Player,MI,bat,9.0,false
               <button class="series-id-save" data-tid="${t.id}"
                       style="font-size:11px; padding:4px 10px; white-space:nowrap;">Save</button>
             </div>
-            <!-- Unmatched players panel -->
-            <div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
-              <button class="unmatched-toggle" data-tid="${t.id}"
-                      style="display:flex; align-items:center; gap:6px; background:none; border:none;
-                             cursor:pointer; padding:0; width:100%; text-align:left;">
-                <span style="font-size:11px; color:var(--muted);">⚠️ Unmatched Players</span>
-                <span class="unmatched-badge" data-tid="${t.id}"
-                      style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:10px;
-                             background:rgba(220,80,60,0.15); color:rgba(220,80,60,0.9); display:none;">0</span>
-                <span class="unmatched-chevron" data-tid="${t.id}"
-                      style="font-size:10px; color:var(--muted); margin-left:auto;">▶ Load</span>
-              </button>
-              <div class="unmatched-panel" data-tid="${t.id}"
-                   style="display:none; margin-top:6px;"></div>
-            </div>
-            <!-- Fielding issues panel -->
-            <div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
-              <button class="fielding-issues-toggle" data-tid="${t.id}"
-                      style="display:flex; align-items:center; gap:6px; background:none; border:none;
-                             cursor:pointer; padding:0; width:100%; text-align:left;">
-                <span style="font-size:11px; color:var(--muted);">🥎 Fielding Issues</span>
-                <span class="fielding-issues-badge" data-tid="${t.id}"
-                      style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:10px;
-                             background:rgba(220,80,60,0.15); color:rgba(220,80,60,0.9); display:none;">0</span>
-                <span class="fielding-issues-chevron" data-tid="${t.id}"
-                      style="font-size:10px; color:var(--muted); margin-left:auto;">▶ Load</span>
-              </button>
-              <div class="fielding-issues-panel" data-tid="${t.id}"
-                   style="display:none; margin-top:6px;"></div>
-            </div>
-            <!-- Recoverable placeholder-stat panel ("Player Not Found" etc.) -->
-            <div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
-              <button class="placeholder-stats-toggle" data-tid="${t.id}"
-                      style="display:flex; align-items:center; gap:6px; background:none; border:none;
-                             cursor:pointer; padding:0; width:100%; text-align:left;">
-                <span style="font-size:11px; color:var(--muted);">🧩 Recoverable Stats</span>
-                <span class="placeholder-stats-badge" data-tid="${t.id}"
-                      style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:10px;
-                             background:rgba(220,80,60,0.15); color:rgba(220,80,60,0.9); display:none;">0</span>
-                <span class="placeholder-stats-chevron" data-tid="${t.id}"
-                      style="font-size:10px; color:var(--muted); margin-left:auto;">▶ Load</span>
-              </button>
-              <div class="placeholder-stats-panel" data-tid="${t.id}"
-                   style="display:none; margin-top:6px;"></div>
-            </div>
           </div>`;
       }).join('');
 
-      // Eagerly populate the "⚠️ Unmatched Players" badges for every
-      // tournament right now, instead of waiting for the admin to click
-      // "▶ Load" on each one — that's the only way this kind of gap (players
-      // missing from a tournament roster, silently dropped by the scraper)
-      // actually gets noticed instead of sitting unresolved for days.
-      const tIds = state.tournaments.map(t => t.id);
-      if (tIds.length) {
-        state.db.getUnmatchedPlayersCounts(tIds).then(counts => {
-          counts.forEach((count, tid) => {
-            const badge = list.querySelector(`.unmatched-badge[data-tid="${tid}"]`);
-            if (!badge) return;
-            badge.textContent = count;
-            badge.style.display = count ? 'inline' : 'none';
-          });
-        }).catch(err => console.error('getUnmatchedPlayersCounts failed:', err));
-        state.db.getFieldingIssuesCounts(tIds).then(counts => {
-          counts.forEach((count, tid) => {
-            const badge = list.querySelector(`.fielding-issues-badge[data-tid="${tid}"]`);
-            if (!badge) return;
-            badge.textContent = count;
-            badge.style.display = count ? 'inline' : 'none';
-          });
-        }).catch(err => console.error('getFieldingIssuesCounts failed:', err));
-        state.db.getPlaceholderStatsCounts(tIds).then(counts => {
-          counts.forEach((count, tid) => {
-            const badge = list.querySelector(`.placeholder-stats-badge[data-tid="${tid}"]`);
-            if (!badge) return;
-            badge.textContent = count;
-            badge.style.display = count ? 'inline' : 'none';
-          });
-        }).catch(err => console.error('getPlaceholderStatsCounts failed:', err));
-      }
 
       // Wire active toggles
       list.querySelectorAll('.tournament-active-toggle').forEach(cb => {
@@ -4522,6 +4446,105 @@ p31,Sample Player,MI,bat,9.0,false
           }
         });
       });
+
+    }
+
+    // ── Review tab: consolidated exception queues ──────────────────────────
+    // Unmatched Players / Fielding Issues / Recoverable Stats — moved out of
+    // the Tournament tab's per-card list. Logic below is unchanged from what
+    // used to live inside renderTournamentActiveToggles(); only the render
+    // target moved, from #tournamentActiveList to #reviewQueuesList.
+    function renderReviewQueues() {
+      const list = $('#reviewQueuesList');
+      if (!list) return;
+      if (!state.tournaments.length) {
+        list.innerHTML = '<div style="color:var(--muted);font-size:12px;">No tournaments yet.</div>';
+        return;
+      }
+
+      list.innerHTML = state.tournaments.map(t => `
+        <div style="padding:10px 12px; border:1px solid var(--border); border-radius:6px; margin-bottom:10px;">
+          <div style="font-size:13px; font-weight:600; margin-bottom:2px;">${escapeHtml(t.name)}</div>
+          <div style="font-size:11px; color:var(--muted); margin-bottom:4px;">${t.format || 'T20'}</div>
+          <!-- Unmatched players panel -->
+          <div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
+            <button class="unmatched-toggle" data-tid="${t.id}"
+                    style="display:flex; align-items:center; gap:6px; background:none; border:none;
+                           cursor:pointer; padding:0; width:100%; text-align:left;">
+              <span style="font-size:11px; color:var(--muted);">⚠️ Unmatched Players</span>
+              <span class="unmatched-badge" data-tid="${t.id}"
+                    style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:10px;
+                           background:rgba(220,80,60,0.15); color:rgba(220,80,60,0.9); display:none;">0</span>
+              <span class="unmatched-chevron" data-tid="${t.id}"
+                    style="font-size:10px; color:var(--muted); margin-left:auto;">▶ Load</span>
+            </button>
+            <div class="unmatched-panel" data-tid="${t.id}"
+                 style="display:none; margin-top:6px;"></div>
+          </div>
+          <!-- Fielding issues panel -->
+          <div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
+            <button class="fielding-issues-toggle" data-tid="${t.id}"
+                    style="display:flex; align-items:center; gap:6px; background:none; border:none;
+                           cursor:pointer; padding:0; width:100%; text-align:left;">
+              <span style="font-size:11px; color:var(--muted);">🥎 Fielding Issues</span>
+              <span class="fielding-issues-badge" data-tid="${t.id}"
+                    style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:10px;
+                           background:rgba(220,80,60,0.15); color:rgba(220,80,60,0.9); display:none;">0</span>
+              <span class="fielding-issues-chevron" data-tid="${t.id}"
+                    style="font-size:10px; color:var(--muted); margin-left:auto;">▶ Load</span>
+            </button>
+            <div class="fielding-issues-panel" data-tid="${t.id}"
+                 style="display:none; margin-top:6px;"></div>
+          </div>
+          <!-- Recoverable placeholder-stat panel ("Player Not Found" etc.) -->
+          <div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
+            <button class="placeholder-stats-toggle" data-tid="${t.id}"
+                    style="display:flex; align-items:center; gap:6px; background:none; border:none;
+                           cursor:pointer; padding:0; width:100%; text-align:left;">
+              <span style="font-size:11px; color:var(--muted);">🧩 Recoverable Stats</span>
+              <span class="placeholder-stats-badge" data-tid="${t.id}"
+                    style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:10px;
+                           background:rgba(220,80,60,0.15); color:rgba(220,80,60,0.9); display:none;">0</span>
+              <span class="placeholder-stats-chevron" data-tid="${t.id}"
+                    style="font-size:10px; color:var(--muted); margin-left:auto;">▶ Load</span>
+            </button>
+            <div class="placeholder-stats-panel" data-tid="${t.id}"
+                 style="display:none; margin-top:6px;"></div>
+          </div>
+        </div>`).join('');
+
+      // Eagerly populate the "⚠️ Unmatched Players" badges for every
+      // tournament right now, instead of waiting for the admin to click
+      // "▶ Load" on each one — that's the only way this kind of gap (players
+      // missing from a tournament roster, silently dropped by the scraper)
+      // actually gets noticed instead of sitting unresolved for days.
+      const tIds = state.tournaments.map(t => t.id);
+      if (tIds.length) {
+        state.db.getUnmatchedPlayersCounts(tIds).then(counts => {
+          counts.forEach((count, tid) => {
+            const badge = list.querySelector(`.unmatched-badge[data-tid="${tid}"]`);
+            if (!badge) return;
+            badge.textContent = count;
+            badge.style.display = count ? 'inline' : 'none';
+          });
+        }).catch(err => console.error('getUnmatchedPlayersCounts failed:', err));
+        state.db.getFieldingIssuesCounts(tIds).then(counts => {
+          counts.forEach((count, tid) => {
+            const badge = list.querySelector(`.fielding-issues-badge[data-tid="${tid}"]`);
+            if (!badge) return;
+            badge.textContent = count;
+            badge.style.display = count ? 'inline' : 'none';
+          });
+        }).catch(err => console.error('getFieldingIssuesCounts failed:', err));
+        state.db.getPlaceholderStatsCounts(tIds).then(counts => {
+          counts.forEach((count, tid) => {
+            const badge = list.querySelector(`.placeholder-stats-badge[data-tid="${tid}"]`);
+            if (!badge) return;
+            badge.textContent = count;
+            badge.style.display = count ? 'inline' : 'none';
+          });
+        }).catch(err => console.error('getPlaceholderStatsCounts failed:', err));
+      }
       // Wire unmatched players panels
       list.querySelectorAll('.unmatched-toggle').forEach(btn => {
         btn.addEventListener('click', async () => {
@@ -5176,8 +5199,6 @@ p31,Sample Player,MI,bat,9.0,false
           }
         });
       });
-
-      // Delete Tournament now lives in the Danger Zone tab — see renderDangerZone() in admin.js.
     }
 
     async function switchTournament(id) {
@@ -10100,6 +10121,7 @@ p31,Sample Player,MI,bat,9.0,false
       fromCricAPI,
       isTournamentStarted,
       switchTournament,
+      renderReviewQueues,
       KNOWN_TEAMS,
       // reassigned lets — need getter+setter so admin.js always sees the current value
       get ALL_PLAYER_IDS()  { return ALL_PLAYER_IDS; },
@@ -11735,7 +11757,7 @@ p31,Sample Player,MI,bat,9.0,false
       return new Promise((resolve) => {
         if (window.__admin) { resolve(); return; }
         const s = document.createElement('script');
-        s.src = './admin.js?v=2';
+        s.src = './admin.js?v=3';
         s.onload = resolve;
         s.onerror = () => console.error('[admin] Failed to load admin.js');
         document.head.appendChild(s);
