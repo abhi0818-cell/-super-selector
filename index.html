@@ -1946,7 +1946,6 @@
         <div style="display:flex; gap:8px; align-items:center; padding:0 6px 10px; flex-wrap:wrap;">
           <button id="syncMatchesBtn" class="primary">Sync from CricAPI</button>
           <button id="finalizeMatchesBtn">Finalize completed</button>
-          <button id="fixTeamCodesBtn" title="Apply saved CricAPI→DB team aliases to all matches in this tournament">⚡ Fix team codes</button>
           <input id="syncSeriesId" type="text" placeholder="Series ID (recommended)" style="font-size:12px; padding:6px 10px; width:280px;" />
           <select id="syncFilter" style="font-size:12px; padding:6px 10px;">
             <option value="remaining">Remaining only (not completed)</option>
@@ -11622,29 +11621,8 @@ p31,Sample Player,MI,bat,9.0,false
     }
 
     $('#syncMatchesBtn').addEventListener('click', () => window.__admin?.syncMatchesFromCricAPI?.());
-    $('#fixTeamCodesBtn').addEventListener('click', async () => {
-      if (!state.db) { toast('Connect to the database first.', 4000); return; }
-      if (!state.activeTournamentId) { toast('Select a tournament first.', 4000); return; }
-      const mapping = Object.entries(window.__admin?.CRIC_TEAM_CODE_MAP ?? {})
-        .filter(([from, to]) => from !== to)
-        .map(([from, to]) => ({ from, to }));
-      if (!mapping.length) {
-        toast('No aliases defined. Go to Admin → Teams → edit aliases first.', 4000);
-        return;
-      }
-      const btn = $('#fixTeamCodesBtn');
-      btn.disabled = true; btn.textContent = 'Fixing…';
-      try {
-        await state.db.remapMatchTeams(state.activeTournamentId, mapping);
-        state.matches = await state.db.listMatches(state.activeTournamentId);
-        toast(`✓ Fixed team codes in matches (${mapping.map(r=>r.from+'→'+r.to).join(', ')}).`, 5000);
-        await afterTeamCodeFix();
-      } catch (e) {
-        toast('Fix failed: ' + e.message, 6000);
-      } finally {
-        btn.disabled = false; btn.textContent = '⚡ Fix team codes';
-      }
-    });
+    // Fix team codes now lives only in the Teams tab ("Apply to existing matches")
+    // — it was an exact duplicate of this same remapMatchTeams() call.
     $('#finalizeMatchesBtn').addEventListener('click', () => window.__admin?.finalizeCompletedMatches?.());
     $('#saveFantasyScorecardBtn').addEventListener('click', () => window.__admin?.saveFantasyScorecard?.());
     $('#rescoreBtn').addEventListener('click', () => window.__admin?.rescoreCurrentMatch?.());
