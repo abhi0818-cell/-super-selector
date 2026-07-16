@@ -3396,7 +3396,7 @@
             .map(([from, to]) => ({ from, to }));
           if (!mapping.length) { toast('No aliases defined — add some first.', 3000); return; }
           const statusEl = $('#applyAliasStatus');
-          newApply.disabled = true; newApply.textContent = 'Fixing…'; if (statusEl) statusEl.textContent = '';
+          newApply.disabled = true; newApply.textContent = 'Applying…'; if (statusEl) statusEl.textContent = '';
           try {
             await state.db.remapMatchTeams(state.activeTournamentId, mapping);
             state.matches = await state.db.listMatches(state.activeTournamentId);
@@ -3406,7 +3406,7 @@
           } catch (e) {
             toast('Failed: ' + e.message, 6000);
             if (statusEl) statusEl.textContent = '✗ ' + e.message;
-            newApply.disabled = false; newApply.textContent = '⚡ Fix existing matches';
+            newApply.disabled = false; newApply.textContent = '⚡ Apply to existing matches';
           }
         });
       }

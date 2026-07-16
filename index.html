@@ -1797,8 +1797,9 @@
       </div>
       <div class="admin-toolbar">
         <input id="adminSearch" class="admin-search-inp" type="text" placeholder="Search by name or team…" />
-        <button id="csvOpenBtn">Import CSV</button>
-        <button id="clonePlayersBtn" title="Copy player pool (team assignments + credits) from another tournament into the active tournament">Clone from…</button>
+        <span style="font-size:11px; color:var(--muted); white-space:nowrap;">Populate roster:</span>
+        <button id="csvOpenBtn" title="Import players from a CSV file">Import CSV</button>
+        <button id="clonePlayersBtn" title="Copy player pool (team assignments + credits) from another tournament into the active tournament">Clone from another tournament…</button>
         <select id="cloneSourcePicker" style="font-size:12px; padding:4px 8px; display:none;">
           <option value="">— pick source tournament —</option>
         </select>
@@ -1808,7 +1809,12 @@
       <div class="modal-body" id="adminTournamentView" style="display:none; flex-direction:column; gap:12px; padding:16px;">
         <div>
           <strong style="font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px;">Database (Supabase)</strong>
-          <div style="display:flex; flex-direction:column; gap:6px; margin-top:8px;">
+          <!-- Compact summary shown once connected — click "change" to expand the form again -->
+          <div id="dbConnectionSummary" style="display:none; align-items:center; gap:8px; margin-top:8px; font-size:12px; color:var(--muted);">
+            <span style="color:var(--good,#4ade80);">✓ Connected</span>
+            <button id="dbConnectionChangeBtn" style="font-size:11px; padding:3px 8px; background:none; border:1px solid var(--border); color:var(--muted); cursor:pointer; border-radius:4px;">Change</button>
+          </div>
+          <div id="dbConnectionForm" style="display:flex; flex-direction:column; gap:6px; margin-top:8px;">
             <input id="sbUrl" type="text" placeholder="Supabase project URL" />
             <input id="sbKey" type="text" placeholder="Supabase anon key" />
             <button id="sbConnectBtn" style="align-self:flex-start;">Connect to database</button>
@@ -1897,13 +1903,13 @@
         <!-- CricAPI team code alias editor -->
         <div id="teamAliasPanel" style="margin:0 8px 10px; padding:10px 14px; background:var(--panel-2); border:1px solid var(--border); border-radius:8px; font-size:12px;">
           <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
-            <span style="font-weight:700; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; flex:1;">CricAPI → Internal code aliases</span>
-            <button id="applyAliasesToMatchesBtn" class="ctrl-btn ctrl-btn-admin" style="font-size:12px;">⚡ Fix existing matches</button>
+            <span style="font-weight:700; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; flex:1;">Team code mapping</span>
+            <button id="applyAliasesToMatchesBtn" class="ctrl-btn ctrl-btn-admin" style="font-size:12px;">⚡ Apply to existing matches</button>
             <span id="applyAliasStatus" style="color:var(--muted); font-size:11px;"></span>
             <button id="toggleAliasPanel" style="font-size:11px; color:var(--muted); background:none; border:none; cursor:pointer; padding:0;">▾ edit</button>
           </div>
           <div id="aliasPanelBody" style="display:none;">
-            <div style="color:var(--muted); font-size:11px; margin-bottom:8px;">Aliases translate CricAPI codes to your DB team IDs at sync time. <strong>Fix existing matches</strong> also applies them to data already in the DB.</div>
+            <div style="color:var(--muted); font-size:11px; margin-bottom:8px;">Set these up before syncing so CricAPI's team codes match your DB codes automatically. If a mismatch slips through anyway, it'll show up in the Review tab.</div>
             <div id="aliasList" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;"></div>
             <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
               <input id="aliasFrom" type="text" placeholder="CricAPI code (e.g. INDW)" style="font-size:12px; padding:4px 8px; width:140px; text-transform:uppercase;" />
@@ -3795,6 +3801,12 @@ p31,Sample Player,MI,bat,9.0,false
         localStorage.setItem(SB_LS_KEY, key);
         $('#dbPill').textContent = 'database connected';
         $('#dbPill').classList.add('on');
+        // Collapse the connection form now that we're connected — the compact
+        // summary + "Change" link takes its place until explicitly reopened.
+        const dbForm = $('#dbConnectionForm');
+        const dbSummary = $('#dbConnectionSummary');
+        if (dbForm)    dbForm.style.display = 'none';
+        if (dbSummary) dbSummary.style.display = 'flex';
         // Upsert profile now that db is ready
         if (state.currentUser) {
           const u = state.currentUser;
@@ -11525,6 +11537,14 @@ p31,Sample Player,MI,bat,9.0,false
       const url = $('#sbUrl').value.trim(); const key = $('#sbKey').value.trim();
       if (!url || !key) { toast('Both URL and anon key are required.'); return; }
       connectDb(url, key);
+    });
+    // "Change" link on the collapsed connection summary — re-expands the form
+    // so different credentials can be entered (rare, but shouldn't be locked away).
+    $('#dbConnectionChangeBtn')?.addEventListener('click', () => {
+      const dbForm = $('#dbConnectionForm');
+      const dbSummary = $('#dbConnectionSummary');
+      if (dbForm)    dbForm.style.display = 'flex';
+      if (dbSummary) dbSummary.style.display = 'none';
     });
     $('#tournamentPicker').addEventListener('change', e => {
       if (state.db) {
