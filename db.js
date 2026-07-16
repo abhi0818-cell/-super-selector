@@ -674,6 +674,223 @@ export function createDb(cfg = {}) {
       }
     },
 
+    // ─── Duplicate player detection/merge (Review tab) ─────────────────────
+    // Mirrors sql-diagnostics/classify_duplicate_players.sql exactly, so the
+    // in-app queue and the SQL diagnostics always agree on a verdict:
+    //   SAFE_DELETE  — zero usage anywhere, a pure orphan (delete outright)
+    //   NEEDS_REVIEW — has real usage on at least one sibling row
+    //   KEEP         — rostered but not yet used (leave alone)
+
+    /**
+     * Finds every group of players sharing a normalized name (same name,
+     * case/whitespace-insensitive) and classifies each row's usage across
+     * every table that can reference a player id.
+     * @returns {Promise<Array<{normName:string, rows:Array<{id,name,teamId,
+     *   rosters,xiRows,scored,teamRows,xferRows,draftRows,verdict}>}>>}
+     */
+    async getDuplicatePlayerCandidates() {
+      const sb = await getClient();
+
+      const { data: players, error } = await sb.from('players').select('id, name, team_id');
+      if (error) throw error;
+
+      const normName = s => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+      const groups = new Map();
+      for (const p of players) {
+        const key = normName(p.name);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(p);
+      }
+      const dupGroups = [...groups.entries()].filter(([, rows]) => rows.length > 1);
+      if (!dupGroups.length) return [];
+
+      const allIds = dupGroups.flatMap(([, rows]) => rows.map(r => r.id));
+
+      // Batch-count usage in a single-column table — one query for every
+      // duplicate id at once, instead of one query per id.
+      const countBy = async (table, column) => {
+        const { data, error } = await sb.from(table).select(column).in(column, allIds);
+        if (error) throw error;
+        const counts = {};
+        for (const row of data) counts[row[column]] = (counts[row[column]] || 0) + 1;
+        return counts;
+      };
+      const countTransfers = async () => {
+        const idList = allIds.map(id => `"${id}"`).join(',');
+        const { data, error } = await sb
+          .from('user_transfers')
+          .select('player_out_id, player_in_id')
+          .or(`player_out_id.in.(${idList}),player_in_id.in.(${idList})`);
+        if (error) throw error;
+        const counts = {};
+        const idSet = new Set(allIds);
+        for (const row of data) {
+          if (idSet.has(row.player_out_id)) counts[row.player_out_id] = (counts[row.player_out_id] || 0) + 1;
+          if (idSet.has(row.player_in_id))  counts[row.player_in_id]  = (counts[row.player_in_id]  || 0) + 1;
+        }
+        return counts;
+      };
+      const countDraft = async () => {
+        const idList = allIds.map(id => `"${id}"`).join(',');
+        const idSet = new Set(allIds);
+        const counts = {};
+        const { data: cv, error: e1 } = await sb
+          .from('squad_draft_xi')
+          .select('captain_id, vc_id')
+          .or(`captain_id.in.(${idList}),vc_id.in.(${idList})`);
+        if (e1) throw e1;
+        for (const row of cv) {
+          if (idSet.has(row.captain_id)) counts[row.captain_id] = (counts[row.captain_id] || 0) + 1;
+          if (idSet.has(row.vc_id))      counts[row.vc_id]      = (counts[row.vc_id]      || 0) + 1;
+        }
+        const { data: pidRows, error: e2 } = await sb
+          .from('squad_draft_xi')
+          .select('player_ids')
+          .overlaps('player_ids', allIds);
+        if (e2) throw e2;
+        for (const row of pidRows) {
+          for (const id of (row.player_ids || [])) {
+            if (idSet.has(id)) counts[id] = (counts[id] || 0) + 1;
+          }
+        }
+        return counts;
+      };
+
+      const [rosters, xi, scored, team, xfer, draft] = await Promise.all([
+        countBy('tournament_players', 'player_id'),
+        countBy('user_match_xi', 'player_id'),
+        countBy('player_match_stats', 'player_id'),
+        countBy('user_team_players', 'player_id'),
+        countTransfers(),
+        countDraft(),
+      ]);
+
+      const verdictFor = id => {
+        const r = rosters[id] || 0, x = xi[id] || 0, s = scored[id] || 0,
+              t = team[id] || 0, xf = xfer[id] || 0, d = draft[id] || 0;
+        if (r === 0 && x === 0 && s === 0 && t === 0 && xf === 0 && d === 0) return 'SAFE_DELETE';
+        if (x > 0 || s > 0 || t > 0 || xf > 0 || d > 0) return 'NEEDS_REVIEW';
+        return 'KEEP';
+      };
+
+      return dupGroups.map(([key, rows]) => ({
+        normName: key,
+        rows: rows.map(p => ({
+          id: p.id, name: p.name, teamId: p.team_id,
+          rosters: rosters[p.id] || 0, xiRows: xi[p.id] || 0, scored: scored[p.id] || 0,
+          teamRows: team[p.id] || 0, xferRows: xfer[p.id] || 0, draftRows: draft[p.id] || 0,
+          verdict: verdictFor(p.id),
+        })),
+      }));
+    },
+
+    /**
+     * Checks whether keepId/dropId can be safely auto-merged: no overlapping
+     * scored match, no overlapping XI selection, and no live squad-draft
+     * reference to dropId (draft state is transient — any hit there routes
+     * to manual review rather than risking a live in-progress pick).
+     * Mirrors the manual collision check done by hand for the 3 clean merges
+     * in sql-diagnostics/fix_merge_clean_duplicate_players.sql.
+     * @returns {Promise<{safe:boolean, reason:string|null}>}
+     */
+    async checkMergeSafety(keepId, dropId) {
+      const sb = await getClient();
+
+      const { data: keepStats, error: e1 } = await sb
+        .from('player_match_stats').select('match_id').eq('player_id', keepId);
+      if (e1) throw e1;
+      const { data: dropStats, error: e2 } = await sb
+        .from('player_match_stats').select('match_id').eq('player_id', dropId);
+      if (e2) throw e2;
+      const keepMatchIds = new Set((keepStats || []).map(r => r.match_id));
+      if ((dropStats || []).some(r => keepMatchIds.has(r.match_id))) {
+        return { safe: false, reason: 'Both players have scored stats for the same match — can\'t auto-merge.' };
+      }
+
+      const { data: keepXi, error: e3 } = await sb
+        .from('user_match_xi').select('squad_id, match_id').eq('player_id', keepId);
+      if (e3) throw e3;
+      const { data: dropXi, error: e4 } = await sb
+        .from('user_match_xi').select('squad_id, match_id').eq('player_id', dropId);
+      if (e4) throw e4;
+      const keepXiKeys = new Set((keepXi || []).map(r => `${r.squad_id}::${r.match_id}`));
+      if ((dropXi || []).some(r => keepXiKeys.has(`${r.squad_id}::${r.match_id}`))) {
+        return { safe: false, reason: 'Both players are in the same squad\'s XI for the same match — can\'t auto-merge.' };
+      }
+
+      const { data: draftCv, error: e5 } = await sb
+        .from('squad_draft_xi').select('id').or(`captain_id.eq.${dropId},vc_id.eq.${dropId}`);
+      if (e5) throw e5;
+      const { data: draftPid, error: e6 } = await sb
+        .from('squad_draft_xi').select('id').overlaps('player_ids', [dropId]);
+      if (e6) throw e6;
+      if ((draftCv && draftCv.length) || (draftPid && draftPid.length)) {
+        return { safe: false, reason: 'The duplicate is part of a live (unlocked) squad draft — resolve that pick manually first.' };
+      }
+
+      return { safe: true, reason: null };
+    },
+
+    /**
+     * Merges dropId into keepId: repoints every historical reference
+     * (scored stats, saved XIs, team-player rows, transfers) to keepId, then
+     * removes dropId's tournament roster row (or repoints it, if keepId
+     * wasn't rostered to that same tournament) and deletes the dropId player
+     * row itself. Re-checks safety server-side first — never trusts stale
+     * UI state for a destructive multi-table operation.
+     * @returns {Promise<{merged:true}>}
+     */
+    async mergeDuplicatePlayers(keepId, dropId) {
+      if (!keepId || !dropId || keepId === dropId) throw new Error('mergeDuplicatePlayers: two distinct player ids required');
+      const sb = await getClient();
+
+      const safety = await this.checkMergeSafety(keepId, dropId);
+      if (!safety.safe) throw new Error(safety.reason);
+
+      const { error: e1 } = await sb.from('player_match_stats').update({ player_id: keepId }).eq('player_id', dropId);
+      if (e1) throw e1;
+
+      const { error: e2 } = await sb.from('user_match_xi').update({ player_id: keepId }).eq('player_id', dropId);
+      if (e2) throw e2;
+
+      const { error: e3 } = await sb.from('user_team_players').update({ player_id: keepId }).eq('player_id', dropId);
+      if (e3) throw e3;
+
+      const { error: e4 } = await sb.from('user_transfers').update({ player_out_id: keepId }).eq('player_out_id', dropId);
+      if (e4) throw e4;
+      const { error: e5 } = await sb.from('user_transfers').update({ player_in_id: keepId }).eq('player_in_id', dropId);
+      if (e5) throw e5;
+
+      // tournament_players: redundant rows (keepId already rostered there)
+      // get deleted; rows for a tournament only dropId was rostered to get
+      // repointed instead, so that roster spot isn't silently lost.
+      const { data: keepRosters, error: e6 } = await sb
+        .from('tournament_players').select('tournament_id').eq('player_id', keepId);
+      if (e6) throw e6;
+      const keepTournamentIds = new Set((keepRosters || []).map(r => r.tournament_id));
+      const { data: dropRosters, error: e7 } = await sb
+        .from('tournament_players').select('tournament_id').eq('player_id', dropId);
+      if (e7) throw e7;
+      for (const row of (dropRosters || [])) {
+        if (keepTournamentIds.has(row.tournament_id)) {
+          const { error } = await sb.from('tournament_players').delete()
+            .eq('player_id', dropId).eq('tournament_id', row.tournament_id);
+          if (error) throw error;
+        } else {
+          const { error } = await sb.from('tournament_players').update({ player_id: keepId })
+            .eq('player_id', dropId).eq('tournament_id', row.tournament_id);
+          if (error) throw error;
+        }
+      }
+
+      // Final delete — FK RESTRICT is the last safety net for anything this
+      // function didn't already know to repoint; player_name_aliases cascades.
+      const { error: e8 } = await sb.from('players').delete().eq('id', dropId);
+      if (e8) throw e8;
+
+      return { merged: true };
+    },
+
     // ─── User teams (drafted XIs) ─────────────────────────────────────────
 
     /**

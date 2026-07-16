@@ -2082,7 +2082,20 @@ p31,Sample Player,MI,bat,9.0,false
           </div>
         </div>
         <div id="reviewQueuesList"></div>
-        <div style="color:var(--muted); font-size:12px; margin-top:8px;">Duplicate Players review — coming in a follow-up pass.</div>
+        <!-- Duplicate Players — same-name player rows, classified by usage -->
+        <div style="margin-top:8px; padding:10px 12px; border:1px solid var(--border); border-radius:6px;">
+          <button id="duplicatePlayersToggle"
+                  style="display:flex; align-items:center; gap:6px; background:none; border:none;
+                         cursor:pointer; padding:0; width:100%; text-align:left;">
+            <span style="font-size:11px; color:var(--muted);">🧑‍🤝‍🧑 Duplicate Players</span>
+            <span id="duplicatePlayersBadge"
+                  style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:10px;
+                         background:rgba(220,80,60,0.15); color:rgba(220,80,60,0.9); display:none;">0</span>
+            <span id="duplicatePlayersChevron"
+                  style="font-size:10px; color:var(--muted); margin-left:auto;">▶ Load</span>
+          </button>
+          <div id="duplicatePlayersPanel" style="display:none; margin-top:8px;"></div>
+        </div>
       </div>
 
       <!-- Danger Zone tab — destructive, end-of-season actions -->
@@ -2189,7 +2202,7 @@ p31,Sample Player,MI,bat,9.0,false
     /* Engine + adapter inlined so the page runs from a double-click.
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
-    import { createDb, NotConfiguredError } from './db.js?v=120';
+    import { createDb, NotConfiguredError } from './db.js?v=121';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -5210,6 +5223,142 @@ p31,Sample Player,MI,bat,9.0,false
             if (chevron) chevron.textContent = '▶ Retry';
           }
         });
+      });
+    }
+
+    // ── Duplicate Players queue (Review tab) ────────────────────────────────
+    // Same-name player rows, classified by db.js's getDuplicatePlayerCandidates()
+    // (mirrors sql-diagnostics/classify_duplicate_players.sql). SAFE_DELETE
+    // rows get a direct delete button; NEEDS_REVIEW pairs get a merge button
+    // that's only enabled once checkMergeSafety() confirms no collision —
+    // otherwise it explains why and points at manual SQL review instead.
+    const VERDICT_STYLE = {
+      SAFE_DELETE:  { label: 'Safe to delete',  color: 'rgba(120,120,120,0.9)', bg: 'rgba(120,120,120,0.12)' },
+      NEEDS_REVIEW: { label: 'Needs review',    color: 'rgba(220,80,60,0.9)',   bg: 'rgba(220,80,60,0.15)' },
+      KEEP:         { label: 'Rostered, unused',color: 'var(--accent)',         bg: 'rgba(201,168,76,0.12)' },
+    };
+
+    function renderDuplicatePlayerRow(row, group, panel, badge) {
+      const vs = VERDICT_STYLE[row.verdict] || VERDICT_STYLE.KEEP;
+      const usage = `rosters ${row.rosters} · XI ${row.xiRows} · scored ${row.scored} · team ${row.teamRows} · transfers ${row.xferRows} · draft ${row.draftRows}`;
+      let actionHtml = '';
+      if (row.verdict === 'SAFE_DELETE') {
+        actionHtml = `<button class="dup-delete-btn" data-id="${escapeHtml(row.id)}" data-name="${escapeHtml(row.name)}"
+          style="font-size:10px; padding:2px 8px; border-radius:4px; background:transparent; border:1px solid var(--bad); color:var(--bad); cursor:pointer; white-space:nowrap;">Delete</button>`;
+      } else if (row.verdict === 'NEEDS_REVIEW' && group.rows.length === 2) {
+        const other = group.rows.find(r => r.id !== row.id);
+        actionHtml = `<button class="dup-merge-btn" data-keep="${escapeHtml(row.id)}" data-drop="${escapeHtml(other.id)}" data-name="${escapeHtml(row.name)}" data-othername="${escapeHtml(other.name)}"
+          style="font-size:10px; padding:2px 8px; border-radius:4px; background:rgba(201,168,76,0.12); border:1px solid var(--accent); color:var(--accent); cursor:pointer; white-space:nowrap;">Keep this, merge other in</button>`;
+      } else if (row.verdict === 'NEEDS_REVIEW') {
+        actionHtml = `<span style="font-size:10px; color:var(--muted);">3+ duplicates — review in SQL</span>`;
+      }
+      return `
+        <div class="dup-row" data-id="${escapeHtml(row.id)}" style="display:flex; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid var(--border); flex-wrap:wrap;">
+          <span style="font-size:12px; font-weight:600; min-width:140px;">${escapeHtml(row.name)}</span>
+          <span style="font-size:11px; color:var(--muted); min-width:50px;">${escapeHtml(row.teamId || '—')}</span>
+          <span style="font-size:10px; font-weight:700; padding:1px 6px; border-radius:10px; background:${vs.bg}; color:${vs.color}; white-space:nowrap;">${vs.label}</span>
+          <span style="font-size:10px; color:var(--muted); flex:1; min-width:220px;">${usage}</span>
+          <span class="dup-row-action">${actionHtml}</span>
+        </div>`;
+    }
+
+    async function loadDuplicatePlayersQueue() {
+      const panel   = $('#duplicatePlayersPanel');
+      const chevron = $('#duplicatePlayersChevron');
+      const badge   = $('#duplicatePlayersBadge');
+      if (!panel) return;
+
+      if (chevron) chevron.textContent = '⏳';
+      panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">Loading…</span>';
+
+      try {
+        const groups = await state.db.getDuplicatePlayerCandidates();
+        if (badge) {
+          badge.textContent = groups.length;
+          badge.style.display = groups.length ? 'inline' : 'none';
+        }
+        if (chevron) chevron.textContent = groups.length ? '▼ Hide' : '▼';
+
+        if (!groups.length) {
+          panel.innerHTML = '<span style="font-size:11px;color:var(--muted);">✓ No duplicate player names found.</span>';
+          return;
+        }
+
+        panel.innerHTML = groups.map(group => `
+          <div class="dup-group" data-key="${escapeHtml(group.normName)}" style="margin-bottom:10px; padding:8px 10px; background:var(--panel-2); border-radius:6px;">
+            ${group.rows.map(row => renderDuplicatePlayerRow(row, group, panel, badge)).join('')}
+          </div>`).join('');
+
+        // Wire delete buttons
+        panel.querySelectorAll('.dup-delete-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const id = btn.dataset.id, name = btn.dataset.name;
+            if (!confirm(`Delete "${name}" (${id})?\n\nThis row has zero usage anywhere — no rosters, XIs, scores, or transfers reference it. This cannot be undone.`)) return;
+            btn.disabled = true; btn.textContent = 'Deleting…';
+            try {
+              await state.db.deletePlayer(id);
+              toast(`"${name}" deleted.`);
+              await loadDuplicatePlayersQueue();
+            } catch (err) {
+              toast('Delete failed: ' + err.message, 5000);
+              btn.disabled = false; btn.textContent = 'Delete';
+            }
+          });
+        });
+
+        // Wire merge buttons
+        panel.querySelectorAll('.dup-merge-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const keepId = btn.dataset.keep, dropId = btn.dataset.drop;
+            const keepName = btn.dataset.name, dropName = btn.dataset.othername;
+            btn.disabled = true; btn.textContent = 'Checking…';
+            try {
+              const safety = await state.db.checkMergeSafety(keepId, dropId);
+              if (!safety.safe) {
+                toast(`Can't auto-merge: ${safety.reason}`, 7000);
+                btn.disabled = false; btn.textContent = 'Keep this, merge other in';
+                return;
+              }
+              if (!confirm(
+                `Merge "${dropName}" (${dropId}) into "${keepName}" (${keepId})?\n\n` +
+                `All of "${dropName}"'s scored stats, saved XIs, team rows, and transfers move to "${keepName}", ` +
+                `then "${dropName}"'s player row is deleted.\n\nThis cannot be undone.`
+              )) { btn.disabled = false; btn.textContent = 'Keep this, merge other in'; return; }
+              btn.textContent = 'Merging…';
+              await state.db.mergeDuplicatePlayers(keepId, dropId);
+              toast(`Merged — "${dropName}" is now part of "${keepName}".`);
+              await loadDuplicatePlayersQueue();
+            } catch (err) {
+              toast('Merge failed: ' + err.message, 6000);
+              btn.disabled = false; btn.textContent = 'Keep this, merge other in';
+            }
+          });
+        });
+
+      } catch (err) {
+        panel.innerHTML = `<span style="font-size:11px;color:var(--bad);">Error: ${escapeHtml(err.message)}</span>`;
+        if (chevron) chevron.textContent = '▶ Retry';
+      }
+    }
+
+    function wireDuplicatePlayersToggle() {
+      const btn = $('#duplicatePlayersToggle');
+      if (!btn) return;
+      // Rebuild listener to avoid duplicate binds on re-render
+      const fresh = btn.cloneNode(true);
+      btn.parentNode.replaceChild(fresh, btn);
+      fresh.addEventListener('click', async () => {
+        const panel = $('#duplicatePlayersPanel');
+        const chevron = $('#duplicatePlayersChevron');
+        if (!panel) return;
+        if (panel.style.display !== 'none' && panel.dataset.loaded === '1') {
+          panel.style.display = 'none';
+          if (chevron) chevron.textContent = '▶ Load';
+          return;
+        }
+        panel.style.display = 'block';
+        panel.dataset.loaded = '1';
+        await loadDuplicatePlayersQueue();
       });
     }
 
@@ -10134,6 +10283,7 @@ p31,Sample Player,MI,bat,9.0,false
       isTournamentStarted,
       switchTournament,
       renderReviewQueues,
+      wireDuplicatePlayersToggle,
       KNOWN_TEAMS,
       // reassigned lets — need getter+setter so admin.js always sees the current value
       get ALL_PLAYER_IDS()  { return ALL_PLAYER_IDS; },
@@ -11777,7 +11927,7 @@ p31,Sample Player,MI,bat,9.0,false
       return new Promise((resolve) => {
         if (window.__admin) { resolve(); return; }
         const s = document.createElement('script');
-        s.src = './admin.js?v=3';
+        s.src = './admin.js?v=4';
         s.onload = resolve;
         s.onerror = () => console.error('[admin] Failed to load admin.js');
         document.head.appendChild(s);

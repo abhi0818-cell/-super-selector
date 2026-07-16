@@ -39,6 +39,7 @@
   const isTournamentStarted       = A.isTournamentStarted;
   const switchTournament          = A.switchTournament;
   const renderReviewQueues        = A.renderReviewQueues;
+  const wireDuplicatePlayersToggle = A.wireDuplicatePlayersToggle;
   const KNOWN_TEAMS               = A.KNOWN_TEAMS;
   const API_KEY_LS                = 'ss_cricapi_key'; // mirrors index.html constant
   // constants
@@ -112,7 +113,7 @@
       else if (tab === 'schedule') renderMatchesAdmin();
       else if (tab === 'contests') renderContestsAdmin();
       else if (tab === 'dangerzone') renderDangerZone();
-      else if (tab === 'review')   { renderTeamsMismatchBanner(); renderReviewQueues?.(); }
+      else if (tab === 'review')   { renderTeamsMismatchBanner(); renderReviewQueues?.(); wireDuplicatePlayersToggle?.(); }
       else if (tab === 'live')     { /* content added in a later phase */ }
       else                         renderAdmin();
     }
