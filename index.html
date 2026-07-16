@@ -3623,10 +3623,17 @@ p31,Sample Player,MI,bat,9.0,false
           state.myLastName  = profile?.last_name  || '';
           state.myTeamName  = profile?.team_name  || '';
           updateHeaderUser(user); // re-render header with correct name
-          // Also refresh greeting if home tab is visible
+          // Also refresh greeting if home tab is visible. Same priority order
+          // as renderPageHomeTab() — structured first name wins over the
+          // legacy free-text display_name (which can hold stale placeholder
+          // text from early testing/signup, e.g. "MasterBlaster <Last name>").
+          // Using a different priority here than renderPageHomeTab() used to
+          // cause the greeting to flash the wrong name on first load and only
+          // self-correct once renderPageHomeTab() ran (e.g. on refresh).
           const homeGreeting = $('#homeGreeting');
-          if (homeGreeting && state.myDisplayName) {
-            homeGreeting.textContent = `Welcome back, ${state.myDisplayName}`;
+          const greetingName = state.myFirstName || state.myDisplayName || user.user_metadata?.full_name || user.email?.split('@')[0] || '';
+          if (homeGreeting && greetingName) {
+            homeGreeting.textContent = `Welcome back, ${greetingName}`;
           }
         }).catch(() => {
           state.myDisplayName = metaName || user.email?.split('@')[0] || '';
