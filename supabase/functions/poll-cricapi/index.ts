@@ -417,26 +417,48 @@ function isPlaceholderName(name: string): boolean {
   return PLACEHOLDER_NAMES.has(norm) || norm.startsWith('empty')
 }
 
-function resolvePlayerName(name: string, exactMap: Map<string, string>, aliasMap: Map<string, string>): ResolveResult {
-  const norm = name.toLowerCase().trim()
-  if (exactMap.has(norm)) return { playerId: exactMap.get(norm)!, method: 'exact' }
-  if (aliasMap.has(norm)) return { playerId: aliasMap.get(norm)!, method: 'alias' }
-
+// Last-name / initials fuzzy tier — returns EVERY roster player_id that
+// plausibly matches, not just the first one found, so resolvePlayerName can
+// tell a genuinely unambiguous fuzzy match apart from one where two
+// roster-mates (e.g. same-surname teammates) could both be it.
+function fuzzyMatchCandidates(norm: string, exactMap: Map<string, string>): string[] {
   const lastName = norm.split(' ').pop()!
+  const lastNameHits = new Set<string>()
   for (const [pName, pId] of exactMap) {
-    if (pName.split(' ').pop() === lastName) return { playerId: pId, method: 'fuzzy' }
+    if (pName.split(' ').pop() === lastName) lastNameHits.add(pId)
   }
+  if (lastNameHits.size) return [...lastNameHits]
+
   const parts = norm.split(' ')
   if (parts.length === 2 && parts[0].length === 1) {
     const initial = parts[0]
     const lastName2 = parts[1]
+    const initialHits = new Set<string>()
     for (const [pName, pId] of exactMap) {
       const pParts = pName.split(' ')
       if (pParts.length >= 2 && pParts[0].startsWith(initial) && pParts[pParts.length - 1] === lastName2) {
-        return { playerId: pId, method: 'fuzzy' }
+        initialHits.add(pId)
       }
     }
+    if (initialHits.size) return [...initialHits]
   }
+  return []
+}
+
+function resolvePlayerName(name: string, exactMap: Map<string, string>, aliasMap: Map<string, string>): ResolveResult {
+  const norm = name.toLowerCase().trim()
+  if (exactMap.has(norm)) return { playerId: exactMap.get(norm)!, method: 'exact' }
+
+  // Check for ambiguity BEFORE trusting a saved alias — see scrape-scorecard's
+  // resolvePlayerName for the full reasoning. A saved alias was only ever
+  // verified once; if the raw text could currently match more than one
+  // rostered player, don't blindly trust the old alias.
+  const candidates = fuzzyMatchCandidates(norm, exactMap)
+  if (candidates.length > 1) return { playerId: null, method: 'unmatched' }
+
+  if (aliasMap.has(norm)) return { playerId: aliasMap.get(norm)!, method: 'alias' }
+  if (candidates.length === 1) return { playerId: candidates[0], method: 'fuzzy' }
+
   return { playerId: null, method: 'unmatched' }
 }
 
@@ -637,7 +659,7 @@ Deno.serve(async (req: Request) => {
       .from('matches')
       .select(`
         id, match_number, format, status, external_id, tournament_id, start_time, data_source,
-        progress_innings, progress_balls,
+        progress_innings, progress_balls, home_team_id, away_team_id,
         tournament:tournaments!tournament_id(id, name, scraper_enabled, scoring_rules, dot_ball_enabled)
       `)
       .lte('start_time', cutoff)
@@ -732,17 +754,28 @@ Deno.serve(async (req: Request) => {
         continue
       }
 
-      // ── 2. Build name-resolution maps from the tournament roster ─────────
+      // ── 2. Build name-resolution maps, scoped to ONLY the two teams ───────
+      // playing this match — not the whole tournament roster. A name in this
+      // match's scorecard can only ever be one of these ~22 players; matching
+      // against the full tournament roster let a name from one team's box
+      // score fuzzy/alias-match a same-surname player on a team that isn't
+      // even in this match.
+      const matchTeamIds = [(match as any).home_team_id, (match as any).away_team_id].filter(Boolean)
+
       const { data: tPlayers } = await sb
         .from('tournament_players')
-        .select('player_id, players(id, name, role, is_overseas)')
+        .select('player_id, team_id, players(id, name, role, is_overseas)')
         .eq('tournament_id', match.tournament_id)
+        .in('team_id', matchTeamIds)
+
+      const rosterPlayerIds = (tPlayers ?? []).map(tp => tp.player_id)
 
       const { data: aliasRows } = await sb
         .from('player_name_aliases')
         .select('alias, player_id')
         .eq('tournament_id', match.tournament_id)
         .eq('source', 'cricapi')
+        .in('player_id', rosterPlayerIds.length ? rosterPlayerIds : ['__none__'])
 
       const exactMap = new Map<string, string>()
       const metaByPlayer = new Map<string, PlayerMeta>()

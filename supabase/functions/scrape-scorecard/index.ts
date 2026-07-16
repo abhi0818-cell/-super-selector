@@ -713,6 +713,35 @@ function isPlaceholderName(name: string): boolean {
   return PLACEHOLDER_NAMES.has(norm) || norm.startsWith('empty')
 }
 
+// Last-name / initials fuzzy tier, shared by resolvePlayerName and
+// resolveFielderName so ambiguity detection is consistent across both
+// (returns EVERY roster player_id that plausibly matches, not just the
+// first one found — callers decide what to do with more than one).
+function fuzzyMatchCandidates(norm: string, exactMap: Map<string, string>): string[] {
+  const lastName = norm.split(' ').pop()!
+  const lastNameHits = new Set<string>()
+  for (const [pName, pId] of exactMap) {
+    if (pName.split(' ').pop() === lastName) lastNameHits.add(pId)
+  }
+  if (lastNameHits.size) return [...lastNameHits]
+
+  // Initials match, e.g. "V Kohli" vs "Virat Kohli"
+  const parts = norm.split(' ')
+  if (parts.length === 2 && parts[0].length === 1) {
+    const initial   = parts[0]
+    const lastName2 = parts[1]
+    const initialHits = new Set<string>()
+    for (const [pName, pId] of exactMap) {
+      const pParts = pName.split(' ')
+      if (pParts.length >= 2 && pParts[0].startsWith(initial) && pParts[pParts.length - 1] === lastName2) {
+        initialHits.add(pId)
+      }
+    }
+    if (initialHits.size) return [...initialHits]
+  }
+  return []
+}
+
 function resolvePlayerName(
   name: string,
   exactMap: Map<string, string>,  // normalised full name → player_id
@@ -721,25 +750,18 @@ function resolvePlayerName(
   const norm = name.toLowerCase().trim()
 
   if (exactMap.has(norm)) return { playerId: exactMap.get(norm)!, method: 'exact' }
-  if (aliasMap.has(norm)) return { playerId: aliasMap.get(norm)!, method: 'alias' }
 
-  // Fuzzy: last-name match
-  const lastName = norm.split(' ').pop()!
-  for (const [pName, pId] of exactMap) {
-    if (pName.split(' ').pop() === lastName) return { playerId: pId, method: 'fuzzy' }
-  }
-  // Fuzzy: initials match, e.g. "V Kohli" vs "Virat Kohli"
-  const parts = norm.split(' ')
-  if (parts.length === 2 && parts[0].length === 1) {
-    const initial  = parts[0]
-    const lastName2 = parts[1]
-    for (const [pName, pId] of exactMap) {
-      const pParts = pName.split(' ')
-      if (pParts.length >= 2 && pParts[0].startsWith(initial) && pParts.pop() === lastName2) {
-        return { playerId: pId, method: 'fuzzy' }
-      }
-    }
-  }
+  // Check for ambiguity BEFORE trusting a saved alias. An alias was only
+  // ever verified once (by an earlier fuzzy match or a manual admin pick) —
+  // if the raw text could currently match more than one rostered player
+  // (e.g. two same-surname teammates), blindly trusting the old alias risks
+  // silently crediting the wrong one forever. Surface it as unmatched
+  // instead, same as if no alias existed yet.
+  const candidates = fuzzyMatchCandidates(norm, exactMap)
+  if (candidates.length > 1) return { playerId: null, method: 'unmatched' }
+
+  if (aliasMap.has(norm)) return { playerId: aliasMap.get(norm)!, method: 'alias' }
+  if (candidates.length === 1) return { playerId: candidates[0], method: 'fuzzy' }
 
   return { playerId: null, method: 'unmatched' }
 }
@@ -748,12 +770,14 @@ interface FielderResolveResult { playerId: string | null; candidates: string[] |
 
 /**
  * Resolve a raw fielder/bowler-credit name (e.g. "A Fletcher") to exactly one
- * player_id, checked against the FULL tournament roster (exactMap keys) — not
- * just whoever batted/bowled in this match — so that two squad members
- * sharing a surname (e.g. sisters) are correctly flagged as ambiguous instead
- * of one of them silently absorbing the other's fielding credit. Mirrors
- * index.html's resolveFielder, which was fixed for exactly this bug
- * (see migration history: "Bryce sisters" ambiguity fix).
+ * player_id, checked against the full roster of BOTH teams playing this
+ * match (exactMap keys — scoped to just those two teams, not the whole
+ * tournament, see step 4 above) — not just whoever batted/bowled in this
+ * match — so that two squad members sharing a surname (e.g. sisters) are
+ * correctly flagged as ambiguous instead of one of them silently absorbing
+ * the other's fielding credit. Mirrors index.html's resolveFielder, which
+ * was fixed for exactly this bug (see migration history: "Bryce sisters"
+ * ambiguity fix).
  *
  * Tiers, in order: exact full-name match → roster name ends with " <norm>"
  * (raw is a surname or "Initial Surname") → norm ends with " <roster surname>"
@@ -766,7 +790,6 @@ function resolveFielderName(
   aliasMap: Map<string, string>,  // norm alias → player_id
 ): FielderResolveResult {
   const norm = raw.toLowerCase().trim()
-  if (aliasMap.has(norm)) return { playerId: aliasMap.get(norm)!, candidates: null }
   if (exactMap.has(norm)) return { playerId: exactMap.get(norm)!, candidates: null }
 
   const rosterNames = [...exactMap.keys()]
@@ -778,9 +801,20 @@ function resolveFielderName(
   for (const tier of tiers) {
     if (!tier.length) continue
     const distinct = [...new Set(tier)]
+    // A saved alias only ever verified the match once — if the current
+    // roster now has more than one name in this tier (e.g. two same-surname
+    // teammates), don't let a stale alias silently pick one. Surface it as
+    // ambiguous instead, same as if no alias existed yet.
     if (distinct.length > 1) return { playerId: null, candidates: distinct }
+    if (aliasMap.has(norm)) return { playerId: aliasMap.get(norm)!, candidates: null }
     return { playerId: exactMap.get(distinct[0])!, candidates: null }
   }
+
+  // No fuzzy tier matched at all — fall back to a saved alias if we have one
+  // (covers names that don't cleanly fuzzy-match syntactically, e.g. a
+  // nickname or a differently-formatted name).
+  if (aliasMap.has(norm)) return { playerId: aliasMap.get(norm)!, candidates: null }
+
   return { playerId: null, candidates: null }
 }
 
@@ -1148,16 +1182,28 @@ Deno.serve(async (req: Request) => {
       )
 
       // ── 4. Build name resolution maps ─────────────────────────────────────
+      // Scoped to ONLY the two teams playing this match, not the whole
+      // tournament roster. A raw name from this scorecard can only ever be
+      // one of these ~22 players — matching against the full tournament
+      // roster (which can include 100+ players across every team) let a name
+      // from one team's box score fuzzy/alias-match a same-surname player on
+      // a completely different team that isn't even playing today.
+      const matchTeamIds = [(match.home_team as any)?.id, (match.away_team as any)?.id].filter(Boolean)
+
       const { data: tPlayers } = await sb
         .from('tournament_players')
-        .select('player_id, players(id, name, role)')
+        .select('player_id, team_id, players(id, name, role)')
         .eq('tournament_id', tournament.id)
+        .in('team_id', matchTeamIds)
+
+      const rosterPlayerIds = (tPlayers ?? []).map(tp => tp.player_id)
 
       const { data: aliases } = await sb
         .from('player_name_aliases')
         .select('alias, player_id')
         .eq('tournament_id', tournament.id)
         .eq('source', source)
+        .in('player_id', rosterPlayerIds.length ? rosterPlayerIds : ['__none__'])
 
       // id → role map (needed for duck penalty logic)
       const roleMap = new Map<string, string>()
