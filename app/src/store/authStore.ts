@@ -2,9 +2,17 @@ import { create } from 'zustand';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 
+interface Profile {
+  firstName: string | null;
+  lastName:  string | null;
+  teamName:  string | null;
+  displayName: string | null;
+}
+
 interface AuthState {
   session:     Session | null;
   user:        User | null;
+  profile:     Profile | null;
   loading:     boolean;
   initialized: boolean;
 
@@ -14,11 +22,13 @@ interface AuthState {
   signOut:      () => Promise<void>;
   setSession:   (session: Session | null) => void;
   setInitialized: () => void;
+  fetchProfile: (userId: string) => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
   session:     null,
   user:        null,
+  profile:     null,
   loading:     false,
   initialized: false,
 
@@ -26,6 +36,29 @@ export const useAuthStore = create<AuthState>((set) => ({
     session,
     user: session?.user ?? null,
   }),
+
+  // Fetches the profiles row (first_name/last_name/team_name/display_name)
+  // for the signed-in user. HomeScreen/TournamentLobbyScreen used to derive
+  // the greeting name from user.email.split('@')[0] — the raw auth email
+  // prefix (e.g. "abhi0818") — because the mobile app never fetched the
+  // actual profile at all, unlike the web client. Call this alongside
+  // setSession/setCurrentUser so `profile` is populated app-wide.
+  fetchProfile: async (userId) => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('first_name, last_name, team_name, display_name')
+      .eq('id', userId)
+      .maybeSingle();
+    if (error || !data) { set({ profile: null }); return; }
+    set({
+      profile: {
+        firstName:   data.first_name ?? null,
+        lastName:    data.last_name ?? null,
+        teamName:    data.team_name ?? null,
+        displayName: data.display_name ?? null,
+      },
+    });
+  },
 
   setInitialized: () => set({ initialized: true }),
 
@@ -74,6 +107,6 @@ export const useAuthStore = create<AuthState>((set) => ({
   signOut: async () => {
     set({ loading: true });
     await supabase.auth.signOut();
-    set({ loading: false, session: null, user: null });
+    set({ loading: false, session: null, user: null, profile: null });
   },
 }));

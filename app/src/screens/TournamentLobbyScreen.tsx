@@ -95,7 +95,7 @@ function TournamentCard({
 
 export default function TournamentLobbyScreen() {
   const navigation = useNavigation<NavProp>();
-  const { signOut, user } = useAuthStore();
+  const { signOut, user, profile } = useAuthStore();
 
   const { tournaments, selectedTournamentId, loading, loadTournaments, selectTournament } =
     useTournamentStore();
@@ -121,7 +121,10 @@ export default function TournamentLobbyScreen() {
     navigation.replace('Main');
   };
 
-  const firstName = user?.email?.split('@')[0] ?? 'Player';
+  // Prefer the real first name from the profiles row; only fall back to the
+  // raw email prefix if the profile hasn't loaded yet — see HomeScreen.tsx
+  // for the same fix and full reasoning.
+  const firstName = profile?.firstName || user?.email?.split('@')[0] || 'Player';
 
   return (
     <SafeAreaView style={styles.container} edges={['top']}>

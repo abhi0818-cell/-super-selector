@@ -12,7 +12,7 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { isMatchLocked, findNextUnlockedMatch } from '../lib/matchLock';
-import { resolveDisplayName } from '../lib/profileUtils';
+import { resolvePersonName } from '../lib/profileUtils';
 import { resolveBudgetWindow, MatchLite } from '../lib/transferCap';
 
 /**
@@ -238,17 +238,19 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
         transferCountBySquad[t.squad_id] = (transferCountBySquad[t.squad_id] ?? 0) + 1;
       });
 
-      // Step 3: fetch leaderboard names from profiles (team_name preferred,
-      // same convention as the web client — falls back to display_name for
-      // pre-migration_v33 rows that haven't backfilled yet)
+      // Step 3: fetch the actual person's name for the leaderboard sub-label.
+      // Deliberately NOT resolveDisplayName/team_name — the squad's own name
+      // (sq.name, shown as its own bold line below) is itself usually just
+      // the account's team_name, so using resolveDisplayName here showed the
+      // same team name twice: once as the squad name, once as this line.
       const userIds = [...new Set(squads.map((s: any) => s.user_id))];
       const { data: profiles } = await supabase
         .from('profiles')
-        .select('id, display_name, team_name')
+        .select('id, display_name, team_name, first_name, last_name')
         .in('id', userIds);
 
       const nameById: Record<string, string> = {};
-      (profiles ?? []).forEach((p: any) => { nameById[p.id] = resolveDisplayName(p); });
+      (profiles ?? []).forEach((p: any) => { nameById[p.id] = resolvePersonName(p); });
 
       // Step 4: build ranked entries
       const uid = get().currentUserId;

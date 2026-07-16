@@ -14,7 +14,7 @@ import AuthScreen             from './src/screens/AuthScreen';
 import { colors }             from './src/theme';
 
 export default function App() {
-  const { session, setSession, setInitialized, initialized } = useAuthStore();
+  const { session, setSession, setInitialized, initialized, fetchProfile } = useAuthStore();
   const setCurrentUser = useLeaderboardStore(s => s.setCurrentUser);
   const [fontsLoaded] = useFonts({ PlayfairDisplay_700Bold });
 
@@ -26,6 +26,7 @@ export default function App() {
       if (session?.user) {
         setCurrentUser(session.user.id);
         registerPushToken(session.user.id);
+        fetchProfile(session.user.id);
       }
     });
 
@@ -36,6 +37,7 @@ export default function App() {
         if (session?.user) {
           setCurrentUser(session.user.id);
           registerPushToken(session.user.id);
+          fetchProfile(session.user.id);
         } else {
           setCurrentUser(null);
         }

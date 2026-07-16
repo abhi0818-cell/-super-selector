@@ -33,6 +33,26 @@ function resolveDisplayName(p) {
 }
 
 /**
+ * Resolve the ACTUAL PERSON's name for a profile row — deliberately skips
+ * team_name, unlike resolveDisplayName above. Used anywhere a squad/team
+ * name is already shown as its own separate label (SL leaderboard: squad
+ * name is the bold primary line, this is the small "owned by" sub-line).
+ * Squads are typically created using the same team_name the account set at
+ * signup, so using resolveDisplayName there showed the team name twice —
+ * once as the squad name, once as this "who owns it" line underneath.
+ * Priority: first + last name → display_name (but only if it isn't just an
+ * old alias of team_name) → email → first 8 chars of id.
+ * @param {{ first_name?: string|null, last_name?: string|null, display_name?: string|null, team_name?: string|null, email?: string|null, id?: string|null }} p
+ * @returns {string}
+ */
+function resolvePersonName(p) {
+  const full = [p.first_name, p.last_name].filter(Boolean).join(' ').trim();
+  if (full) return full;
+  if (p.display_name && p.display_name !== p.team_name) return p.display_name;
+  return p.email || (p.id || '').slice(0, 8);
+}
+
+/**
  * PostgREST/Supabase caps a single .select() at 1000 rows by default. Any
  * query whose result set can plausibly exceed that (e.g. every score row for
  * every player in every match for every squad in a season-long contest) must
@@ -2539,16 +2559,20 @@ export function createDb(cfg = {}) {
 
       const squadIds = squads.map(s => s.id);
 
-      // Fetch display names for all users in this contest
+      // Fetch the actual person's name for all users in this contest — NOT
+      // resolveDisplayName/team_name, since the squad's own name (shown as
+      // its own bold line below) is itself usually just the account's
+      // team_name. Using resolveDisplayName here showed the same team name
+      // twice, once as the squad name and once as this "owned by" sub-line.
       const userIds = [...new Set(squads.map(s => s.user_id).filter(Boolean))];
       const profileMap = {};
       if (userIds.length) {
         const { data: profiles } = await sb
           .from('profiles')
-          .select('id, display_name, email, team_name')
+          .select('id, display_name, email, team_name, first_name, last_name')
           .in('id', userIds);
         (profiles || []).forEach(p => {
-          profileMap[p.id] = resolveDisplayName(p);
+          profileMap[p.id] = resolvePersonName(p);
         });
       }
 

@@ -589,7 +589,7 @@ function SLStatsGrid({ stats, rank }: { stats: SlSquadStats; rank: number | null
 
 export default function HomeScreen() {
   const navigation                       = useNavigation<NavProp>();
-  const { user, signOut }                = useAuthStore();
+  const { user, profile, signOut }       = useAuthStore();
   const { selected, validation }         = useTeamStore();
   const { setContext }                   = useContestStore();
   const { tournaments, selectedTournamentId } = useTournamentStore();
@@ -607,7 +607,11 @@ export default function HomeScreen() {
   // ticker_hours window) if the app is fully restarted.
   const [dismissedTickerIds, setDismissedTickerIds] = useState<Set<string>>(new Set());
 
-  const firstName        = user?.email?.split('@')[0] ?? 'Player';
+  // Prefer the real first name from the profiles row; only fall back to the
+  // raw email prefix (e.g. "abhi0818") if the profile hasn't loaded yet or
+  // has no first_name set — this used to be the ONLY source, since the
+  // profile was never fetched on mobile at all.
+  const firstName        = profile?.firstName || user?.email?.split('@')[0] || 'Player';
   const teamReady        = validation.valid;
   // xiReady is DB-backed — true even on first load before teamStore hydrates.
   // validation.valid only becomes true after loadSavedXI runs (on MyXI tab).
