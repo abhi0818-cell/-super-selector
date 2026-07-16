@@ -88,24 +88,30 @@
         tournament : 'Tournament Setup',
         teams      : 'Manage Teams',
         schedule   : 'Schedule',
-        scoring    : 'Scoring Rules',
         contests   : 'Contests',
+        live       : 'Live',
+        review     : 'Review',
+        dangerzone : 'Danger Zone',
       }[tab] || 'Manage Players';
       $('#adminTitle').textContent = title;
       $('#adminTournamentView').style.display = (tab === 'tournament') ? 'flex'  : 'none';
       $('#adminTableView').style.display      = (tab === 'players')    ? 'block' : 'none';
       $('#adminTeamsView').style.display      = (tab === 'teams')      ? 'block' : 'none';
       $('#adminMatchesView').style.display    = (tab === 'schedule')   ? 'block' : 'none';
-      $('#adminScoringView').style.display    = (tab === 'scoring')    ? 'block' : 'none';
+      $('#adminScoringView').style.display    = 'none'; // Scoring tab removed — folded into Tournament
       $('#adminContestsView').style.display   = (tab === 'contests')   ? 'block' : 'none';
+      $('#adminLiveView').style.display       = (tab === 'live')       ? 'block' : 'none';
+      $('#adminReviewView').style.display     = (tab === 'review')     ? 'block' : 'none';
+      $('#adminDangerZoneView').style.display = (tab === 'dangerzone') ? 'block' : 'none';
       $('#adminCsvView').style.display        = 'none';
       // Toolbar (search + import) is only useful for players
       document.querySelector('.admin-toolbar').style.display = (tab === 'players') ? 'flex' : 'none';
       if (tab === 'tournament')    renderTournamentScoringRules();
       else if (tab === 'teams')    renderTeamsAdmin();
       else if (tab === 'schedule') renderMatchesAdmin();
-      else if (tab === 'scoring')  renderRulesEditor();
       else if (tab === 'contests') renderContestsAdmin();
+      else if (tab === 'dangerzone') renderDangerZone();
+      else if (tab === 'live' || tab === 'review') { /* content added in a later phase */ }
       else                         renderAdmin();
     }
 
@@ -208,9 +214,9 @@
         </div>
       `;
 
-      // Insert after the existing #adminContestsList content (bottom of the tab)
-      const wrap = $('#adminContestsList');
-      wrap.parentNode.insertBefore(panel, wrap.nextSibling);
+      // Insert into the Danger Zone tab's close-out slot
+      const slot = $('#dzCloseOutSlot');
+      slot.appendChild(panel);
 
       // Reset preview when the dropdown changes
       panel.querySelector('#coTournamentSelect').addEventListener('change', () => {
@@ -355,6 +361,62 @@
           btn.disabled = false;
         }
       });
+    }
+
+    // ── Danger Zone tab ─────────────────────────────────────────────────────
+    // Delete Tournament (moved from Tournament tab) + Close Out Tournament
+    // (moved from Contests tab) — both destructive, both end-of-season/setup-
+    // correction actions, neither belongs alongside routine mid-season work.
+    function renderDangerZone() {
+      const select = $('#dzTournamentSelect');
+      const btn    = $('#dzDeleteBtn');
+      const statusEl = $('#dzDeleteStatus');
+      if (!select || !btn) return;
+
+      const hasTournaments = state.tournaments && state.tournaments.length > 0;
+      select.innerHTML = '<option value="">— select a tournament —</option>' +
+        (hasTournaments
+          ? state.tournaments.map(t => `<option value="${t.id}">${escapeHtml(t.name)} (${t.format || 'T20'})</option>`).join('')
+          : '');
+      select.disabled = !hasTournaments;
+      btn.disabled = true;
+      if (statusEl) statusEl.textContent = '';
+
+      select.onchange = () => { btn.disabled = !select.value; };
+
+      btn.onclick = async () => {
+        const tid   = select.value;
+        const tname = select.options[select.selectedIndex]?.text ?? tid;
+        if (!tid) return;
+        if (!confirm(
+          `Delete "${tname}"?\n\nThis permanently removes the tournament row. If it has any matches, players, or contests attached, the delete will fail and nothing will be changed.\n\nThis cannot be undone.`
+        )) return;
+
+        btn.disabled = true;
+        if (statusEl) { statusEl.textContent = 'Deleting…'; statusEl.style.color = 'var(--muted)'; }
+        try {
+          await state.db.deleteTournament(tid);
+          state.tournaments = state.tournaments.filter(x => x.id !== tid);
+          if (state.activeTournamentId === tid) {
+            state.activeTournamentId = state.tournaments[0]?.id ?? null;
+          }
+          renderTournamentSelector();
+          renderScheduleTournamentContext();
+          renderDangerZone();
+          toast(`"${tname}" deleted.`);
+        } catch (err) {
+          const hint = err.message?.includes('foreign key') || err.message?.includes('violates')
+            ? ' It still has matches, players, or contests attached — remove those first, or use Close Out instead.'
+            : '';
+          if (statusEl) {
+            statusEl.textContent = `Delete failed: ${err.message}.${hint}`;
+            statusEl.style.color = 'var(--bad)';
+          }
+          btn.disabled = false;
+        }
+      };
+
+      renderCloseOutPanel(state.activeTournamentId ?? null);
     }
 
     function renderNewContestForm(isEmpty) {
@@ -606,7 +668,6 @@
         if (!contests.length) {
           wrap.innerHTML = renderNewContestForm(true);
           wireNewContestForm();
-          renderCloseOutPanel(state.activeTournamentId ?? null);
           return;
         }
 
@@ -769,9 +830,6 @@
         ${renderNewContestForm(false)}`;
 
         wireNewContestForm();
-
-        // Close-out panel at the bottom
-        renderCloseOutPanel(state.activeTournamentId ?? null);
 
         // ── Wire "Save" buttons ────────────────────────────────────────────────
 

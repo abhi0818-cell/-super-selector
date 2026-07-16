@@ -1790,8 +1790,10 @@
         <span class="a-tab"        data-tab="schedule">Schedule</span>
         <span class="a-tab"        data-tab="teams">Teams</span>
         <span class="a-tab active" data-tab="players">Players</span>
-        <span class="a-tab"        data-tab="scoring">Scoring</span>
         <span class="a-tab"        data-tab="contests">Contests</span>
+        <span class="a-tab"        data-tab="live">Live</span>
+        <span class="a-tab"        data-tab="review">Review</span>
+        <span class="a-tab"        data-tab="dangerzone">Danger Zone</span>
       </div>
       <div class="admin-toolbar">
         <input id="adminSearch" class="admin-search-inp" type="text" placeholder="Search by name or team…" />
@@ -2064,6 +2066,37 @@ p31,Sample Player,MI,bat,9.0,false
           <span id="contestsCountBadge" style="font-size:11px; color:var(--muted); white-space:nowrap;"></span>
         </div>
         <div id="adminContestsList"></div>
+      </div>
+
+      <!-- Live tab — matchday connect/monitor/correct actions (content added in Phase 2) -->
+      <div class="modal-body" id="adminLiveView" style="display:none; padding:16px;">
+        <div style="color:var(--muted); font-size:12px;">Live tab — under construction.</div>
+      </div>
+
+      <!-- Review tab — consolidated exception queues (content added in Phase 2) -->
+      <div class="modal-body" id="adminReviewView" style="display:none; padding:16px;">
+        <div style="color:var(--muted); font-size:12px;">Review tab — under construction.</div>
+      </div>
+
+      <!-- Danger Zone tab — destructive, end-of-season actions -->
+      <div class="modal-body" id="adminDangerZoneView" style="display:none; padding:16px;">
+        <div style="border:1px solid var(--bad); border-radius:8px; padding:14px 16px; margin-bottom:16px; background:rgba(248,113,113,0.04);">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+            <span style="font-size:16px;">🗑</span>
+            <strong style="font-size:14px; color:var(--bad);">Delete Tournament</strong>
+          </div>
+          <p style="font-size:12px; color:var(--muted); margin:0 0 12px;">
+            Permanently removes the tournament row. Fails safely if it still has matches, players, or contests attached — remove those first, or use Close Out below instead.
+          </p>
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <select id="dzTournamentSelect" style="flex:1; min-width:200px; font-size:13px;">
+              <option value="">— select a tournament —</option>
+            </select>
+            <button id="dzDeleteBtn" class="danger" style="font-size:13px; padding:7px 18px;" disabled>Delete Tournament</button>
+          </div>
+          <span id="dzDeleteStatus" style="font-size:12px; color:var(--muted); display:block; margin-top:8px;"></span>
+        </div>
+        <div id="dzCloseOutSlot"></div>
       </div>
 
       <div class="modal-footer">
@@ -4256,9 +4289,6 @@ p31,Sample Player,MI,bat,9.0,false
                      style="flex:1; font-size:12px; padding:4px 8px;" />
               <button class="series-id-save" data-tid="${t.id}"
                       style="font-size:11px; padding:4px 10px; white-space:nowrap;">Save</button>
-              <button class="tournament-delete-btn" data-tid="${t.id}" data-tname="${escapeHtml(t.name)}"
-                      title="Delete tournament"
-                      style="font-size:11px; padding:4px 8px; background:transparent; border:1px solid var(--bad); color:var(--bad); border-radius:4px; cursor:pointer; white-space:nowrap;">🗑 Delete</button>
             </div>
             <!-- Unmatched players panel -->
             <div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
@@ -5147,31 +5177,7 @@ p31,Sample Player,MI,bat,9.0,false
         });
       });
 
-      // Wire delete buttons
-      list.querySelectorAll('.tournament-delete-btn').forEach(btn => {
-        btn.addEventListener('click', async e => {
-          const tid   = e.target.dataset.tid;
-          const tname = e.target.dataset.tname;
-          if (!confirm(`Delete "${tname}"?\n\nThis will permanently remove the tournament row. If it has any matches, players, or contests attached, the delete will fail and nothing will be changed.`)) return;
-          try {
-            await state.db.deleteTournament(tid);
-            // Remove from local state
-            state.tournaments = state.tournaments.filter(x => x.id !== tid);
-            // If it was the active tournament, clear selection
-            if (state.activeTournamentId === tid) {
-              state.activeTournamentId = state.tournaments[0]?.id ?? null;
-            }
-            renderTournamentSelector();
-            renderScheduleTournamentContext();
-            toast(`"${tname}" deleted.`);
-          } catch (err) {
-            const hint = err.message?.includes('foreign key') || err.message?.includes('violates')
-              ? ' It still has matches, players, or contests attached — remove those first, or use Close Out instead.'
-              : '';
-            toast(`Delete failed: ${err.message}.${hint}`, 6000);
-          }
-        });
-      });
+      // Delete Tournament now lives in the Danger Zone tab — see renderDangerZone() in admin.js.
     }
 
     async function switchTournament(id) {
