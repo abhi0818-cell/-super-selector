@@ -3114,12 +3114,21 @@
       if (!localMatch) { toast('Match not found in DB — sync first.'); return; }
 
       const apiPlayers = fromCricAPI(state.lastScorecard, A.PLAYERS, state.format);
-      const rows = []; const unmatchedNames = [];
+      // Use a Map to deduplicate by local player ID — two CricAPI names (e.g. a
+      // player's own batting/bowling line and a separately-aliased fielding-only
+      // credit) can resolve to the same local player via findLocalByName, which
+      // would otherwise cause a Postgres "ON CONFLICT DO UPDATE command cannot
+      // affect row a second time" error. Mirrors finalizeOneMatch's guard.
+      const rowMap = new Map(); const unmatchedNames = [];
       for (const pl of apiPlayers) {
         const local = findLocalByName(pl.name);
         if (!local) { unmatchedNames.push(pl.name); continue; }
+        if (rowMap.has(local.id)) {
+          console.warn('[rescoreCurrentMatch] duplicate local player skipped:', pl.name, '→', local.id);
+          continue;
+        }
         const s = calculateScore({ ...pl, captaincy: 'normal' }, state.format);
-        rows.push({
+        rowMap.set(local.id, {
           playerId : local.id,
           batting  : pl.batting  ?? null,
           bowling  : pl.bowling  ?? null,
@@ -3127,6 +3136,7 @@
           rawPoints: s.rawPoints,
         });
       }
+      const rows = Array.from(rowMap.values());
 
       if (!rows.length) {
         toast(`Still no matching players (${unmatchedNames.length} unmatched). Check player names.`, 4000);
@@ -3172,14 +3182,21 @@
 
       try {
         const players = fromCricAPI(state.lastScorecard, A.PLAYERS, state.format);
-        // Only persist rows whose API name maps to a local player (FK requirement)
-        const rows = [];
+        // Only persist rows whose API name maps to a local player (FK requirement).
+        // Dedup by local player ID for the same reason as rescoreCurrentMatch/
+        // finalizeOneMatch — two CricAPI names can resolve to the same local
+        // player, which would otherwise collide in the ON CONFLICT batch upsert.
+        const rowMap = new Map();
         let unmatched = 0;
         for (const pl of players) {
           const local = findLocalByName(pl.name);
           if (!local) { unmatched++; continue; }
+          if (rowMap.has(local.id)) {
+            console.warn('[saveFantasyScorecard] duplicate local player skipped:', pl.name, '→', local.id);
+            continue;
+          }
           const s = calculateScore({ ...pl, captaincy: 'normal' }, state.format);
-          rows.push({
+          rowMap.set(local.id, {
             playerId  : local.id,
             batting   : pl.batting   ?? null,
             bowling   : pl.bowling   ?? null,
@@ -3187,6 +3204,7 @@
             rawPoints : s.rawPoints,
           });
         }
+        const rows = Array.from(rowMap.values());
         if (!rows.length) {
           toast(`Nothing to save — ${unmatched} player(s) couldn\'t be matched to your DB.`, 4000);
           return;
