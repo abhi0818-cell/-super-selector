@@ -11735,7 +11735,7 @@ p31,Sample Player,MI,bat,9.0,false
       return new Promise((resolve) => {
         if (window.__admin) { resolve(); return; }
         const s = document.createElement('script');
-        s.src = './admin.js';
+        s.src = './admin.js?v=2';
         s.onload = resolve;
         s.onerror = () => console.error('[admin] Failed to load admin.js');
         document.head.appendChild(s);
