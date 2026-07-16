@@ -1927,42 +1927,6 @@
         </table>
       </div>
       <div class="modal-body" id="adminMatchesView" style="display:none;">
-        <!-- Live match connect -->
-        <div style="display:flex; gap:8px; align-items:center; padding:6px 6px 10px; flex-wrap:wrap; border-bottom:1px solid var(--border); margin-bottom:10px;">
-          <strong style="font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; white-space:nowrap;">Live scoring</strong>
-          <select id="apiKeyPicker" style="font-size:12px; padding:6px 10px;">
-            <option value="">— pick a saved key —</option>
-            <option value="42c7c79b-b82d-4164-9699-0fb43b29a089">Key 1 (…0089)</option>
-            <option value="06e79c7d-e613-4808-807a-8cdb973394dc">Key 2 (…94dc)</option>
-            <option value="custom">Custom…</option>
-          </select>
-          <input id="apiKey" type="text" placeholder="CricAPI key" style="font-size:12px; padding:6px 10px; width:220px;" />
-          <select id="matchId" style="font-size:12px; padding:6px 10px;">
-            <option value="">— pick a match —</option>
-          </select>
-          <button id="liveBtn">Connect</button>
-          <small style="color:var(--muted); font-size:11px;">Proxy on port 8081 · polls every 30 min · stops when match ends.</small>
-        </div>
-
-        <!-- Live scorecard -->
-        <details class="section" id="scorecardSection" style="margin:0 0 4px;">
-          <summary style="padding:8px 12px;">Live scorecard <span id="scorecardStatus" style="color:var(--muted); font-size:11px;"></span><button id="fetchNowBtn" style="margin-left:10px;font-size:11px;padding:2px 8px;display:none;" title="Force an immediate API fetch">Fetch now</button></summary>
-          <div id="scorecardView" class="sc-empty" style="padding:8px 12px;">Connect to a live match to see the scorecard here.</div>
-        </details>
-
-        <!-- Fantasy scorecard -->
-        <details class="section" id="fantasyScorecardSection" style="margin:0 0 10px;">
-          <summary style="padding:8px 12px;">Fantasy scorecard <span id="fantasyScorecardCount" style="color:var(--muted); font-size:11px;"></span></summary>
-          <div class="fsc-header" style="padding:6px 12px;">
-            <span class="meta" id="fantasyScorecardMeta">Connect to a live match to see fantasy points for every player.</span>
-            <div style="display:flex;gap:6px;">
-              <button id="rescoreBtn" title="Re-run scoring with current player names">Rescore</button>
-              <button id="saveFantasyScorecardBtn">Save to DB</button>
-            </div>
-          </div>
-          <div id="fantasyScorecardView" class="fsc-empty" style="padding:0 12px 8px;">No data yet.</div>
-        </details>
-
         <!-- Schedule tournament context bar -->
         <div id="scheduleTournamentBar" style="display:flex; align-items:center; gap:10px; padding:8px 10px; margin:0 0 8px; border-radius:6px; background:rgba(201,168,76,0.07); border:1px solid var(--border); flex-wrap:wrap;">
           <span style="font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; white-space:nowrap;">Syncing for</span>
@@ -2060,9 +2024,45 @@ p31,Sample Player,MI,bat,9.0,false
         <div id="adminContestsList"></div>
       </div>
 
-      <!-- Live tab — matchday connect/monitor/correct actions (content added in Phase 2) -->
+      <!-- Live tab — matchday connect/monitor actions -->
       <div class="modal-body" id="adminLiveView" style="display:none; padding:16px;">
-        <div style="color:var(--muted); font-size:12px;">Live tab — under construction.</div>
+        <!-- Live match connect -->
+        <div style="display:flex; gap:8px; align-items:center; padding:6px 6px 10px; flex-wrap:wrap; border-bottom:1px solid var(--border); margin-bottom:10px;">
+          <strong style="font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; white-space:nowrap;">Live scoring</strong>
+          <select id="apiKeyPicker" style="font-size:12px; padding:6px 10px;">
+            <option value="">— pick a saved key —</option>
+            <option value="42c7c79b-b82d-4164-9699-0fb43b29a089">Key 1 (…0089)</option>
+            <option value="06e79c7d-e613-4808-807a-8cdb973394dc">Key 2 (…94dc)</option>
+            <option value="custom">Custom…</option>
+          </select>
+          <input id="apiKey" type="text" placeholder="CricAPI key" style="font-size:12px; padding:6px 10px; width:220px;" />
+          <select id="matchId" style="font-size:12px; padding:6px 10px;">
+            <option value="">— pick a match —</option>
+          </select>
+          <button id="liveBtn">Connect</button>
+          <small style="color:var(--muted); font-size:11px;">Proxy on port 8081 · polls every 30 min · stops when match ends.</small>
+        </div>
+
+        <!-- Live scorecard -->
+        <details class="section" id="scorecardSection" style="margin:0 0 4px;">
+          <summary style="padding:8px 12px;">Live scorecard <span id="scorecardStatus" style="color:var(--muted); font-size:11px;"></span><button id="fetchNowBtn" style="margin-left:10px;font-size:11px;padding:2px 8px;display:none;" title="Force an immediate API fetch">Fetch now</button></summary>
+          <div id="scorecardView" class="sc-empty" style="padding:8px 12px;">Connect to a live match to see the scorecard here.</div>
+        </details>
+
+        <!-- Fantasy scorecard -->
+        <details class="section" id="fantasyScorecardSection" style="margin:0 0 10px;">
+          <summary style="padding:8px 12px;">Fantasy scorecard <span id="fantasyScorecardCount" style="color:var(--muted); font-size:11px;"></span></summary>
+          <div class="fsc-header" style="padding:6px 12px;">
+            <span class="meta" id="fantasyScorecardMeta">Connect to a live match to see fantasy points for every player.</span>
+            <div style="display:flex;gap:6px;">
+              <button id="rescoreBtn" title="Re-run scoring with current player names">Rescore</button>
+              <button id="saveFantasyScorecardBtn">Save to DB</button>
+            </div>
+          </div>
+          <div id="fantasyScorecardView" class="fsc-empty" style="padding:0 12px 8px;">No data yet.</div>
+        </details>
+
+        <div style="color:var(--muted); font-size:12px; margin-top:4px;">Per-match Finalize/Recalc/Revert actions — still in the Schedule tab's match table for now (moving them here is a bigger redesign, deferred).</div>
       </div>
 
       <!-- Review tab — consolidated exception queues -->
