@@ -16,7 +16,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { RootTabParamList, SelectedPlayer, CaptaincyRole } from '../types';
@@ -116,7 +116,27 @@ export default function MyXIScreen({ route }: Props) {
     loadSavedXI,
     saveXI,
     saveError,
+    loadTournamentContext,
   } = useTeamStore();
+
+  // Re-resolve currentMatchId every time this screen gains focus, not just
+  // once at cold app launch (RootNavigator's one-shot loadTournamentContext
+  // call). Without this, a match that locks WHILE the app is already running
+  // (or backgrounded/resumed without a fresh auth event) leaves currentMatchId
+  // pointed at the now-locked match for the rest of the session — every
+  // downstream read inherits the staleness: loadBoosters() resolves booster
+  // status against the wrong match (a booster genuinely used on the stale
+  // match then reads as still "active" here), and Revert to Locked's
+  // getPreviousMatchXI() computes "previous match" one hop too far back
+  // (e.g. shows M30 instead of M31 once M31 has locked and M32 is next).
+  // Confirmed in production: mobile showed the wrong Revert-to-Locked team
+  // and a stale "active" booster until the app was force-restarted; web
+  // re-derives its current match live and didn't have either problem.
+  useFocusEffect(
+    useCallback(() => {
+      loadTournamentContext();
+    }, [loadTournamentContext])
+  );
 
   const [pickerOpen, setPickerOpen]       = useState(false);
   // Match-schedule preview drawer, opened from the picker modal's header.
