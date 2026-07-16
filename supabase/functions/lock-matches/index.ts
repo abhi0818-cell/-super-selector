@@ -345,25 +345,46 @@ Deno.serve(async (req) => {
         const activeBooster   = boosterRow?.booster ?? null;
         const bypassTransfers = activeBooster === 'wildcard' || activeBooster === 'free_hit';
 
-        // Free Hit: snapshot the XI actually being locked (post-guarantee-check),
-        // not the raw draft — if the draft got overridden by the carry-forward
-        // fallback above, the snapshot must match what's really locked in.
+        // Free Hit: the snapshot must hold the PRE-free-hit baseline (what this
+        // squad would carry forward had they not used the booster) — i.e.
+        // prevPlayerIds/prevCaptainId/prevVcId, NOT the free-hit XI actually
+        // being locked in for this match. Storing the post-free-hit XI here
+        // was the root cause of Free Hit never reverting: getPreviousMatchXI
+        // (db.js + this function's own inline copy) and transferCap.ts on
+        // mobile all read this snapshot back as "the real baseline to carry
+        // forward" — if it holds the free-hit team itself, that team just
+        // becomes the new permanent baseline forever, which is exactly the
+        // bug reported (M32 free-hit team still showing/locking after it
+        // should have reverted to M31's team).
+        //
+        // The activation row normally already has the correct snapshot,
+        // written client-side by activateBooster() at the moment Free Hit was
+        // committed (see boosterStore.commitPending / computeFreeHitSnapshot).
+        // Only write one here if it's genuinely missing (e.g. a squad whose
+        // free_hit got flagged active without ever going through that client
+        // flow) — never overwrite an existing snapshot with this match's XI.
         if (activeBooster === 'free_hit') {
           try {
-            await sb.from('user_booster_activations')
-              .delete()
+            const { data: existingActivation } = await sb
+              .from('user_booster_activations')
+              .select('snapshot')
               .eq('squad_id', squad.id)
               .eq('match_id', match.id)
-              .eq('booster', 'free_hit');
+              .eq('booster', 'free_hit')
+              .maybeSingle();
 
-            await sb.from('user_booster_activations').insert({
-              squad_id  : squad.id,
-              match_id  : match.id,
-              booster   : 'free_hit',
-              snapshot  : { playerIds: xiPlayerIds, captainId: xiCaptainId, vcId: xiVcId },
-            });
+            const existingSnap = existingActivation?.snapshot as { playerIds?: string[] } | null;
+            if (!existingSnap?.playerIds?.length) {
+              await sb.from('user_booster_activations')
+                .update({
+                  snapshot: { playerIds: prevPlayerIds, captainId: prevCaptainId, vcId: prevVcId },
+                })
+                .eq('squad_id', squad.id)
+                .eq('match_id', match.id)
+                .eq('booster', 'free_hit');
+            }
           } catch (e: any) {
-            console.warn(`[lock-matches] free_hit snapshot failed for squad ${squad.id}:`, e.message);
+            console.warn(`[lock-matches] free_hit snapshot backfill failed for squad ${squad.id}:`, e.message);
           }
         }
 
