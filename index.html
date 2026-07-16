@@ -5821,62 +5821,17 @@ p31,Sample Player,MI,bat,9.0,false
       // tweak: it must arm Save XI on its own, and Save XI is what actually
       // commits it. Only counts once getSlBoosterContext has synced the
       // pending slot to the match currently being drafted. Used below by
-      // both the transfer info bar and the Save button gating.
+      // the Save button gating (renderSlXferInfoBar computes its own copy
+      // for the info bar, since it needs to be re-runnable standalone).
       const boosterChanged = !!state.activeMatchId &&
         state.sl.pendingBoosterMatchId === state.activeMatchId &&
         state.sl.pendingBooster !== getCachedBoosterForMatch(state.activeMatchId);
 
       // ── Transfer info bar ─────────────────────────────────────────────────
-      const infoBar = $('#slXferInfoBar');
-      infoBar.style.cssText = 'font-size:12px; padding:4px 0 6px; color:var(--muted);';
-
-      const nextLock    = slNextLockMatch();
-      const hasDraft    = !!(state.sl.draft?.playerIds?.length === 11);
-      // Pending changes = diff between current draft (what's in the picker) and last locked XI
-      const pendingChanges = prev.length ? slTransferCount() : 0;
-      const pendingExceedsCap = !transferCapSuspended && seasonRemaining !== null && pendingChanges > seasonRemaining;
-
-      if (!hasDraft && prev.length === 0) {
-        const budgetNote = seasonCap !== null
-          ? ` <span style="color:var(--muted);">Season budget: ${seasonCap} transfers total.</span>` : '';
-        infoBar.innerHTML = 'Pick your XI and save — your team carries forward every match.' + budgetNote;
-      } else if (prev.length === 0) {
-        infoBar.innerHTML = 'First match — no transfer cost. Your XI carries forward to all future matches.';
-      } else if (transferCapSuspended && pendingChanges > 0) {
-        const boosterLabel = freeHitActive ? 'Free Hit' : 'Wildcard';
-        const revertNote   = freeHitActive ? ' Reverts after the match.' : '';
-        const unsavedNote  = boosterChanged ? ' Save XI to confirm the booster.' : '';
-        infoBar.innerHTML = `<span style="color:var(--accent);">⚡ ${boosterLabel} ${boosterChanged ? 'selected' : 'active'} — ${pendingChanges} free change${pendingChanges !== 1 ? 's' : ''} this match.${revertNote}${unsavedNote}</span>`;
-      } else if (pendingChanges === 0 && boosterChanged) {
-        const pendingMeta = state.sl.pendingBooster ? BOOSTER_META[state.sl.pendingBooster] : null;
-        infoBar.innerHTML = pendingMeta
-          ? `<span style="color:var(--accent);">${pendingMeta.icon} ${escapeHtml(pendingMeta.label)} selected — Save XI to confirm.</span>`
-          : `<span style="color:var(--accent);">Booster removed — Save XI to confirm.</span>`;
-      } else if (pendingChanges === 0) {
-        const lockNote = nextLock
-          ? ` Locks at M${nextLock.match_number ?? '?'} start.` : '';
-        infoBar.innerHTML = `No changes from last locked XI.${lockNote}`;
-      } else if (pendingExceedsCap) {
-        const phaseScope = isPlayoff ? 'this playoff' : 'this season';
-        infoBar.innerHTML = `<span style="color:var(--danger,#e55);">Only ${seasonRemaining} transfer${seasonRemaining !== 1 ? 's' : ''} left ${phaseScope} — reduce to ${seasonRemaining} change${seasonRemaining !== 1 ? 's' : ''}.</span>`;
-      } else if (seasonCap === null) {
-        // Genuinely uncapped — either no budget configured at all, or (the
-        // playoff-opener case) playoff_first_match_unlimited carved this
-        // specific match out of the pooled budget. "Counts when MXX starts"
-        // is wrong here (nothing is ever deducted), so lead with "free"
-        // instead — "capped/uncapped" isn't meaningful user-facing language,
-        // just say what it costs (nothing) and when it takes effect.
-        const lockNote = nextLock
-          ? ` Applies when M${nextLock.match_number ?? '?'} starts.` : '';
-        infoBar.innerHTML = `${pendingChanges} free transfer${pendingChanges !== 1 ? 's' : ''}.`
-          + (lockNote ? ` <span style="color:var(--muted);font-size:11px;">${lockNote}</span>` : '');
-      } else {
-        const remainNote = ` · ${seasonRemaining - pendingChanges} remaining after lock`;
-        const lockNote = nextLock
-          ? ` Counts when M${nextLock.match_number ?? '?'} starts.` : '';
-        infoBar.innerHTML = `${pendingChanges} pending transfer${pendingChanges !== 1 ? 's' : ''}${remainNote}.`
-          + ` <span style="color:var(--muted);font-size:11px;">${lockNote}</span>`;
-      }
+      // Extracted into renderSlXferInfoBar() (below) so it can be re-run
+      // standalone after renderSlBoosterBar()'s async getSlBoosterContext()
+      // resolves — see that function for why this matters.
+      renderSlXferInfoBar();
 
       // ── Shared-league banner ──────────────────────────────────────────────
       // When the active squad's XI is shared from a primary squad, inform the user
@@ -5991,6 +5946,100 @@ p31,Sample Player,MI,bat,9.0,false
         const bar = $('#slBoosterBar');
         if (bar) bar.style.display = 'none';
         renderSlBoosterPitchBadge(null); // clear any stale active-booster badge too
+      }
+    }
+
+    /**
+     * Renders #slXferInfoBar — extracted out of renderSlXiTab() so it can be
+     * re-run on its own, standalone, without re-triggering the booster-bar
+     * fetch that produced its own inputs.
+     *
+     * Why this needs to exist separately: renderSlXiTab() computes
+     * transferCapSuspended (whether Wildcard/Free Hit is effective) from
+     * state.sl.pendingBooster — but the ONLY thing that keeps pendingBooster
+     * in sync with what's actually committed in the DB is
+     * getSlBoosterContext(), which renderSlXiTab() only kicks off at its very
+     * end via a fire-and-forget renderSlBoosterBar() call. So on a fresh
+     * render (tab switch, page load, right after Save XI navigates back),
+     * renderSlXiTab()'s info-bar text can be computed and painted BEFORE that
+     * async resync lands — showing "N pending transfers ... remaining after
+     * lock" instead of "⚡ Wildcard active — N free changes" even though the
+     * booster genuinely IS committed (confirmed in production: Wildcard was
+     * saved and present in user_booster_activations, but the info bar still
+     * showed the capped-transfer message). renderSlBoosterBar() now calls
+     * this function again once getSlBoosterContext() actually resolves, so
+     * the info bar always catches up to the confirmed booster state —
+     * without re-entering renderSlXiTab() itself, which would re-trigger
+     * renderSlBoosterBar() again and loop.
+     */
+    function renderSlXferInfoBar() {
+      const infoBar = $('#slXferInfoBar');
+      if (!infoBar) return;
+      infoBar.style.cssText = 'font-size:12px; padding:4px 0 6px; color:var(--muted);';
+
+      const prev  = state.sl.prevXI.playerIds;
+      const contest = state.sl.seasonContest ?? {};
+      const phase   = state.sl.seasonPhase ?? 'regular';
+      const seasonCap = state.sl.seasonXferCapLoaded
+        ? state.sl.seasonXferCap
+        : (phase === 'playoff'
+            ? (contest.playoff_transfers_allowed ?? null)
+            : (contest.total_transfers_allowed   ?? null));
+      const seasonUsed      = prev.length === 0 ? 0 : (state.sl.seasonXferCount ?? 0);
+      const seasonRemaining = seasonCap !== null ? Math.max(0, seasonCap - seasonUsed) : null;
+      const isPlayoff        = phase === 'playoff';
+      const transferCapSuspended = slTransferCapSuspended();
+      const freeHitActive        = slBudgetCapSuspended();
+      const boosterChanged = !!state.activeMatchId &&
+        state.sl.pendingBoosterMatchId === state.activeMatchId &&
+        state.sl.pendingBooster !== getCachedBoosterForMatch(state.activeMatchId);
+
+      const nextLock    = slNextLockMatch();
+      const hasDraft    = !!(state.sl.draft?.playerIds?.length === 11);
+      // Pending changes = diff between current draft (what's in the picker) and last locked XI
+      const pendingChanges = prev.length ? slTransferCount() : 0;
+      const pendingExceedsCap = !transferCapSuspended && seasonRemaining !== null && pendingChanges > seasonRemaining;
+
+      if (!hasDraft && prev.length === 0) {
+        const budgetNote = seasonCap !== null
+          ? ` <span style="color:var(--muted);">Season budget: ${seasonCap} transfers total.</span>` : '';
+        infoBar.innerHTML = 'Pick your XI and save — your team carries forward every match.' + budgetNote;
+      } else if (prev.length === 0) {
+        infoBar.innerHTML = 'First match — no transfer cost. Your XI carries forward to all future matches.';
+      } else if (transferCapSuspended && pendingChanges > 0) {
+        const boosterLabel = freeHitActive ? 'Free Hit' : 'Wildcard';
+        const revertNote   = freeHitActive ? ' Reverts after the match.' : '';
+        const unsavedNote  = boosterChanged ? ' Save XI to confirm the booster.' : '';
+        infoBar.innerHTML = `<span style="color:var(--accent);">⚡ ${boosterLabel} ${boosterChanged ? 'selected' : 'active'} — ${pendingChanges} free change${pendingChanges !== 1 ? 's' : ''} this match.${revertNote}${unsavedNote}</span>`;
+      } else if (pendingChanges === 0 && boosterChanged) {
+        const pendingMeta = state.sl.pendingBooster ? BOOSTER_META[state.sl.pendingBooster] : null;
+        infoBar.innerHTML = pendingMeta
+          ? `<span style="color:var(--accent);">${pendingMeta.icon} ${escapeHtml(pendingMeta.label)} selected — Save XI to confirm.</span>`
+          : `<span style="color:var(--accent);">Booster removed — Save XI to confirm.</span>`;
+      } else if (pendingChanges === 0) {
+        const lockNote = nextLock
+          ? ` Locks at M${nextLock.match_number ?? '?'} start.` : '';
+        infoBar.innerHTML = `No changes from last locked XI.${lockNote}`;
+      } else if (pendingExceedsCap) {
+        const phaseScope = isPlayoff ? 'this playoff' : 'this season';
+        infoBar.innerHTML = `<span style="color:var(--danger,#e55);">Only ${seasonRemaining} transfer${seasonRemaining !== 1 ? 's' : ''} left ${phaseScope} — reduce to ${seasonRemaining} change${seasonRemaining !== 1 ? 's' : ''}.</span>`;
+      } else if (seasonCap === null) {
+        // Genuinely uncapped — either no budget configured at all, or (the
+        // playoff-opener case) playoff_first_match_unlimited carved this
+        // specific match out of the pooled budget. "Counts when MXX starts"
+        // is wrong here (nothing is ever deducted), so lead with "free"
+        // instead — "capped/uncapped" isn't meaningful user-facing language,
+        // just say what it costs (nothing) and when it takes effect.
+        const lockNote = nextLock
+          ? ` Applies when M${nextLock.match_number ?? '?'} starts.` : '';
+        infoBar.innerHTML = `${pendingChanges} free transfer${pendingChanges !== 1 ? 's' : ''}.`
+          + (lockNote ? ` <span style="color:var(--muted);font-size:11px;">${lockNote}</span>` : '');
+      } else {
+        const remainNote = ` · ${seasonRemaining - pendingChanges} remaining after lock`;
+        const lockNote = nextLock
+          ? ` Counts when M${nextLock.match_number ?? '?'} starts.` : '';
+        infoBar.innerHTML = `${pendingChanges} pending transfer${pendingChanges !== 1 ? 's' : ''}${remainNote}.`
+          + ` <span style="color:var(--muted);font-size:11px;">${lockNote}</span>`;
       }
     }
 
@@ -6293,6 +6342,19 @@ p31,Sample Player,MI,bat,9.0,false
       // pitch tiles so their corner badges/gold outline pick it up. Cheap:
       // renderSlPitchView() is a pure re-render off existing state, no re-fetch.
       renderSlPitchView();
+
+      // Re-sync the transfer info bar now that state.sl.pendingBooster is
+      // confirmed fresh from the DB. renderSlXiTab() (this function's caller)
+      // already painted the info bar once using whatever pendingBooster held
+      // BEFORE this async fetch resolved — on a fresh render (tab switch,
+      // page load, right after Save XI navigates away and back) that can be
+      // stale, showing "N pending transfers ... remaining after lock" even
+      // when a booster like Wildcard is genuinely committed for this match.
+      // Calling the narrow renderSlXferInfoBar() here (not renderSlXiTab()
+      // itself) is deliberate — renderSlXiTab() ends by calling this
+      // function again, so re-entering it here would start an unbounded
+      // fetch → render → fetch loop.
+      renderSlXferInfoBar();
 
       // Keep an already-open inline panel in sync with the refreshed context.
       if (state.sl.boosterPickOpen) renderSlBoosterPicker();
