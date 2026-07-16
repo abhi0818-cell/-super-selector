@@ -3722,6 +3722,29 @@ export function createDb(cfg = {}) {
       const seenMatchIds = [...new Set(prevXI.map(r => r.match_id))];
       const latestMatchId = seenMatchIds.reduce((best, id) =>
         !best || matchNumOf(id) > matchNumOf(best) ? id : best, null);
+
+      // Free Hit revert: if the latest locked match had Free Hit active, its
+      // snapshot (the pre-free-hit baseline) supersedes its literal locked XI —
+      // otherwise the temporary free-hit team leaks forward as the squad's new
+      // permanent baseline for every match after it. Mirrors transferCap.ts's
+      // getPreviousMatchXI (mobile port), which had this check but this — the
+      // original web version it was ported from — never did. That gap is what
+      // let a squad's free-hit match keep showing/locking as the "current" team
+      // indefinitely instead of reverting once the free-hit match completed.
+      try {
+        const snapshot = await this.getFreeHitSnapshot(squadId, latestMatchId);
+        if (snapshot?.playerIds?.length === 11) {
+          return {
+            playerIds: snapshot.playerIds,
+            captainId: snapshot.captainId ?? null,
+            vcId     : snapshot.vcId      ?? null,
+            matchId  : latestMatchId,
+          };
+        }
+      } catch (e) {
+        console.warn('[getPreviousMatchXI] free_hit snapshot lookup failed (non-fatal):', e.message);
+      }
+
       const xi = prevXI.filter(r => r.match_id === latestMatchId);
 
       return {

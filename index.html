@@ -5902,6 +5902,13 @@ p31,Sample Player,MI,bat,9.0,false
                 state.sl.xiCaptain = revertDraft.captainId ?? null;
                 state.sl.xiVc      = revertDraft.vcId      ?? null;
                 state.sl.lastSavedXI = { playerIds: [...revertDraft.playerIds], captainId: revertDraft.captainId, vcId: revertDraft.vcId };
+                // prevXI (the transfer/IN-OUT diffing baseline used throughout the
+                // Pick 11 + Season tabs) was set from the raw free-hit lastLocked
+                // XI in step 2, above — without updating it here too, every
+                // transfer indicator keeps diffing against the temporary
+                // free-hit team even though xiPlayers/draft just reverted to the
+                // real pre-free-hit baseline.
+                state.sl.prevXI = { playerIds: [...revertDraft.playerIds], captainId: revertDraft.captainId, vcId: revertDraft.vcId };
                 console.log('[SL free_hit] Reverted draft to pre-free-hit snapshot.');
               }
             }

@@ -272,6 +272,31 @@ Deno.serve(async (req) => {
             prevPlayerIds  = lastPrevRows.map((r: any) => r.player_id);
             prevCaptainId  = lastPrevRows.find((r: any) => r.is_captain)?.player_id ?? null;
             prevVcId       = lastPrevRows.find((r: any) => r.is_vc)?.player_id ?? null;
+
+            // Free Hit revert: if lastPrev had Free Hit active, its snapshot
+            // (the pre-free-hit baseline) supersedes its literal locked XI —
+            // otherwise the temporary free-hit team gets carried forward as
+            // this squad's permanent baseline/carry-forward XI for every
+            // match after it (matches db.js getPreviousMatchXI / mobile
+            // transferCap.ts getPreviousMatchXI — this cron path duplicates
+            // that lookup inline and had the same gap).
+            try {
+              const { data: fhRow } = await sb
+                .from('user_booster_activations')
+                .select('snapshot')
+                .eq('squad_id', squad.id)
+                .eq('match_id', lastPrev.id)
+                .eq('booster', 'free_hit')
+                .maybeSingle();
+              const snap = fhRow?.snapshot as { playerIds?: string[]; captainId?: string | null; vcId?: string | null } | null;
+              if (snap?.playerIds?.length === 11) {
+                prevPlayerIds = snap.playerIds;
+                prevCaptainId = snap.captainId ?? null;
+                prevVcId      = snap.vcId ?? null;
+              }
+            } catch (e: any) {
+              console.warn(`[lock-matches] free_hit snapshot lookup failed for squad ${squad.id}:`, e.message);
+            }
           }
         }
 
