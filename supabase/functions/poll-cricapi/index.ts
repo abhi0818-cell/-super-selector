@@ -245,9 +245,26 @@ function matchBowlerName(dismissalRef: string | null, candidates: string[]): str
 }
 
 interface ApiPlayer { id: string; name: string; role: string; batting?: BatRow; bowling?: BowlRow; fielding?: FieldRow }
+interface FieldingEvent {
+  rawName: string
+  field: 'catches' | 'stumpings' | 'runOutDirect' | 'runOutIndirect'
+  batterName: string
+  dismissalText: string
+}
 
-/** Parses a CricAPI match_scorecard payload into per-player batting/bowling/fielding rows. */
-function fromCricAPI(payload: any): ApiPlayer[] {
+/**
+ * Parses a CricAPI match_scorecard payload into per-player batting/bowling
+ * rows, plus a separate list of raw fielding-credit events. Fielding is
+ * deliberately NOT resolved to a player here — this function has no roster
+ * access, so it used to guess via a bare name .find() against whoever else
+ * had already batted/bowled in this same payload (missing fielders who never
+ * batted/bowled, and with zero ambiguity detection for shared surnames). The
+ * caller resolves fieldingEvents against the real match roster using the
+ * same tiered/ambiguity-aware resolveFielderName used for the scraper
+ * pipeline, and can create a credit-only entry for a fielder who never
+ * batted/bowled — same standard as scrape-scorecard's fielding handling.
+ */
+function fromCricAPI(payload: any): { players: ApiPlayer[]; fieldingEvents: FieldingEvent[] } {
   const sc = payload?.data?.scorecard ?? payload?.scorecard ?? []
   const players: ApiPlayer[] = []
   const ensure = (key: string, name: string) => {
@@ -256,12 +273,10 @@ function fromCricAPI(payload: any): ApiPlayer[] {
     return p
   }
 
-  const fieldingMap: Record<string, { catches: number; stumpings: number; runOutDirect: number; runOutIndirect: number; rawName: string }> = {}
-  const addFielding = (rawName: string | null | undefined, field: 'catches' | 'stumpings' | 'runOutDirect' | 'runOutIndirect') => {
+  const fieldingEvents: FieldingEvent[] = []
+  const addFielding = (rawName: string | null | undefined, field: FieldingEvent['field'], batterName: string, dismissalText: string) => {
     if (!rawName) return
-    const k = rawName.toLowerCase().trim()
-    if (!fieldingMap[k]) fieldingMap[k] = { catches: 0, stumpings: 0, runOutDirect: 0, runOutIndirect: 0, rawName }
-    fieldingMap[k][field]++
+    fieldingEvents.push({ rawName: rawName.trim(), field, batterName, dismissalText })
   }
 
   for (const inn of sc) {
@@ -275,9 +290,15 @@ function fromCricAPI(payload: any): ApiPlayer[] {
       if (!parsed) continue
       const fullName = matchBowlerName(parsed.bowler, bowlerNames) || parsed.bowler
       if (fullName) (wicketsByBowler[fullName] = wicketsByBowler[fullName] || []).push(parsed.type)
-      if (parsed.type === 'caught')  addFielding(parsed.fielder, 'catches')
-      if (parsed.type === 'stumped') addFielding(parsed.fielder, 'stumpings')
-      if (parsed.type === 'run_out') { addFielding(parsed.fielder, 'runOutDirect'); addFielding(parsed.fielder2, 'runOutIndirect') }
+      const batterObj = b.batter ?? b.batsman ?? b.player ?? null
+      const batterName = batterObj?.name ?? b.name ?? ''
+      const dismissalText = String(b?.['dismissal-text'] ?? b?.dismissal ?? '').trim()
+      if (parsed.type === 'caught')  addFielding(parsed.fielder, 'catches', batterName, dismissalText)
+      if (parsed.type === 'stumped') addFielding(parsed.fielder, 'stumpings', batterName, dismissalText)
+      if (parsed.type === 'run_out') {
+        addFielding(parsed.fielder, 'runOutDirect', batterName, dismissalText)
+        addFielding(parsed.fielder2, 'runOutIndirect', batterName, dismissalText)
+      }
     }
 
     for (const b of (inn.batting || [])) {
@@ -309,19 +330,8 @@ function fromCricAPI(payload: any): ApiPlayer[] {
     }
   }
 
-  // Assign fielding stats — match against players already seen, falling back
-  // to a brand-new synthetic entry (e.g. a substitute fielder who never bats/bowls).
-  for (const { rawName, catches, stumpings, runOutDirect, runOutIndirect } of Object.values(fieldingMap)) {
-    const norm = rawName.toLowerCase().trim()
-    let player = players.find(p => p.name.toLowerCase() === norm)
-      || players.find(p => p.name.toLowerCase().endsWith(' ' + norm))
-      || players.find(p => norm.endsWith(' ' + p.name.toLowerCase().split(' ').pop()))
-    if (!player) player = ensure(rawName, rawName)
-    player.fielding = { catches, stumpings, runOutDirect, runOutIndirect }
-  }
-
   for (const p of players) { if (p.batting && p.bowling) p.role = 'ar' }
-  return players
+  return { players, fieldingEvents }
 }
 
 // ─── Completion corroboration ───────────────────────────────────────────────
@@ -460,6 +470,56 @@ function resolvePlayerName(name: string, exactMap: Map<string, string>, aliasMap
   if (candidates.length === 1) return { playerId: candidates[0], method: 'fuzzy' }
 
   return { playerId: null, method: 'unmatched' }
+}
+
+interface FielderResolveResult { playerId: string | null; candidates: string[] | null }
+
+/**
+ * Resolve a raw fielder-credit name (e.g. "A Fletcher") to exactly one
+ * player_id, checked against the full roster of BOTH teams playing this
+ * match — not just whoever batted/bowled in this match — so that two squad
+ * members sharing a surname (e.g. sisters) are correctly flagged as
+ * ambiguous instead of one of them silently absorbing the other's fielding
+ * credit. Identical algorithm to scrape-scorecard's resolveFielderName (the
+ * "Bryce sisters" fix) — poll-cricapi's fielding matching used to be a bare
+ * .find() against players already resolved from batting/bowling, with no
+ * ambiguity detection and no way to credit a fielder who never batted/bowled.
+ *
+ * Tiers, in order: exact full-name match → roster name ends with " <norm>"
+ * (raw is a surname or "Initial Surname") → norm ends with " <roster surname>"
+ * (raw has a longer/different first name than the roster entry). Ambiguity is
+ * checked within EACH tier before falling through to the next.
+ */
+function resolveFielderName(
+  raw: string,
+  exactMap: Map<string, string>,  // norm full name → player_id (both teams in this match)
+  aliasMap: Map<string, string>,  // norm alias → player_id
+): FielderResolveResult {
+  const norm = raw.toLowerCase().trim()
+  if (exactMap.has(norm)) return { playerId: exactMap.get(norm)!, candidates: null }
+
+  const rosterNames = [...exactMap.keys()]
+  const tiers = [
+    rosterNames.filter(n => n === norm),
+    rosterNames.filter(n => n.endsWith(' ' + norm)),
+    rosterNames.filter(n => norm.endsWith(' ' + n.split(' ').pop())),
+  ]
+  for (const tier of tiers) {
+    if (!tier.length) continue
+    const distinct = [...new Set(tier)]
+    // A saved alias only ever verified the match once — if the current
+    // roster now has more than one name in this tier, don't let a stale
+    // alias silently pick one. Surface it as ambiguous instead.
+    if (distinct.length > 1) return { playerId: null, candidates: distinct }
+    if (aliasMap.has(norm)) return { playerId: aliasMap.get(norm)!, candidates: null }
+    return { playerId: exactMap.get(distinct[0])!, candidates: null }
+  }
+
+  // No fuzzy tier matched at all — fall back to a saved alias if we have one
+  // (covers names that don't cleanly fuzzy-match syntactically).
+  if (aliasMap.has(norm)) return { playerId: aliasMap.get(norm)!, candidates: null }
+
+  return { playerId: null, candidates: null }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -789,7 +849,7 @@ Deno.serve(async (req: Request) => {
       for (const a of aliasRows ?? []) aliasMap.set(a.alias.toLowerCase().trim(), a.player_id)
 
       // ── 3. Parse CricAPI scorecard ─────────────────────────────────────
-      const apiPlayers = fromCricAPI(payload)
+      const { players: apiPlayers, fieldingEvents } = fromCricAPI(payload)
       if (!apiPlayers.length) {
         results.push({ matchId: match.id, status: 'no_player_rows', stage })
         continue
@@ -831,6 +891,42 @@ Deno.serve(async (req: Request) => {
           batting: pl.batting ?? null, bowling: pl.bowling ?? null, fielding: pl.fielding ?? null,
           raw_points: raw,
         })
+      }
+
+      // ── 4b. Resolve fielding credit against the full 2-team match roster ──
+      // (not just whoever batted/bowled) so a fielder who never got a
+      // batting/bowling line still gets credited, and so two same-surname
+      // roster-mates are flagged as ambiguous instead of one silently
+      // absorbing the other's catch/stumping/run-out credit. Mirrors
+      // scrape-scorecard's resolveFielderName handling exactly.
+      const fieldingByPlayer = new Map<string, FieldRow>()
+      const fieldingIssues: Array<{
+        rawName: string; candidates: string[] | null
+        field: 'catches' | 'stumpings' | 'runOutDirect' | 'runOutIndirect'
+        batterName: string; dismissalText: string
+      }> = []
+      for (const ev of fieldingEvents) {
+        const { playerId, candidates } = resolveFielderName(ev.rawName, exactMap, aliasMap)
+        if (playerId) {
+          const cur = fieldingByPlayer.get(playerId) ?? { catches: 0, stumpings: 0, runOutDirect: 0, runOutIndirect: 0 }
+          cur[ev.field]++
+          fieldingByPlayer.set(playerId, cur)
+        } else {
+          fieldingIssues.push({ rawName: ev.rawName, candidates, field: ev.field, batterName: ev.batterName, dismissalText: ev.dismissalText })
+        }
+      }
+      // A fielder might be credit-only (never batted/bowled themselves) —
+      // ensure they still get a statsByPlayer entry rather than being
+      // silently dropped.
+      for (const [playerId, fielding] of fieldingByPlayer) {
+        const fieldingPts = calcFielding(fielding, rules)
+        const existing = statsByPlayer.get(playerId)
+        if (existing) {
+          existing.fielding = fielding
+          existing.raw_points = Math.round((existing.raw_points + fieldingPts) * 10) / 10
+        } else {
+          statsByPlayer.set(playerId, { batting: null, bowling: null, fielding, raw_points: fieldingPts })
+        }
       }
 
       // ── 5. Upsert player_match_stats ────────────────────────────────────
@@ -875,6 +971,26 @@ Deno.serve(async (req: Request) => {
           { onConflict: 'match_id,source,context' },
         )
       }
+      // Fielding credit that couldn't be resolved to exactly one player
+      // (unmatched, or ambiguous — e.g. two roster-mates sharing a surname).
+      // Same table/shape as the scraper pipeline; ignoreDuplicates so a row
+      // an admin already resolved doesn't get reset back to unresolved by a
+      // later re-poll that reproduces the same unresolved dismissal.
+      if (fieldingIssues.length) {
+        await sb.from('scraper_fielding_issues').upsert(
+          fieldingIssues.map(fi => ({
+            tournament_id : match.tournament_id,
+            match_id      : match.id,
+            raw_name      : fi.rawName,
+            source        : 'cricapi',
+            field         : fi.field,
+            batter_name   : fi.batterName,
+            dismissal_text: fi.dismissalText,
+            candidates    : fi.candidates,
+          })),
+          { onConflict: 'match_id,raw_name,field,batter_name', ignoreDuplicates: true },
+        )
+      }
 
       // ── 7. Cascade to Daily + Season Long scores ────────────────────────
       const pointsMap = new Map<string, number>()
@@ -899,6 +1015,7 @@ Deno.serve(async (req: Request) => {
         matchId: match.id, status: 'ok', stage,
         matched: statRows.length, unmatched: unmatched.map(u => u.name),
         fuzzyAliasesCreated: fuzzyAliases.length,
+        fieldingCredited: fieldingByPlayer.size, fieldingIssues: fieldingIssues.length,
         dailyTeamsScored, slScored,
         matchCompleted: stage === 'completed',
       })
