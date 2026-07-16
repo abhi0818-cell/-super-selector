@@ -111,7 +111,8 @@
       else if (tab === 'schedule') renderMatchesAdmin();
       else if (tab === 'contests') renderContestsAdmin();
       else if (tab === 'dangerzone') renderDangerZone();
-      else if (tab === 'live' || tab === 'review') { /* content added in a later phase */ }
+      else if (tab === 'review')   renderTeamsMismatchBanner(); // more queues land here in a later pass
+      else if (tab === 'live')     { /* content added in a later phase */ }
       else                         renderAdmin();
     }
 
@@ -3279,10 +3280,27 @@
       // ── Alias panel ──────────────────────────────────────────────────────
       renderAliasPanel();
 
-      // ── Mismatch detection ────────────────────────────────────────────────
-      // Teams that appear in match schedule but have 0 players are likely
-      // freshly synced from CricAPI with a different code format (e.g. "IND-W"
-      // when players were imported as "INDW"). Show a fix banner.
+      // ── Mismatch detection (banner now lives in the Review tab) ────────────
+      renderTeamsMismatchBanner();
+    }
+
+    // Teams that appear in match schedule but have 0 players are likely
+    // freshly synced from CricAPI with a different code format (e.g. "IND-W"
+    // when players were imported as "INDW"). Show a fix banner — lives in
+    // the Review tab's DOM, but detection depends on the active tournament's
+    // matches/players, so it's re-run whenever Teams or Review tab opens.
+    function renderTeamsMismatchBanner() {
+      const banner = $('#teamsMismatchBanner');
+      if (!banner) return;
+
+      const tournamentTeamIds = new Set();
+      state.matches.forEach(m => {
+        if (m.home_team_id) tournamentTeamIds.add(m.home_team_id);
+        if (m.away_team_id) tournamentTeamIds.add(m.away_team_id);
+      });
+      const playerCounts = {};
+      A.PLAYERS.forEach(p => { playerCounts[p.team] = (playerCounts[p.team]||0)+1; });
+
       const playerTeamIds = Object.keys(playerCounts);
       const orphanTeams = [...tournamentTeamIds].filter(id => !(playerCounts[id] > 0));
       const suggested = orphanTeams.map(orphanId => {
@@ -3290,7 +3308,6 @@
         return { from: orphanId, to: guess };
       }).filter(r => r.to !== null && r.from !== r.to);
 
-      const banner = $('#teamsMismatchBanner');
       if (suggested.length > 0 && tournamentTeamIds.size > 0) {
         banner.style.display = 'block';
         const details = $('#teamsMismatchDetails');
