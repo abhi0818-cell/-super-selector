@@ -5799,9 +5799,28 @@ p31,Sample Player,MI,bat,9.0,false
       // 2. Last locked XI = transfer baseline (independent of pool dropdown)
       const lastLocked = await state.db.getLastLockedXI(squadId, state.matches);
       state.sl.lastLockedXI = lastLocked ?? null;
-      state.sl.prevXI = lastLocked
+      // prevXI drives every transfer-count/diff display (slTransferCount, the
+      // Season tab's Xfers column, etc.) — it must reflect the TRUE baseline,
+      // not necessarily the literal last-locked match. If that match had Free
+      // Hit active, its raw locked XI was only ever a one-match blip; the
+      // real baseline squad members are carrying forward is whatever Free
+      // Hit's snapshot recorded. Without this, reverting a free-hit draft
+      // back to the pre-free-hit team (whether via the 3b revert below or a
+      // direct data fix) still diffs against the raw free-hit XI here and
+      // shows a wall of phantom pending transfers even though nothing
+      // actually changed from the real baseline.
+      let prevXIBase = lastLocked
         ? { playerIds: lastLocked.playerIds, captainId: lastLocked.captainId, vcId: lastLocked.vcId }
         : { playerIds: [], captainId: null, vcId: null };
+      if (lastLocked?.matchId) {
+        try {
+          const fhSnapshot = await state.db.getFreeHitSnapshot(squadId, lastLocked.matchId);
+          if (fhSnapshot?.playerIds?.length === 11) {
+            prevXIBase = { playerIds: fhSnapshot.playerIds, captainId: fhSnapshot.captainId ?? null, vcId: fhSnapshot.vcId ?? null };
+          }
+        } catch (e) { console.warn('[slLoadDraft] free_hit snapshot lookup for prevXI failed:', e.message); }
+      }
+      state.sl.prevXI = prevXIBase;
 
       // 3. Populate the picker: draft > lastLockedXI > mobile XI > empty
       // Skip if refreshOnly=true (e.g. pool dropdown changed) — preserve the
