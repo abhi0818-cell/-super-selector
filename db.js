@@ -1389,6 +1389,28 @@ export function createDb(cfg = {}) {
       }
       const sb = await getClient();
       const playerId = playerData.playerId || `scr_${Date.now()}`;
+
+      // Guard against creating a duplicate player row: if a player with this
+      // same normalized name already exists on this tournament's roster,
+      // "Add new player" is almost certainly the wrong button — the raw
+      // scorecard name is just a spelling/format variant of someone already
+      // rostered, and it should be mapped (aliased) to them instead. This is
+      // exactly how "Mukhtar Ahmed", "Obus Pienaar", "Ali Sheikh" and
+      // "Anirudh Immanuel" ended up duplicated, splitting their stats across
+      // two ids.
+      const normName = s => s.trim().toLowerCase().replace(/\s+/g, ' ');
+      const { data: roster, error: rosterErr } = await sb
+        .from('tournament_players')
+        .select('player_id, players(id, name)')
+        .eq('tournament_id', tournamentId);
+      if (rosterErr) throw rosterErr;
+      const existing = (roster || []).find(r =>
+        r.players && normName(r.players.name) === normName(playerData.name) && r.players.id !== playerId
+      );
+      if (existing) {
+        throw new Error(`"${playerData.name}" already exists on this tournament's roster as ${existing.players.name} (${existing.players.id}). Use "Map to existing player" instead — pick ${existing.players.id} from the dropdown.`);
+      }
+
       // 1. Insert into global players pool
       const { error: pe } = await sb.from('players').insert({
         id         : playerId,
