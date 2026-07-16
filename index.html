@@ -555,6 +555,10 @@
     .admin-toolbar { display: flex; gap: 8px; padding: 0 12px 10px; align-items: center; }
     .admin-toolbar input.admin-search-inp { flex: 1; }
     .admin-toolbar button { font-size: 12px; padding: 6px 12px; }
+    /* Reference tab (admin action documentation) */
+    #adminReferenceView .ref-d { font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.5; }
+    #adminReferenceView .ref-g { font-size: 12px; color: var(--accent-2); margin-top: 4px; line-height: 1.5; }
+    #adminReferenceView code { background: var(--panel-2); padding: 1px 5px; border-radius: 3px; font-size: 11px; }
 
     .csv-panel { padding: 0 6px; }
     .csv-panel .row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
@@ -1794,6 +1798,7 @@
         <span class="a-tab"        data-tab="live">Live</span>
         <span class="a-tab"        data-tab="review">Review</span>
         <span class="a-tab"        data-tab="dangerzone">Danger Zone</span>
+        <span class="a-tab"        data-tab="reference">Reference</span>
       </div>
       <div class="admin-toolbar">
         <input id="adminSearch" class="admin-search-inp" type="text" placeholder="Search by name or team…" />
@@ -2116,6 +2121,111 @@ p31,Sample Player,MI,bat,9.0,false
           <span id="dzDeleteStatus" style="font-size:12px; color:var(--muted); display:block; margin-top:8px;"></span>
         </div>
         <div id="dzCloseOutSlot"></div>
+      </div>
+
+      <!-- Reference tab — static documentation, no live data -->
+      <div class="modal-body" id="adminReferenceView" style="display:none; padding:16px; max-width:900px;">
+        <div style="font-size:12px; color:var(--muted); margin-bottom:14px; padding:10px 12px; background:var(--panel-2); border-radius:6px;">
+          What every button in this admin panel actually does, what it writes, and any gotchas worth knowing before you click. Built from a full code trace — update this if behavior changes.
+        </div>
+
+        <details open style="margin-bottom:10px; border:1px solid var(--border); border-radius:8px; padding:10px 14px;">
+          <summary style="cursor:pointer; font-weight:700; color:var(--accent); font-size:13px;">Tournament</summary>
+          <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;">
+            <div><strong>Connect to database</strong><div class="ref-d">Requires both URL and anon key. Loads teams, tournaments, contests, matches, scores, and tries to restore your last saved XI. Each loader fails silently on its own (console-only warning) — a bad connection can leave parts of the UI half-populated with no single clear error.</div><div class="ref-g">⚠️ Once connected, the form collapses to "✓ Connected"; click Change to reconnect. Re-connecting discards any unsaved scoring-rule edits.</div></div>
+            <div><strong>Active Tournament picker</strong><div class="ref-d">Pure context switch, writes nothing. Reloads matches, scoring rules, contests for the newly selected tournament.</div><div class="ref-g">⚠️ Switches silently even with unsaved scoring-rule edits — they're discarded, no warning.</div></div>
+            <div><strong>Active/Inactive toggle (per tournament)</strong><div class="ref-d">Sets <code>tournaments.is_active</code> — controls whether it shows in the mobile lobby. Multiple tournaments can be active at once. Reversible.</div></div>
+            <div><strong>Max overseas in XI</strong><div class="ref-d">Sets <code>tournaments.max_overseas_in_xi</code>. If this is the active tournament, XI-picking validation updates immediately, no reload needed.</div><div class="ref-g">⚠️ Client validates 0–11, but there's no DB-level check — only RLS, which allows any value if the client is bypassed.</div></div>
+            <div><strong>Non-overseas label</strong><div class="ref-d">Cosmetic only — sets <code>tournaments.domestic_label</code>, shown on the pool's filter chip. Doesn't touch overseas flags or the cap itself.</div></div>
+            <div><strong>Scraper toggle</strong><div class="ref-d">Sets <code>tournaments.scraper_enabled</code> — controls whether the server-side scraper cron runs for this tournament's matches.</div></div>
+            <div><strong>Dot ball scoring toggle</strong><div class="ref-d">Sets <code>tournaments.dot_ball_enabled</code>. If active tournament, the scoring rules grid re-renders immediately to show/hide the dot-ball row.</div><div class="ref-g">⚠️ OFF is enforced server-side too — dot-ball scoring is forced to 0 at actual scoring time regardless of any saved weight, not just hidden in the UI.</div></div>
+            <div><strong>CricAPI Series ID</strong><div class="ref-d">Sets <code>tournaments.cricapi_series_id</code>. If active tournament, also mirrors into Schedule tab's sync field.</div></div>
+            <div><strong>+ New Tournament</strong><div class="ref-d">Only name is required. Creates the row and switches to it immediately as the new active tournament — no confirmation.</div><div class="ref-g">⚠️ No duplicate-name check anywhere — creating the same name twice silently succeeds as two separate rows.</div></div>
+            <div><strong>Scoring Rules — Save</strong><div class="ref-d">Merges the active format tab's rules into <code>tournaments.scoring_rules</code> (JSONB) — other formats untouched. No confirmation.</div><div class="ref-g">⚠️ The "locked once started" rule is enforced client-side only (checks if any match is in_progress/completed) — there's no equivalent server-side check, so a direct API call could still change rules after a tournament has started.</div></div>
+            <div><strong>Scoring Rules — Reset to defaults</strong><div class="ref-d">Deletes the active format's key from the rules JSONB, reverting to built-in defaults.</div><div class="ref-g">Asks for confirmation first — the only confirm() in this tab.</div></div>
+          </div>
+        </details>
+
+        <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:8px; padding:10px 14px;">
+          <summary style="cursor:pointer; font-weight:700; color:var(--accent); font-size:13px;">Schedule</summary>
+          <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;">
+            <div><strong>Sync from CricAPI</strong><div class="ref-d">Pulls fixtures + start times from CricAPI for the active tournament (using the Series ID + sync filter). Creates/updates match rows; doesn't touch scores.</div></div>
+            <div><strong>Finalize completed</strong><div class="ref-d">Batch-finalizes every completed match missing saved stats — fetches (or reuses cached) scorecards, saves fantasy points. Shows progress + a grouped failure panel.</div></div>
+            <div><strong>Inline row edits</strong><div class="ref-d">Match number, teams, format, start time, match type, data source override, lock time — all save on blur.</div></div>
+            <div><strong>🌧 Delay toggle</strong><div class="ref-d">Sets <code>status='delayed'</code>. This changes which time field the lock cron reads: normally it locks based on <code>start_time</code>; once delayed, it switches to <code>lock_time</code> instead. Also removes Finalize/Recalc/Poll/Scrape from the row (no longer "in play").</div><div class="ref-g">⚠️ Un-delaying just resets status to 'scheduled' — it does not restore whatever the real status actually was. The next sync/poll corrects it. Also: a delayed match with no fresh lock_time drops out of the home screen's "next match" countdown entirely on both web and mobile — set a new lock_time (not just toggle delayed) to keep it showing correctly.</div></div>
+            <div><strong>Finalize / Recalc (row)</strong><div class="ref-d">Same as the toolbar Finalize, scoped to one match. Recalc re-parses the already-cached scorecard without a new API call — useful after a scoring-rule change.</div></div>
+            <div><strong>🥎 Fielding (manual credit)</strong><div class="ref-d">Freeform: any player, any category (catch/stumping/run-out/bowled/LBW bonus), regardless of whether anything was auto-detected. Tagged <code>source='scraper_manual'</code> so a later re-scrape can't silently overwrite it. This is the same underlying function Review tab's Fielding Issues "Credit" button calls — not a separate implementation.</div></div>
+            <div><strong>↩ Revert to Live</strong><div class="ref-d">For a match wrongly marked completed — flips it back to in_progress so Poll/Scrape can run again. Does not delete already-saved stats; they get overwritten by the next Poll/Scrape/Recalc.</div><div class="ref-g">Asks for confirmation.</div></div>
+            <div><strong>🔓 Revert Lock</strong><div class="ref-d">Deletes locked Season-Long XI rows for this match so users can re-pick. Only affects <code>user_match_xi</code> — nothing else.</div><div class="ref-g">⚠️ Only appears once status='delayed' — clicking it on a non-delayed match with a past start_time would be self-defeating, since the lock cron (runs every minute) would just re-lock everyone again immediately. Also: what the user sees afterward is their current live draft, not a restored copy of what was actually locked — if they kept editing during the delay window (possible once delayed, since the match re-opens as an editable target), that's what comes back, not the original locked picks. And: no transfer refund happens — if a transfer was spent making the now-deleted pick, it stays counted against their budget with no automatic reversal.</div></div>
+            <div><strong>🔓 Revert Daily Lock</strong><div class="ref-d">Only clears the visible "Locked" badge on daily teams — cosmetic. Real gating is <code>lock_time</code> via RLS, so editing doesn't actually reopen unless lock_time is also pushed forward.</div><div class="ref-g">Asks for confirmation; the dialog itself explains it's badge-only.</div></div>
+            <div><strong>📡 Poll / 🕷 Scrape (row)</strong><div class="ref-d">Manually triggers the same server-side <code>poll-cricapi</code>/<code>scrape-scorecard</code> edge functions the cron runs, scoped to one match. Scrape also auto-derives fielding credit where possible, flagging anything ambiguous into Review's Fielding Issues queue.</div><div class="ref-g">Same edge functions the mobile app's own admin screen triggers independently — two separate UIs, same backend calls.</div></div>
+            <div><strong>× Delete (row)</strong><div class="ref-d">Deletes the match row outright.</div><div class="ref-g">⚠️ No confirmation dialog — the only destructive action in this tab that doesn't ask first.</div></div>
+          </div>
+        </details>
+
+        <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:8px; padding:10px 14px;">
+          <summary style="cursor:pointer; font-weight:700; color:var(--accent); font-size:13px;">Teams</summary>
+          <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;">
+            <div><strong>Add / remove alias</strong><div class="ref-d">CricAPI→internal team code mappings. Stored client-side only (in-memory + localStorage) — not a database table. Re-adding an existing code silently overwrites its target.</div></div>
+            <div><strong>Apply to existing matches</strong><div class="ref-d">The only alias action that touches the database — updates <code>matches.home_team_id</code>/<code>away_team_id</code> for the active tournament, per alias pair. Same function as Schedule's old "Fix team codes" button (now removed as a duplicate).</div></div>
+            <div><strong>Add team</strong><div class="ref-d">Code auto-suggested (first free T1, T2…), editable, max 6 chars. Client-side duplicate-code check before insert.</div></div>
+            <div><strong>Inline edit</strong><div class="ref-d">Name and both colors are editable, save on change.</div><div class="ref-g">Team code (id) is not editable after creation — it's the primary key.</div></div>
+            <div><strong>Delete team</strong><div class="ref-d">Confirmation dialog mentions players only.</div><div class="ref-g">⚠️ Blocked outright if any player still belongs to the team (foreign-key restrict, friendly error shown). But matches referencing the team are NOT a guard — deleting succeeds and silently sets those matches' home/away team to null, with no warning in the confirmation dialog.</div></div>
+          </div>
+        </details>
+
+        <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:8px; padding:10px 14px;">
+          <summary style="cursor:pointer; font-weight:700; color:var(--accent); font-size:13px;">Players</summary>
+          <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;">
+            <div><strong>Search</strong><div class="ref-d">Client-side only, matches name or team — never touches the database.</div></div>
+            <div><strong>Import CSV</strong><div class="ref-d">Validates every row before sending anything: required name, known team, valid role, non-negative credits.</div><div class="ref-g">⚠️ Collision guard: a blank id whose name matches an existing player (under a different id) is flagged as an error, not silently turned into a new duplicate player — this was a real bug that's since been fixed. A typed id that belongs to a different-named player is also blocked. Only rows that pass validation are ever sent; on a failed batch partway through, earlier successful batches of 50 are NOT rolled back — a large import can leave a true partial commit.</div></div>
+            <div><strong>Clone from another tournament</strong><div class="ref-d">Copies team assignment, credits, and active flag from the source tournament's roster into the target — reuses existing global player IDs, no new player rows created, only new per-tournament roster rows.</div><div class="ref-g">If a player already exists in the target tournament, that row is silently skipped — existing customizations in the target are preserved, not overwritten.</div></div>
+            <div><strong>Add player (inline)</strong><div class="ref-d">ID always auto-generated (smallest free pNN, checked globally across all tournaments since player IDs are shared). Same name-collision guard as CSV import blocks accidental duplicates.</div></div>
+            <div><strong>Inline edit</strong><div class="ref-d">Name/team/role/credits/overseas save on change.</div><div class="ref-g">No duplicate-name check on edit — only on add/import.</div></div>
+            <div><strong>Delete player</strong><div class="ref-d">Confirms first ("cannot be undone").</div><div class="ref-g">Blocked with a friendly message if the player is in any saved XI (foreign-key restrict).</div></div>
+          </div>
+        </details>
+
+        <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:8px; padding:10px 14px;">
+          <summary style="cursor:pointer; font-weight:700; color:var(--accent); font-size:13px;">Contests</summary>
+          <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;">
+            <div><strong>Season / playoff transfer budgets, playoff start match #</strong><div class="ref-d">Each scoped to one contest. Blank means "unlimited"/"no playoffs". If it's the contest you're currently viewing, changes apply live to your own screen without a reload.</div></div>
+            <div><strong>Boosters</strong><div class="ref-d">Per-contest checkboxes + use-counts for 7 booster types (triple captain, dual captain, wildcard, free hit, overseas-double, US-double, team-double). Unchecked boosters are simply omitted — no separate delete step.</div></div>
+            <div><strong>Private Leagues — Create league</strong><div class="ref-d">Only name is required. Goes live immediately (no activation step), auto-generates a unique invite code.</div><div class="ref-g">No duplicate-name guard — the same league name can be created more than once.</div></div>
+            <div><strong>+ New Contest</strong><div class="ref-d">Requires name + contest type. Goes live immediately, public by default.</div><div class="ref-g">No duplicate-name guard here either.</div></div>
+            <div><strong>Deactivating a contest</strong><div class="ref-d">There's no per-contest deactivate button in this tab at all — the only way to deactivate contests is Danger Zone's Close Out Tournament, which deactivates every contest for the tournament at once.</div></div>
+          </div>
+        </details>
+
+        <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:8px; padding:10px 14px;">
+          <summary style="cursor:pointer; font-weight:700; color:var(--accent); font-size:13px;">Live</summary>
+          <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;">
+            <div><strong>Connect</strong><div class="ref-d">Connects to a live match via CricAPI directly in your browser session — polls every 30 min, stops when the match ends. Ephemeral: nothing about "unmatched" or "fielding not credited" warnings shown here gets written to the Review tab's queues — those only come from the separate server-side poll-cricapi/scrape-scorecard cron.</div></div>
+            <div><strong>Link (unmatched player)</strong><div class="ref-d">Saves a name alias (both locally and to the database) and rescores the match immediately.</div></div>
+            <div><strong>Rescore / Save to DB</strong><div class="ref-d">Recomputes fantasy points from the live scorecard and saves to <code>player_match_stats</code>.</div><div class="ref-g">Both functions now dedupe by local player id before saving — previously, two CricAPI names resolving to the same local player (e.g. a fielding-only mention plus that player's own batting line) could crash with a Postgres "ON CONFLICT" error. Fixed to match Finalize's existing behavior; if that happens, the second matching entry is silently skipped rather than merged.</div></div>
+            <div><strong>Fetch now</strong><div class="ref-d">Forces an immediate scorecard fetch outside the normal 30-minute poll interval.</div></div>
+          </div>
+        </details>
+
+        <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:8px; padding:10px 14px;">
+          <summary style="cursor:pointer; font-weight:700; color:var(--accent); font-size:13px;">Review</summary>
+          <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;">
+            <div><strong>Team code mismatch — Apply Fix</strong><div class="ref-d">Same underlying remap as Teams' "Apply to existing matches," surfaced here because it's a detected problem, not a proactive setting.</div></div>
+            <div><strong>Unmatched Players — Map / Add / Ignore</strong><div class="ref-d">Map saves an alias for a specific raw name; Add creates a brand-new player and aliases it; Ignore dismisses without crediting anyone. Populated only by the server-side scraper/poll cron — not by the Live tab's own live connection.</div></div>
+            <div><strong>Fielding Issues — Credit / Ignore</strong><div class="ref-d">Credit resolves a detected ambiguous fielding event to a specific player (optionally saving an alias for next time) — internally calls the exact same function as Schedule's manual 🥎 Fielding button.</div></div>
+            <div><strong>Recoverable Stats — Credit & rescore / Ignore</strong><div class="ref-d">For placeholder ("player not found") rows — credit to a real player and cascade the rescore into XI/SL totals immediately.</div></div>
+            <div><strong>Duplicate Players — Delete</strong><div class="ref-d">Only offered for rows with zero usage anywhere (no rosters, XIs, scores, transfers, or live drafts) — safe, direct delete.</div></div>
+            <div><strong>Duplicate Players — Keep this, merge other in</strong><div class="ref-d">Re-checks for collisions live before proceeding (same match scored under both ids, same squad's XI has both, or either is part of a live unlocked draft) — if any collision is found, it explains why and refuses rather than guessing. If clean, repoints every historical reference to the kept id and deletes the dropped one.</div><div class="ref-g">Only offered for exactly two-row duplicate groups — three or more duplicates of the same name are flagged for manual SQL review instead.</div></div>
+          </div>
+        </details>
+
+        <details style="margin-bottom:10px; border:1px solid var(--border); border-radius:8px; padding:10px 14px;">
+          <summary style="cursor:pointer; font-weight:700; color:var(--accent); font-size:13px;">Danger Zone</summary>
+          <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;">
+            <div><strong>Delete Tournament</strong><div class="ref-d">Permanently removes the tournament row.</div><div class="ref-g">Fails safely (does nothing) if it still has matches, players, or contests attached — remove those first, or use Close Out instead. Confirmation spells this out.</div></div>
+            <div><strong>Close Out Tournament</strong><div class="ref-d">Marks the tournament finished (end_date = today, contests deactivated). Shows a live row-count preview per table before you choose what to wipe — reference data (players, teams, profiles) is never touched regardless of selection.</div><div class="ref-g">Confirmation lists exactly which tables will be cleared and how many rows, before executing.</div></div>
+          </div>
+        </details>
       </div>
 
       <div class="modal-footer">
@@ -11905,7 +12015,7 @@ p31,Sample Player,MI,bat,9.0,false
       return new Promise((resolve) => {
         if (window.__admin) { resolve(); return; }
         const s = document.createElement('script');
-        s.src = './admin.js?v=5';
+        s.src = './admin.js?v=6';
         s.onload = resolve;
         s.onerror = () => console.error('[admin] Failed to load admin.js');
         document.head.appendChild(s);

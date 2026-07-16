@@ -94,6 +94,7 @@
         live       : 'Live',
         review     : 'Review',
         dangerzone : 'Danger Zone',
+        reference  : 'Reference',
       }[tab] || 'Manage Players';
       $('#adminTitle').textContent = title;
       $('#adminTournamentView').style.display = (tab === 'tournament') ? 'flex'  : 'none';
@@ -105,6 +106,7 @@
       $('#adminLiveView').style.display       = (tab === 'live')       ? 'block' : 'none';
       $('#adminReviewView').style.display     = (tab === 'review')     ? 'block' : 'none';
       $('#adminDangerZoneView').style.display = (tab === 'dangerzone') ? 'block' : 'none';
+      $('#adminReferenceView').style.display  = (tab === 'reference')  ? 'block' : 'none';
       $('#adminCsvView').style.display        = 'none';
       // Toolbar (search + import) is only useful for players
       document.querySelector('.admin-toolbar').style.display = (tab === 'players') ? 'flex' : 'none';
@@ -115,6 +117,7 @@
       else if (tab === 'dangerzone') renderDangerZone();
       else if (tab === 'review')   { renderTeamsMismatchBanner(); renderReviewQueues?.(); wireDuplicatePlayersToggle?.(); }
       else if (tab === 'live')     { /* content added in a later phase */ }
+      else if (tab === 'reference') { /* static content, no render needed */ }
       else                         renderAdmin();
     }
 
