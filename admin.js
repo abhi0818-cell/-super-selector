@@ -1137,6 +1137,20 @@
       if (!name) { toast('Name is required.'); return; }
       if (!Number.isFinite(credits) || credits < 0) { toast('Credits must be a non-negative number.'); return; }
 
+      // Same name-collision guard as the CSV importer (buildCsvRows) — this
+      // "+" row always assigns a brand-new id (nextPlayerId()), so with no
+      // check here, re-typing a name that already exists (forgetting they're
+      // already in the pool, a typo'd re-add, etc.) silently created a
+      // second row for the same real person instead of editing the existing
+      // one. This flow has no "update existing" path, so block instead of
+      // just warning — point at the existing row to edit there.
+      const normName = s => s.trim().toLowerCase().replace(/\s+/g, ' ');
+      const existingMatch = A.PLAYERS.find(p => normName(p.name) === normName(name));
+      if (existingMatch) {
+        toast(`"${name}" already exists (id "${existingMatch.id}", ${existingMatch.team}) — edit that row instead of adding a duplicate.`, 6000);
+        return;
+      }
+
       try {
         if (state.db) {
           const inserted = await state.db.addPlayer({ id, name, team, role, credits, overseas }, state.activeTournamentId);
@@ -3489,6 +3503,13 @@
 
       const existingIds  = new Set(A.PLAYERS.map(p => p.id));
       const existingById = Object.fromEntries(A.PLAYERS.map(p => [p.id, p]));
+      // Same normalization find_duplicate_players.sql uses — lets us catch a
+      // name collision here, before import, instead of only finding it after
+      // the fact via that diagnostic. Keyed on normalized name so "Ali Khan"
+      // vs " ali  khan " still matches.
+      const normName = s => s.trim().toLowerCase().replace(/\s+/g, ' ');
+      const existingByName = {};
+      A.PLAYERS.forEach(p => { existingByName[normName(p.name)] = p; });
       const usedNewIds   = new Set();
       const rolePresets = { wicketkeeper:'wk', wk:'wk', keeper:'wk',
                             batter:'bat', batsman:'bat', bat:'bat',
@@ -3513,12 +3534,31 @@
         if (!KNOWN_TEAMS.includes(row.team)) row.errors.push(`unknown team "${row.team}"`);
         if (!['wk','bat','ar','bowl'].includes(row.role)) row.errors.push(`bad role "${row.role}"`);
         if (!Number.isFinite(row.credits) || row.credits < 0) row.errors.push('credits must be a non-negative number');
+
+        // Name collision with an EXISTING player under a different id — the
+        // real bug this closes. Neither the blank-id auto-assign path nor a
+        // typed id was ever checked against existing NAMES, only existing
+        // ids, so importing a roster for someone already in the system (e.g.
+        // a slightly different id scheme, or the admin not knowing their id)
+        // silently created a second row for the same real person instead of
+        // mapping to the one that's actually used elsewhere (tournament
+        // rosters, saved XIs, scored stats). Flag it here so the admin picks
+        // the existing id explicitly instead of getting a duplicate by
+        // default — see find_duplicate_players.sql for cleaning up ones that
+        // already slipped through before this check existed.
+        const nameMatch = row.name ? existingByName[normName(row.name)] : null;
+        const isNameCollision = nameMatch && nameMatch.id !== row.id;
+
         if (!row.id) {
-          // Auto-assign smallest free pNN, accounting for IDs already chosen earlier in this batch
-          const used = new Set([...existingIds, ...usedNewIds]);
-          for (let n = 1; n < 1000; n++) {
-            const candidate = 'p' + String(n).padStart(2, '0');
-            if (!used.has(candidate)) { row.id = candidate; usedNewIds.add(candidate); break; }
+          if (isNameCollision) {
+            row.errors.push(`name matches existing player "${nameMatch.name}" (id "${nameMatch.id}") — set id to "${nameMatch.id}" to update them, or use a different name if this is really someone else`);
+          } else {
+            // Auto-assign smallest free pNN, accounting for IDs already chosen earlier in this batch
+            const used = new Set([...existingIds, ...usedNewIds]);
+            for (let n = 1; n < 1000; n++) {
+              const candidate = 'p' + String(n).padStart(2, '0');
+              if (!used.has(candidate)) { row.id = candidate; usedNewIds.add(candidate); break; }
+            }
           }
         } else {
           if (usedNewIds.has(row.id)) {
@@ -3526,6 +3566,8 @@
           } else if (existingById[row.id] && existingById[row.id].name !== row.name) {
             // ID already belongs to a different player in the DB — would silently overwrite them
             row.errors.push(`id "${row.id}" already used by "${existingById[row.id].name}" — choose a different id or leave blank to auto-assign`);
+          } else if (isNameCollision) {
+            row.errors.push(`name matches existing player "${nameMatch.name}" under a DIFFERENT id ("${nameMatch.id}") — use "${nameMatch.id}" to update them, or use a different name if this is really someone else`);
           }
           usedNewIds.add(row.id);
         }
