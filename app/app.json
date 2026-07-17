@@ -23,7 +23,8 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0f172a"
       },
-      "package": "com.superselector.app"
+      "package": "com.superselector.app",
+      "googleServicesFile": "./google-services.json"
     },
     "newArchEnabled": false,
     "web": {

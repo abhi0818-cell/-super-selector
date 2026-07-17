@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "435046496883",
+    "project_id": "fantasycricket-3263b",
+    "storage_bucket": "fantasycricket-3263b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:435046496883:android:465c8818dcc18d1c7a0806",
+        "android_client_info": {
+          "package_name": "com.superselector.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "435046496883-ungm5abfl73tj24ge722siqb5315bhmg.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBp79vddTDJrFnkC0hUyth0_L-fXsLfI-s"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "435046496883-ungm5abfl73tj24ge722siqb5315bhmg.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

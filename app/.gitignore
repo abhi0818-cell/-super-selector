@@ -29,5 +29,11 @@ yarn-error.*
 # Env
 .env*.local
 
+# Firebase — google-services.json is safe to commit (public identifiers only),
+# but never commit the FCM service account private key if it's ever downloaded
+# into this folder. It should go straight into `eas credentials`, not git.
+*service-account*.json
+firebase-adminsdk*.json
+
 # TypeScript
 *.tsbuildinfo
