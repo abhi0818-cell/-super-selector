@@ -854,8 +854,15 @@ export default function HomeScreen() {
               <View style={styles.slMeta}>
                 {slStats.transfersUsed >= slStats.totalTransfersAllowed && (
                   <View style={styles.xferWarning}>
+                    {/* Season transfer budget is a hard cap (checkAndLogTransfers
+                        in transferCap.ts throws once it's exhausted) — there's no
+                        "pay points for one more" override once the season total
+                        runs out, so don't imply one. The per-transfer point cost
+                        (extraCost/points_deducted) is a separate mechanic that only
+                        applies to per-match overage within a still-remaining season
+                        budget, not to season-cap exhaustion. */}
                     <Text style={styles.xferWarningText}>
-                      ⚠  No free transfers left — extra transfers cost {slStats.extraCost} pts each
+                      ⚠  Season transfer budget used — no more changes allowed this season
                     </Text>
                   </View>
                 )}
