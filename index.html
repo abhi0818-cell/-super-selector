@@ -6276,8 +6276,12 @@ p31,Sample Player,MI,bat,9.0,false
         const nextAway = slSaveTarget.away_team_id ?? '?';
         $('#slXiSaveLabel').textContent = `⚡ Saving for next: M${nextNum} · ${nextHome} vs ${nextAway} — ${capName} (C), ${vcName} (VC)`;
       } else {
+        // Full explanation ("Only N transfers left this season/playoff — reduce
+        // to N changes.") already shows in #slXferInfoBar above the pitch —
+        // this save-bar label just needs to point there, not restate the same
+        // fact in different words right next to it.
         $('#slXiSaveLabel').textContent = wouldExceedCap
-            ? 'Cap reached: only ' + seasonRemaining + ' transfer' + (seasonRemaining !== 1 ? 's' : '') + ' remaining.'
+            ? 'Too many changes for your remaining transfer budget — see note above.'
             : (!budgetCapOff && budgetLeft < 0)
               ? 'Over budget by ' + Math.abs(budgetLeft).toFixed(1) + ' cr.'
               : saveEnabled
