@@ -127,14 +127,21 @@
      * Shows one row per booster type: checkbox (enabled) + number input (uses).
      * contestId is used to build unique input IDs; available is the current JSONB value or null.
      */
-    function buildBoosterConfigHtml(contestId, available) {
+    // `opts.showSaveButton` (default true) renders its own "Save Boosters" button —
+    // used for private leagues, which stay independently editable. Season-long
+    // contests pass `showSaveButton:false` so this grid is just one part of the
+    // single consolidated Save button on the contest card (see renderContestsAdmin).
+    // `opts.disabled` greys out the whole grid — used to lock season-long booster
+    // config once the tournament has started.
+    function buildBoosterConfigHtml(contestId, available, opts = {}) {
+      const { showSaveButton = true, disabled = false } = opts;
       const av = available || {};
       const rows = Object.entries(BOOSTER_META).map(([key, meta]) => {
         const enabled = key in av;
         const count   = av[key] ?? 1;
         const uid     = `boost_${key}_${contestId.replace(/-/g,'')}`;
         return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);">
-          <input type="checkbox" id="${uid}_chk" data-booster="${key}" class="boost-chk" ${enabled ? 'checked' : ''} style="flex-shrink:0;" />
+          <input type="checkbox" id="${uid}_chk" data-booster="${key}" class="boost-chk" ${enabled ? 'checked' : ''} ${disabled ? 'disabled' : ''} style="flex-shrink:0;" />
           <label for="${uid}_chk" style="font-size:12px;flex:1;cursor:pointer;">
             ${meta.icon} <strong>${meta.label}</strong>
             <span style="color:var(--muted);font-size:11px;margin-left:4px;">${meta.desc}</span>
@@ -142,17 +149,18 @@
           <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
             <span style="font-size:11px;color:var(--muted);">Uses:</span>
             <input type="number" min="1" max="10" value="${count}" id="${uid}_count"
-              style="width:50px;font-size:12px;padding:3px 6px;" ${enabled ? '' : 'disabled'} />
+              style="width:50px;font-size:12px;padding:3px 6px;" ${(enabled && !disabled) ? '' : 'disabled'} />
           </div>
         </div>`;
       }).join('');
       return `<div style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--border);">
         <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--muted);">⚡ Boosters</div>
         <div id="boostGrid_${contestId.replace(/-/g,'')}">${rows}</div>
+        ${showSaveButton ? `
         <div style="display:flex;align-items:center;gap:8px;margin-top:8px;">
           <button class="primary boost-save-btn" data-contest="${contestId}" style="font-size:12px;padding:4px 12px;">Save Boosters</button>
           <span class="boost-status" data-contest="${contestId}" style="font-size:11px;color:var(--muted);"></span>
-        </div>
+        </div>` : ''}
       </div>`;
     }
 
@@ -678,24 +686,32 @@
           return;
         }
 
-        // Helper: labelled number row
-        const numRow = (label, hint, id, val, placeholder) => `
+        // Once any match in this tournament has gone live or finished, the
+        // season-long contest's settings (transfer budget, phase numbers,
+        // boosters) get locked — changing them mid-season would retroactively
+        // break scoring/transfer math for teams already picked. Mirrors
+        // isTournamentStarted() in index.html, but scoped to whichever
+        // tournament is selected in this tab's dropdown (which can differ
+        // from the app's globally active tournament).
+        const tournamentMatches = state.activeTournamentId
+          ? await state.db.listMatches(state.activeTournamentId).catch(() => [])
+          : [];
+        const tournamentStarted = tournamentMatches.some(m => m.status === 'in_progress' || m.status === 'completed');
+
+        // Helper: labelled number row (no per-row button — one Save covers the whole card)
+        const numRow = (label, hint, id, val, placeholder, disabled) => `
           <div style="display:flex; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:10px;">
             <label style="font-size:12px; color:var(--muted); min-width:200px;">
               ${label}
               <div style="font-size:10px; color:var(--muted); margin-top:2px;">${hint}</div>
             </label>
-            <div style="display:flex; align-items:center; gap:6px;">
-              <input type="number" min="0" step="1"
-                id="${id}"
-                value="${val}"
-                placeholder="${placeholder}"
-                style="width:100px; font-size:13px; padding:5px 8px;"
-              />
-              <button class="primary" style="font-size:12px; padding:5px 12px;"
-                data-savephase="${id}">Save</button>
-              <span id="${id}_status" style="font-size:11px; color:var(--muted);"></span>
-            </div>
+            <input type="number" min="0" step="1"
+              id="${id}"
+              value="${val}"
+              placeholder="${placeholder}"
+              ${disabled ? 'disabled' : ''}
+              style="width:100px; font-size:13px; padding:5px 8px;"
+            />
           </div>`;
 
         const publicContests  = contests.filter(c => !c.is_private);
@@ -708,29 +724,34 @@
           const playoffStartMN= c.playoff_start_match_number  ?? '';
           const playoffBudget = c.playoff_transfers_allowed   ?? '';
           const playoffFirstUnlimited = !!c.playoff_first_match_unlimited;
+          const locked = isSL && tournamentStarted;
           return `
             <div style="border:1px solid var(--border); border-radius:8px; padding:14px 16px; margin-bottom:12px;">
               <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
                 <strong style="font-size:14px;">${escapeHtml(c.name)}</strong>
                 <span style="font-size:11px; color:var(--muted); background:var(--panel-2); padding:2px 7px; border-radius:10px;">${c.contest_type}</span>
+                ${locked ? `<span style="font-size:11px; color:var(--bad);">🔒 Locked — tournament has started</span>` : ''}
               </div>
               ${isSL ? `
-                ${numRow('Season transfer budget','Total player changes allowed across the whole season. Leave blank for unlimited.',`xferBudget_${c.id}`,budget,'Unlimited')}
+                ${locked ? `<div style="font-size:11px; color:var(--muted); margin-bottom:10px;">Settings below are read-only now that matches are underway — changing transfer budgets or phase numbers mid-season would break scoring for teams already picked.</div>` : ''}
+                ${numRow('Season transfer budget','Total player changes allowed across the whole season. Leave blank for unlimited.',`xferBudget_${c.id}`,budget,'Unlimited',locked)}
                 <div style="border-top:1px solid var(--border); margin:8px 0 12px;"></div>
-                ${numRow('Season start match number','Season-long scoring and transfers only apply from this match number onward. Leave blank to include all matches.',`startMN_${c.id}`,startMN,'All matches')}
-                ${numRow('Playoff start match number','Match number where the playoff phase begins (uses a separate transfer budget). Leave blank if no playoff phase.',`playoffStartMN_${c.id}`,playoffStartMN,'No playoffs')}
-                ${numRow('Playoff transfer budget','Separate transfer allowance for the playoff phase. Leave blank for unlimited playoff transfers.',`playoffBudget_${c.id}`,playoffBudget,'Unlimited')}
+                ${numRow('Season start match number','Season-long scoring and transfers only apply from this match number onward. Leave blank to include all matches.',`startMN_${c.id}`,startMN,'All matches',locked)}
+                ${numRow('Playoff start match number','Match number where the playoff phase begins (uses a separate transfer budget). Leave blank if no playoff phase.',`playoffStartMN_${c.id}`,playoffStartMN,'No playoffs',locked)}
+                ${numRow('Playoff transfer budget','Separate transfer allowance for the playoff phase. Leave blank for unlimited playoff transfers.',`playoffBudget_${c.id}`,playoffBudget,'Unlimited',locked)}
                 <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
                   <label style="font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; min-width:200px;">
-                    <input type="checkbox" id="playoffFirstUnlimited_${c.id}" ${playoffFirstUnlimited ? 'checked' : ''} />
+                    <input type="checkbox" id="playoffFirstUnlimited_${c.id}" ${playoffFirstUnlimited ? 'checked' : ''} ${locked ? 'disabled' : ''} />
                     First playoff match unlimited
                     <span style="font-size:10px; display:block;">(excludes it from the playoff budget above — the rest of the playoff matches share that budget)</span>
                   </label>
-                  <button class="primary" style="font-size:12px; padding:5px 12px;"
-                    data-saveplayofffirstunlimited="${c.id}">Save</button>
-                  <span id="playoffFirstUnlimited_${c.id}_status" style="font-size:11px; color:var(--muted);"></span>
                 </div>
-                ${buildBoosterConfigHtml(c.id, c.available_boosters)}
+                ${buildBoosterConfigHtml(c.id, c.available_boosters, { showSaveButton: false, disabled: locked })}
+                ${!locked ? `
+                <div style="display:flex; align-items:center; gap:10px; margin-top:14px; padding-top:12px; border-top:1px solid var(--border);">
+                  <button class="primary contest-save-btn" data-contest="${c.id}" style="font-size:13px; padding:6px 16px;">Save contest settings</button>
+                  <span class="contest-save-status" data-contest="${c.id}" style="font-size:11px; color:var(--muted);"></span>
+                </div>` : ''}
               ` : `<div style="font-size:12px;color:var(--muted);">No configurable options for daily contests.</div>`}
             </div>`;
         }).join('') +
@@ -843,80 +864,84 @@
         // Helper: parse an int-or-null input value
         const parseIntOrNull = raw => (raw.trim() === '' ? null : parseInt(raw, 10));
 
-        // Season transfer budget
-        wrap.querySelectorAll('[data-savephase]').forEach(btn => {
+        // Season-long contest settings — one Save button per card covers transfer
+        // budget, phase numbers, the playoff-first-unlimited checkbox, and boosters
+        // together (previously five separate buttons; consolidated since these are
+        // all "set once before the season starts" values, not independent knobs).
+        // Only rendered at all when the tournament hasn't started yet — see the
+        // `locked` check in the card markup above — so this handler only ever runs
+        // pre-season.
+        wrap.querySelectorAll('.contest-save-btn').forEach(btn => {
           btn.addEventListener('click', async () => {
-            const inputId  = btn.dataset.savephase;
-            const inp      = $(`#${inputId}`);
-            const statusEl = $(`#${inputId}_status`);
-            const raw      = inp.value.trim();
-            const val      = parseIntOrNull(raw);
-            if (raw !== '' && (isNaN(val) || val < 0)) {
-              statusEl.textContent = 'Enter a whole number ≥ 0, or leave blank.';
-              statusEl.style.color = 'var(--bad)'; return;
+            const cid       = btn.dataset.contest;
+            const statusEl  = wrap.querySelector(`.contest-save-status[data-contest="${cid}"]`);
+            const readInt   = id => {
+              const raw = ($(`#${id}`)?.value ?? '').trim();
+              return { raw, val: parseIntOrNull(raw) };
+            };
+
+            const budget         = readInt(`xferBudget_${cid}`);
+            const startMN        = readInt(`startMN_${cid}`);
+            const playoffStartMN = readInt(`playoffStartMN_${cid}`);
+            const playoffBudget  = readInt(`playoffBudget_${cid}`);
+            const playoffFirstUnlimited = !!$(`#playoffFirstUnlimited_${cid}`)?.checked;
+
+            for (const [label, f] of [['Season transfer budget', budget], ['Season start match number', startMN], ['Playoff start match number', playoffStartMN], ['Playoff transfer budget', playoffBudget]]) {
+              if (f.raw !== '' && (isNaN(f.val) || f.val < 0)) {
+                statusEl.textContent = `${label}: enter a whole number ≥ 0, or leave blank.`;
+                statusEl.style.color = 'var(--bad)'; return;
+              }
             }
 
-            // Determine which contest + which field this button belongs to
-            const cid = inputId.replace(/^(xferBudget|startMN|playoffStartMN|playoffBudget)_/, '');
-            const kind = inputId.startsWith('xferBudget')       ? 'xferBudget'
-                       : inputId.startsWith('startMN')          ? 'startMN'
-                       : inputId.startsWith('playoffStartMN')   ? 'playoffStartMN'
-                                                                 : 'playoffBudget';
-
-            btn.disabled = true; statusEl.textContent = 'Saving…'; statusEl.style.color = 'var(--muted)';
-            try {
-              if (kind === 'xferBudget') {
-                await state.db.updateContestTransferBudget(cid, val);
-                statusEl.textContent = val === null ? 'Saved — unlimited.' : `Saved — ${val} transfers.`;
-                if (state.sl.seasonContest?.id === cid) {
-                  state.sl.seasonContest.total_transfers_allowed = val;
-                }
-              } else {
-                const field = kind === 'startMN'        ? 'start_match_number'
-                            : kind === 'playoffStartMN' ? 'playoff_start_match_number'
-                                                        : 'playoff_transfers_allowed';
-                await state.db.updateContestPhases(cid, { [field]: val });
-                statusEl.textContent = val === null
-                  ? 'Saved — cleared.'
-                  : kind === 'playoffBudget'
-                    ? `Saved — ${val} transfers.`
-                    : `Saved — M${val}.`;
-                if (state.sl.seasonContest?.id === cid) {
-                  state.sl.seasonContest[field] = val;
-                }
+            // Collect booster grid (same shape as the standalone boost-save-btn handler below)
+            const gridId = `boostGrid_${cid.replace(/-/g,'')}`;
+            const grid    = wrap.querySelector(`#${gridId}`);
+            const boosters = {};
+            grid?.querySelectorAll('.boost-chk').forEach(chk => {
+              if (chk.checked) {
+                const key      = chk.dataset.booster;
+                const countInp = chk.closest('div').querySelector('input[type="number"]');
+                const count    = parseInt(countInp?.value || '1', 10);
+                boosters[key]  = Number.isFinite(count) && count >= 1 ? count : 1;
               }
-              statusEl.style.color = 'var(--good,#4ade80)';
-              if (state.sl.seasonContest?.id === cid) { renderSlXiTab(); renderSlLiveTab(); }
-            } catch (e) {
-              statusEl.textContent = 'Save failed: ' + e.message;
-              statusEl.style.color = 'var(--bad)';
-            } finally { btn.disabled = false; }
-          });
-        });
-
-        // Playoff first-match-unlimited checkbox
-        wrap.querySelectorAll('[data-saveplayofffirstunlimited]').forEach(btn => {
-          btn.addEventListener('click', async () => {
-            const cid       = btn.dataset.saveplayofffirstunlimited;
-            const chk       = $(`#playoffFirstUnlimited_${cid}`);
-            const statusEl  = $(`#playoffFirstUnlimited_${cid}_status`);
-            const val       = !!chk?.checked;
+            });
+            const boosterPayload = Object.keys(boosters).length ? boosters : null;
 
             btn.disabled = true; statusEl.textContent = 'Saving…'; statusEl.style.color = 'var(--muted)';
             try {
-              await state.db.updateContestPhases(cid, { playoff_first_match_unlimited: val });
-              statusEl.textContent = val ? 'Saved — first playoff match unlimited.' : 'Saved — pooled with the rest of the playoff phase.';
-              statusEl.style.color = 'var(--good,#4ade80)';
+              await state.db.updateContestTransferBudget(cid, budget.val);
+              await state.db.updateContestPhases(cid, {
+                start_match_number: startMN.val,
+                playoff_start_match_number: playoffStartMN.val,
+                playoff_transfers_allowed: playoffBudget.val,
+                playoff_first_match_unlimited: playoffFirstUnlimited,
+              });
+              await state.db.updateContestBoosters(cid, boosterPayload);
+
+              // Keep in-memory state in sync so XI/live tabs reflect the new config immediately
               if (state.sl.seasonContest?.id === cid) {
-                state.sl.seasonContest.playoff_first_match_unlimited = val;
+                Object.assign(state.sl.seasonContest, {
+                  total_transfers_allowed: budget.val,
+                  start_match_number: startMN.val,
+                  playoff_start_match_number: playoffStartMN.val,
+                  playoff_transfers_allowed: playoffBudget.val,
+                  playoff_first_match_unlimited: playoffFirstUnlimited,
+                  available_boosters: boosterPayload,
+                });
                 renderSlXiTab(); renderSlLiveTab();
               }
+              const mc = state.sl.contests?.find(x => x.id === cid);
+              if (mc) mc.available_boosters = boosterPayload;
+
+              statusEl.textContent = '✓ Saved.';
+              statusEl.style.color = 'var(--good,#4ade80)';
             } catch (e) {
               statusEl.textContent = 'Save failed: ' + e.message;
               statusEl.style.color = 'var(--bad)';
             } finally { btn.disabled = false; }
           });
         });
+
         // ── Copy invite code buttons ──────────────────────────────────────────
         wrap.querySelectorAll('.copy-invite-btn').forEach(btn => {
           btn.addEventListener('click', () => {
