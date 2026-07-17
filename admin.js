@@ -108,6 +108,7 @@
       $('#adminDangerZoneView').style.display = (tab === 'dangerzone') ? 'block' : 'none';
       $('#adminReferenceView').style.display  = (tab === 'reference')  ? 'block' : 'none';
       $('#adminCsvView').style.display        = 'none';
+      $('#matchesCsvView').style.display      = 'none';
       // Toolbar (search + import) is only useful for players
       document.querySelector('.admin-toolbar').style.display = (tab === 'players') ? 'flex' : 'none';
       if (tab === 'tournament')    renderTournamentScoringRules();
@@ -1373,23 +1374,56 @@
           </select></td>
           <td style="white-space:nowrap;">
             ${(() => {
-              const isDelayed = m.status === 'delayed';
+              const isDelayed   = m.status === 'delayed';
+              const isAbandoned = m.status === 'abandoned';
+              const isOver      = m.status === 'completed' || isAbandoned || m.status === 'cancelled';
               const statusLabels = {
                 scheduled: '🕐 Scheduled', delayed: '🌧 Delayed',
                 live: '🔴 Live', in_progress: '▶ In Progress', completed: '✓ Completed',
+                abandoned: '🚫 Abandoned', cancelled: '✕ Cancelled',
               };
               const badge = statusLabels[m.status] ?? m.status ?? '—';
-              const badgeColor = isDelayed ? 'var(--accent-2)' : m.status === 'completed' ? 'var(--good)' : m.status === 'live' || m.status === 'in_progress' ? 'var(--bad)' : 'var(--muted)';
+              const badgeColor = isDelayed ? 'var(--accent-2)'
+                : m.status === 'completed' ? 'var(--good)'
+                : (isAbandoned || m.status === 'cancelled') ? 'var(--bad)'
+                : m.status === 'live' || m.status === 'in_progress' ? 'var(--bad)'
+                : 'var(--muted)';
+              // Quick time-push targets lock_time if one's already set (the
+              // active gate once delayed — see effectiveLockTime()), else
+              // start_time (still just the informational kickoff). First use
+              // also promotes 'scheduled' → 'delayed', since the lock-matches
+              // cron job only checks lock_time for status='delayed' matches —
+              // pushing a time without that flip would silently no-op.
+              const canPush         = !isOver && m.status !== 'live' && m.status !== 'in_progress';
+              const pushTargetLabel = m.lock_time ? 'lock' : 'start';
               return `
-                <span style="font-size:11px;font-weight:600;color:${badgeColor};">${badge}</span>
-                <button class="delay-toggle-btn" data-id="${m.id}" data-delayed="${isDelayed}"
-                  style="margin-left:6px;font-size:10px;padding:2px 7px;border-radius:4px;
-                         background:${isDelayed ? 'rgba(166,124,0,0.12)' : 'transparent'};
-                         border:1px solid ${isDelayed ? 'var(--accent-2)' : 'var(--border)'};
-                         color:${isDelayed ? 'var(--accent-2)' : 'var(--muted)'};cursor:pointer;"
-                  title="${isDelayed ? 'Remove delay — CricAPI will re-sync status' : 'Mark match as delayed (rain/other)'}">
-                  ${isDelayed ? '✕ Delayed' : '🌧 Delay'}
-                </button>`;
+                <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
+                  <span style="font-size:11px;font-weight:600;color:${badgeColor};">${badge}</span>
+                  <button class="delay-toggle-btn" data-id="${m.id}" data-delayed="${isDelayed}"
+                    style="font-size:10px;padding:2px 7px;border-radius:4px;
+                           background:${isDelayed ? 'rgba(166,124,0,0.12)' : 'transparent'};
+                           border:1px solid ${isDelayed ? 'var(--accent-2)' : 'var(--border)'};
+                           color:${isDelayed ? 'var(--accent-2)' : 'var(--muted)'};cursor:pointer;"
+                    title="${isDelayed ? 'Remove delay — CricAPI will re-sync status' : 'Mark match as delayed (rain/other)'}"
+                    ${isOver ? 'disabled' : ''}>
+                    ${isDelayed ? '✕ Delayed' : '🌧 Delay'}
+                  </button>
+                  ${canPush ? `
+                    <button class="push-time-btn" data-id="${m.id}" data-min="15" title="Push ${pushTargetLabel} time +15 min"
+                      style="font-size:10px;padding:2px 6px;border-radius:4px;background:transparent;border:1px solid var(--border);color:var(--muted);cursor:pointer;">+15m</button>
+                    <button class="push-time-btn" data-id="${m.id}" data-min="30" title="Push ${pushTargetLabel} time +30 min"
+                      style="font-size:10px;padding:2px 6px;border-radius:4px;background:transparent;border:1px solid var(--border);color:var(--muted);cursor:pointer;">+30m</button>
+                  ` : ''}
+                  <button class="abandon-toggle-btn" data-id="${m.id}" data-abandoned="${isAbandoned}"
+                    style="font-size:10px;padding:2px 7px;border-radius:4px;
+                           background:${isAbandoned ? 'rgba(220,80,80,0.12)' : 'transparent'};
+                           border:1px solid ${isAbandoned ? 'var(--bad)' : 'var(--border)'};
+                           color:${isAbandoned ? 'var(--bad)' : 'var(--muted)'};cursor:pointer;"
+                    title="${isAbandoned ? 'Revert — back to Scheduled' : 'Mark match as abandoned — it stops locking, users roll to the next match'}"
+                    ${m.status === 'completed' ? 'disabled' : ''}>
+                    ${isAbandoned ? '↩ Abandoned' : '🚫 Abandon'}
+                  </button>
+                </div>`;
             })()}
           </td>
           <td><input data-f="lock_time" type="datetime-local" value="${isoToLocalInput(m.lock_time)}" /></td>
@@ -1398,7 +1432,8 @@
               // A match is "in play" when start_time has passed and it's not completed/delayed.
               // Admin does NOT need to manually set status to live/in_progress.
               const isPastStart = m.start_time && new Date(m.start_time) <= new Date();
-              const isInPlay    = isPastStart && m.status !== 'completed' && m.status !== 'delayed';
+              const isInPlay    = isPastStart && m.status !== 'completed' && m.status !== 'delayed'
+                                   && m.status !== 'abandoned' && m.status !== 'cancelled';
               const isFinished  = m.status === 'completed';
               const matchTournament = state.tournaments?.find(t => t.id === m.tournament_id);
               // Mirrors the eligibility logic in poll-cricapi/index.ts: a per-match
@@ -1698,6 +1733,59 @@
             btn.disabled = false;
           }
         });
+        tr.querySelectorAll('.push-time-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const minutes = parseInt(btn.dataset.min, 10);
+            const m = state.matches.find(x => x.id === id);
+            if (!m) return;
+            const base = m.lock_time || m.start_time;
+            if (!base) { toast('No start time set on this match yet — set one first.'); return; }
+            const targetField = m.lock_time ? 'lockTime' : 'startTime';
+            const newTime = new Date(new Date(base).getTime() + minutes * 60000).toISOString();
+            const patch = { [targetField]: newTime };
+            // First push declares the delay — the lock-matches cron job only
+            // checks lock_time for status='delayed' matches, and only checks
+            // start_time for 'scheduled'/'in_progress' ones, so this makes
+            // sure a start_time push doesn't just get silently ignored by it.
+            if (m.status === 'scheduled') patch.status = 'delayed';
+            btn.disabled = true;
+            try {
+              const upd = await state.db.updateMatch(id, patch);
+              const idx = state.matches.findIndex(x => x.id === id);
+              if (idx >= 0) state.matches[idx] = upd;
+              renderMatchesAdmin();
+              renderMatchSelector();
+              toast(`⏱ Pushed ${targetField === 'lockTime' ? 'lock' : 'start'} time +${minutes} min for M${m.match_number ?? '?'}.`);
+            } catch (err) {
+              toast('Push failed: ' + err.message, 4000);
+              btn.disabled = false;
+            }
+          });
+        });
+        tr.querySelector('.abandon-toggle-btn')?.addEventListener('click', async (e) => {
+          const btn         = e.currentTarget;
+          const isAbandoned = btn.dataset.abandoned === 'true';
+          const m     = state.matches.find(x => x.id === id);
+          const label = m ? `Match ${m.match_number ?? ''} (${m.home_team_id ?? ''} vs ${m.away_team_id ?? ''})` : `match ${id}`;
+          if (!isAbandoned && !confirm(
+            `Mark ${label} as abandoned?\n\n` +
+            `This match will no longer lock — users currently on it will ` +
+            `automatically roll to the next scheduled match instead.\n\nProceed?`
+          )) return;
+          const newStatus = isAbandoned ? 'scheduled' : 'abandoned';
+          btn.disabled = true;
+          try {
+            const upd = await state.db.updateMatch(id, { status: newStatus });
+            const idx = state.matches.findIndex(x => x.id === id);
+            if (idx >= 0) state.matches[idx] = upd;
+            renderMatchesAdmin();
+            renderMatchSelector();
+            toast(isAbandoned ? 'Un-abandoned — back to Scheduled.' : '🚫 Match marked abandoned.');
+          } catch (err) {
+            toast('Failed: ' + err.message, 4000);
+            btn.disabled = false;
+          }
+        });
       });
       $('#adminCount').textContent = `${matches.length} matches`;
     }
@@ -1850,7 +1938,15 @@
       const statusEl      = tr.querySelector('[data-f="status"]');
       const matchTypeEl   = tr.querySelector('[data-f="match_type"]');
       const dataSourceEl  = tr.querySelector('[data-f="data_source"]');
-      const currentStatus = state.matches.find(m => m.id === id)?.status ?? 'scheduled';
+      const existing       = state.matches.find(m => m.id === id);
+      const currentStatus  = existing?.status ?? 'scheduled';
+      // A newly-typed lock_time only takes effect once status is 'delayed' —
+      // the lock-matches cron job ignores lock_time entirely for 'scheduled'
+      // matches (see effectiveLockTime()/push-time-btn comments). Auto-promote
+      // here too, not just via the quick-push buttons, so typing straight into
+      // the lock_time field can't silently no-op the same way.
+      const lockTimeChanged = lockTime && lockTime !== existing?.lock_time;
+      const autoStatus      = (lockTimeChanged && currentStatus === 'scheduled') ? 'delayed' : currentStatus;
       const patch = {
         matchNumber: parseInt(tr.querySelector('[data-f="match_number"]').value, 10),
         homeTeamId : tr.querySelector('[data-f="home_team_id"]').value || null,
@@ -1861,7 +1957,7 @@
         startTime  : startTime,
         playedOn   : startTime ? startTime.slice(0, 10) : null,
         lockTime   : lockTime,
-        status     : statusEl ? statusEl.value : currentStatus,
+        status     : statusEl ? statusEl.value : autoStatus,
       };
       if (patch.homeTeamId && patch.awayTeamId && patch.homeTeamId === patch.awayTeamId) {
         toast('Home and away teams must differ.'); return;
@@ -3565,6 +3661,242 @@
       return rows;
     }
 
+    // ─── SCHEDULE CSV IMPORT ───────────────────────────────────────────────────
+    // Common timezone aliases → fixed UTC offset. Cricket schedules run in
+    // IST (India), US zones (MLC), and SAST (South Africa) most often — see
+    // also the per-tournament "non-overseas" label feature these leagues
+    // share. There's no tz-database in this app to resolve DST automatically,
+    // so US zones have separate STD/DST aliases — the admin picks whichever
+    // is actually in effect for the match date (e.g. ET in summer = EDT).
+    const TZ_OFFSETS = {
+      UTC: '+00:00', GMT: '+00:00',
+      IST: '+05:30',
+      SAST: '+02:00',
+      BST: '+01:00',
+      ET: '-05:00', EST: '-05:00', EDT: '-04:00',
+      CT: '-06:00', CST: '-06:00', CDT: '-05:00',
+      MT: '-07:00', MST: '-07:00', MDT: '-06:00',
+      PT: '-08:00', PST: '-08:00', PDT: '-07:00',
+    };
+
+    // Accepts a named zone (e.g. "ET", "IST") or an explicit offset ("+05:30",
+    // "-04:00", "Z"). Returns a normalized "+HH:MM"/"-HH:MM" string, or null.
+    function resolveTzOffset(raw) {
+      const v = (raw || '').trim();
+      if (!v) return null;
+      if (/^Z$/i.test(v)) return '+00:00';
+      const named = TZ_OFFSETS[v.toUpperCase()];
+      if (named) return named;
+      const m = /^([+-])(\d{1,2}):?(\d{2})$/.exec(v);
+      if (m) {
+        const [, sign, hh, mm] = m;
+        return `${sign}${hh.padStart(2, '0')}:${mm}`;
+      }
+      return null;
+    }
+
+    function matchesCsvTemplate() {
+      return [
+        'team1,team2,format,date,time,timezone',
+        'MI,CSK,T20,2026-08-01,19:30,IST',
+        'WF,SFU,T20,2026-08-02,19:00,ET',
+      ].join('\n');
+    }
+
+    function downloadMatchesCSVTemplate() {
+      const blob = new Blob([matchesCsvTemplate()], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'schedule_template.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    // Map a parsed schedule CSV (array of arrays, first row = header) to
+    // validated row objects. Match numbers are auto-assigned in file order,
+    // continuing from whatever's already used in this tournament — same
+    // scheme as the single-row "add match" form's nextMatchNumber().
+    function buildMatchesCsvRows(rawRows) {
+      if (!rawRows.length) return { rows: [], errors: ['Empty CSV — paste some data first.'] };
+      const header = rawRows[0].map(s => s.toLowerCase());
+      const required = ['team1', 'team2', 'format', 'date', 'time', 'timezone'];
+      const missing = required.filter(c => !header.includes(c));
+      if (missing.length) return { rows: [], errors: [`CSV header is missing: ${missing.join(', ')}`] };
+
+      const idx = {
+        team1:    header.indexOf('team1'),
+        team2:    header.indexOf('team2'),
+        format:   header.indexOf('format'),
+        date:     header.indexOf('date'),
+        time:     header.indexOf('time'),
+        timezone: header.indexOf('timezone'),
+      };
+
+      const usedNumbers = new Set(state.matches.map(m => m.match_number).filter(Boolean));
+      let candidate = 1;
+      const nextFreeNumber = () => {
+        while (usedNumbers.has(candidate)) candidate++;
+        usedNumbers.add(candidate);
+        return candidate++;
+      };
+
+      const out = [];
+      for (let i = 1; i < rawRows.length; i++) {
+        const r = rawRows[i];
+        const get = k => idx[k] >= 0 ? (r[idx[k]] ?? '') : '';
+        const team1  = get('team1').trim().toUpperCase();
+        const team2  = get('team2').trim().toUpperCase();
+        const format = get('format').trim().toUpperCase();
+        const dateRaw = get('date').trim();
+        const timeRaw = get('time').trim();
+        const tzRaw   = get('timezone').trim();
+
+        const row = {
+          line: i + 1,
+          team1, team2, format,
+          date: dateRaw, time: timeRaw, timezone: tzRaw,
+          matchNumber: null, startTimeIso: null, playedOn: null,
+          errors: [],
+        };
+
+        if (!KNOWN_TEAMS.includes(team1)) row.errors.push(`unknown team "${team1}"`);
+        if (!KNOWN_TEAMS.includes(team2)) row.errors.push(`unknown team "${team2}"`);
+        if (team1 && team2 && team1 === team2) row.errors.push('team1 and team2 must differ');
+        if (!['T20', 'ODI', 'TEST'].includes(format)) row.errors.push(`bad format "${format}" — must be T20, ODI or TEST`);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dateRaw)) row.errors.push(`date must be YYYY-MM-DD, got "${dateRaw}"`);
+        if (!/^\d{1,2}:\d{2}$/.test(timeRaw)) row.errors.push(`time must be HH:MM (24h), got "${timeRaw}"`);
+        const offset = resolveTzOffset(tzRaw);
+        if (!offset) row.errors.push(`unrecognized timezone "${tzRaw}" — use a named zone (IST, ET, CT, MT, PT, SAST, UTC…) or an offset like +05:30`);
+
+        if (row.errors.length === 0) {
+          const timePadded = timeRaw.length === 4 ? '0' + timeRaw : timeRaw; // "9:30" → "09:30"
+          const parsed = new Date(`${dateRaw}T${timePadded}:00${offset}`);
+          if (isNaN(parsed)) {
+            row.errors.push('could not parse date/time/timezone into a valid instant');
+          } else {
+            row.startTimeIso = parsed.toISOString();
+            row.playedOn     = row.startTimeIso.slice(0, 10);
+            row.matchNumber  = nextFreeNumber();
+          }
+        }
+
+        out.push(row);
+      }
+      return { rows: out, errors: [] };
+    }
+
+    function renderMatchesCsvPreview(rows, errors) {
+      const preview   = $('#matchesCsvPreview');
+      const summary   = $('#matchesCsvSummary');
+      const importBtn = $('#matchesCsvImportBtn');
+      if (errors.length) {
+        preview.style.display = 'block';
+        preview.innerHTML = `<table><tbody>${errors.map(e => `<tr class="row-err"><td>!</td><td class="err-msg">${escapeHtml(e)}</td></tr>`).join('')}</tbody></table>`;
+        summary.textContent = '';
+        importBtn.disabled = true; importBtn.textContent = 'Import';
+        return;
+      }
+      const ok  = rows.filter(r => r.errors.length === 0);
+      const bad = rows.filter(r => r.errors.length  >  0);
+
+      const rowsHtml = rows.map(r => {
+        const status = r.errors.length ? '✗' : '✓';
+        const cls    = r.errors.length ? 'row-err' : 'row-ok';
+        const errs   = r.errors.length ? `<div class="err-msg">${escapeHtml(r.errors.join('; '))}</div>` : '';
+        const resolved = r.startTimeIso ? new Date(r.startTimeIso).toLocaleString() : '—';
+        return `<tr class="${cls}">
+          <td>${status}</td>
+          <td>${r.matchNumber ?? '—'}</td>
+          <td>${escapeHtml(r.team1)} vs ${escapeHtml(r.team2)}${errs}</td>
+          <td>${escapeHtml(r.format)}</td>
+          <td>${escapeHtml(r.date)} ${escapeHtml(r.time)} ${escapeHtml(r.timezone)}</td>
+          <td>${resolved}</td>
+        </tr>`;
+      }).join('');
+
+      preview.style.display = 'block';
+      preview.innerHTML = `
+        <table>
+          <thead><tr><th></th><th>#</th><th>Match</th><th>Format</th><th>As entered</th><th>Resolved (your local time)</th></tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      `;
+      summary.textContent = `${ok.length} ok · ${bad.length} with errors · ${rows.length} total`;
+      importBtn.disabled = ok.length === 0;
+      importBtn.textContent = `Import ${ok.length} row${ok.length===1?'':'s'}`;
+      importBtn._rows = ok;
+    }
+
+    function openMatchesCsvView() {
+      if (!state.activeTournamentId) { toast('Select a tournament first (Schedule tab context bar).', 4000); return; }
+      $('#adminMatchesView').style.display = 'none';
+      $('#matchesCsvView').style.display   = 'block';
+    }
+    function closeMatchesCsvView() {
+      $('#matchesCsvView').style.display = 'none';
+      $('#adminMatchesView').style.display = 'block';
+      $('#matchesCsvText').value = '';
+      $('#matchesCsvFile').value = '';
+      $('#matchesCsvPreview').style.display = 'none';
+      $('#matchesCsvPreview').innerHTML = '';
+      $('#matchesCsvSummary').textContent = '';
+      $('#matchesCsvImportBtn').disabled = true;
+      $('#matchesCsvImportBtn').textContent = 'Import';
+      $('#matchesCsvImportBtn')._rows = null;
+    }
+
+    async function matchesCsvPreviewHandler() {
+      const text = $('#matchesCsvText').value;
+      if (!text.trim()) { toast('Paste CSV or upload a file first.'); return; }
+      const raw = parseCSV(text);
+      const { rows, errors } = buildMatchesCsvRows(raw);
+      renderMatchesCsvPreview(rows, errors);
+    }
+
+    async function matchesCsvFileHandler(e) {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      $('#matchesCsvText').value = text;
+      matchesCsvPreviewHandler();
+    }
+
+    async function matchesCsvImportHandler() {
+      const rows = $('#matchesCsvImportBtn')._rows;
+      if (!rows || rows.length === 0) { toast('Nothing valid to import.'); return; }
+      if (!state.activeTournamentId) { toast('Select a tournament first.', 4000); return; }
+      try {
+        if (state.db) {
+          const inserted = await state.db.bulkAddMatches(rows.map(r => ({
+            tournamentId: state.activeTournamentId,
+            matchNumber : r.matchNumber,
+            format      : r.format,
+            homeTeamId  : r.team1,
+            awayTeamId  : r.team2,
+            playedOn    : r.playedOn,
+            startTime   : r.startTimeIso,
+          })));
+          state.matches.push(...inserted);
+          toast(`Imported ${inserted.length} match${inserted.length===1?'':'es'}.`);
+        } else {
+          rows.forEach(r => {
+            state.matches.push({
+              id: 'local-' + Date.now() + '-' + r.matchNumber,
+              tournament_id: state.activeTournamentId,
+              match_number: r.matchNumber, format: r.format,
+              home_team_id: r.team1, away_team_id: r.team2,
+              played_on: r.playedOn, start_time: r.startTimeIso, status: 'scheduled',
+            });
+          });
+          toast(`Imported ${rows.length} match${rows.length===1?'':'es'} (local mode).`);
+        }
+        closeMatchesCsvView();
+        renderMatchesAdmin();
+        renderMatchSelector();
+      } catch (e) {
+        toast('Import failed: ' + e.message, 6000);
+      }
+    }
+
     function csvTemplate() {
       return [
         'id,name,team,role,credits,overseas',
@@ -3985,6 +4317,12 @@
     csvFileHandler,
     csvImportHandler,
     downloadCSVTemplate,
+    openMatchesCsvView,
+    closeMatchesCsvView,
+    matchesCsvPreviewHandler,
+    matchesCsvFileHandler,
+    matchesCsvImportHandler,
+    downloadMatchesCSVTemplate,
     forcePollNow: A.forcePollNow,
     refreshAdminViews,
   };

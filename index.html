@@ -1951,6 +1951,7 @@
         <div style="display:flex; gap:8px; align-items:center; padding:0 6px 10px; flex-wrap:wrap;">
           <button id="syncMatchesBtn" class="primary">Sync from CricAPI</button>
           <button id="finalizeMatchesBtn">Finalize completed</button>
+          <button id="matchesCsvOpenBtn" title="Bulk-upload a schedule from a CSV file">Import CSV</button>
           <input id="syncSeriesId" type="text" placeholder="Series ID (recommended)" style="font-size:12px; padding:6px 10px; width:280px;" />
           <select id="syncFilter" style="font-size:12px; padding:6px 10px;">
             <option value="remaining">Remaining only (not completed)</option>
@@ -1976,6 +1977,27 @@
           </thead>
           <tbody id="adminMatchesBody"></tbody>
         </table>
+        </div>
+      </div>
+      <div class="modal-body csv-panel" id="matchesCsvView" style="display:none;">
+        <div class="row">
+          <strong style="font-size:13px;">Paste CSV or upload a .csv file</strong>
+          <span class="hint">Expected header: <code>team1,team2,format,date,time,timezone</code></span>
+          <a class="template" id="matchesCsvTemplateBtn">Download template</a>
+        </div>
+        <textarea id="matchesCsvText" placeholder="team1,team2,format,date,time,timezone
+MI,CSK,T20,2026-08-01,19:30,IST
+WF,SFU,T20,2026-08-02,19:00,ET"></textarea>
+        <div class="row">
+          <input id="matchesCsvFile" type="file" accept=".csv,text/csv" style="font-size:12px;" />
+          <button id="matchesCsvPreviewBtn">Parse & preview</button>
+          <span class="hint">Team codes must already exist. Date is YYYY-MM-DD, time is 24h HH:MM. Timezone accepts a named zone (IST, ET, EDT, CT, MT, PT, SAST, UTC…) or an explicit offset like +05:30. Match numbers are auto-assigned in file order.</span>
+        </div>
+        <div id="matchesCsvPreview" class="csv-preview" style="display:none;"></div>
+        <div class="csv-actions">
+          <button id="matchesCsvImportBtn" class="primary" disabled>Import N rows</button>
+          <button id="matchesCsvCancelBtn">Back to schedule</button>
+          <span class="csv-summary" id="matchesCsvSummary"></span>
         </div>
       </div>
       <div class="modal-body csv-panel" id="adminCsvView" style="display:none;">
@@ -5847,7 +5869,7 @@ p31,Sample Player,MI,bat,9.0,false
           const allMatchesSorted = [...state.matches]
             .sort((a, b) => (a.match_number || 0) - (b.match_number || 0));
           const nextUpcoming = allMatchesSorted
-            .find(m => m.status !== 'completed' && m.status !== 'live' && m.status !== 'in_progress')
+            .find(m => !isMatchOver(m) && m.status !== 'live' && m.status !== 'in_progress')
             ?? allMatchesSorted[0] ?? null;
           console.log(`[slLoadDraft] mobile fallback — nextUpcoming=${nextUpcoming?.match_number ?? 'null'} status=${nextUpcoming?.status ?? 'null'}`);
           // Try upcoming first, then fall back to tournament-wide search
@@ -5941,7 +5963,7 @@ p31,Sample Player,MI,bat,9.0,false
       // match_number so the playoff phase is still detected correctly.
       const nextLock = slNextLockMatch();
       const nextMatchForPhase = nextLock ?? state.matches
-        .filter(m => m.status !== 'completed')
+        .filter(m => !isMatchOver(m))
         .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0))[0] ?? null;
       await slRefreshTransferCount(nextMatchForPhase?.match_number ?? null);
     }
@@ -7358,7 +7380,9 @@ p31,Sample Player,MI,bat,9.0,false
       // Shared colgroup so every match's mini single-row table lines up with the
       // header table's columns (same pattern as renderHistory / loadSLDetailInto):
       // Match | Captain | Vice-Captain | Booster | Xfers Left | Net | Running.
-      const COLGROUP = '<colgroup><col><col style="width:56px"><col style="width:64px"><col style="width:60px"><col style="width:74px"><col style="width:56px"><col style="width:76px"></colgroup>';
+      // Widened from the original 56/64/60/74/56/76 — names and 5-digit season
+      // totals were getting ellipsis-truncated in the narrow columns.
+      const COLGROUP = '<colgroup><col><col style="width:100px"><col style="width:110px"><col style="width:60px"><col style="width:86px"><col style="width:86px"><col style="width:96px"></colgroup>';
 
       // Transfer budget windows — regular season and playoff are SEPARATE
       // pooled budgets (see playoff_start_match_number/playoff_transfers_allowed),
@@ -8470,7 +8494,7 @@ p31,Sample Player,MI,bat,9.0,false
           // 3rd choice: the soonest scheduled match that hasn't started yet
           // (effectiveLockTime accounts for lock_time/delayed status)
           sorted
-            .filter(m => m.status !== 'completed' && effectiveLockTime(m) && new Date(effectiveLockTime(m)).getTime() > Date.now())
+            .filter(m => !isMatchOver(m) && effectiveLockTime(m) && new Date(effectiveLockTime(m)).getTime() > Date.now())
             .sort((a, b) => new Date(effectiveLockTime(a)) - new Date(effectiveLockTime(b)))[0] ||
           // 4th choice: the closest match by date regardless of status
           sorted[0];
@@ -8605,14 +8629,25 @@ p31,Sample Player,MI,bat,9.0,false
       return t ? new Date(t).getTime() <= Date.now() : false;
     }
 
+    /**
+     * A match that's finished OR was called off must stop being treated as
+     * "the next match" — same as completed, an abandoned/cancelled match
+     * should never gate XI locking or show up as the upcoming match users
+     * are picking against. Every "find the next match" helper below filters
+     * on this instead of `status !== 'completed'` alone.
+     */
+    function isMatchOver(m) {
+      return m?.status === 'completed' || m?.status === 'abandoned' || m?.status === 'cancelled';
+    }
+
     /** Strictly the next match whose effective lock time is in the future (not yet started). */
     function findNextScheduledMatch() {
       const now = Date.now();
       return state.matches
-        .filter(m => m.status !== 'completed' && effectiveLockTime(m) && new Date(effectiveLockTime(m)).getTime() > now)
+        .filter(m => !isMatchOver(m) && effectiveLockTime(m) && new Date(effectiveLockTime(m)).getTime() > now)
         .sort((a, b) => new Date(effectiveLockTime(a)) - new Date(effectiveLockTime(b)))[0]
         || state.matches
-            .filter(m => m.status !== 'completed' && !effectiveLockTime(m))
+            .filter(m => !isMatchOver(m) && !effectiveLockTime(m))
             .sort((a, b) => (a.match_number || 0) - (b.match_number || 0))[0]
         || null;
     }
@@ -8650,11 +8685,11 @@ p31,Sample Player,MI,bat,9.0,false
         .map(m => ({ m, t: effectiveLockTime(m) ? new Date(effectiveLockTime(m)).getTime() : null }))
         .filter(x => x.t !== null)
         .sort((a, b) => a.t - b.t);
-      // Prefer a currently-live match (effective lock time passed but not completed)
-      const live = withTime.find(x => x.m.status !== 'completed' && x.t <= now);
+      // Prefer a currently-live match (effective lock time passed but not over)
+      const live = withTime.find(x => !isMatchOver(x.m) && x.t <= now);
       if (live) return live.m;
       // Otherwise the closest upcoming
-      const upcoming = withTime.find(x => x.t > now && x.m.status !== 'completed');
+      const upcoming = withTime.find(x => x.t > now && !isMatchOver(x.m));
       return upcoming?.m || null;
     }
 
@@ -11733,6 +11768,12 @@ p31,Sample Player,MI,bat,9.0,false
     $('#csvFile').addEventListener('change', e => window.__admin?.csvFileHandler?.(e));
     $('#csvImportBtn').addEventListener('click', () => window.__admin?.csvImportHandler?.());
     $('#csvTemplateBtn').addEventListener('click', () => window.__admin?.downloadCSVTemplate?.());
+    $('#matchesCsvOpenBtn').addEventListener('click', () => window.__admin?.openMatchesCsvView?.());
+    $('#matchesCsvCancelBtn').addEventListener('click', () => window.__admin?.closeMatchesCsvView?.());
+    $('#matchesCsvPreviewBtn').addEventListener('click', () => window.__admin?.matchesCsvPreviewHandler?.());
+    $('#matchesCsvFile').addEventListener('change', e => window.__admin?.matchesCsvFileHandler?.(e));
+    $('#matchesCsvImportBtn').addEventListener('click', () => window.__admin?.matchesCsvImportHandler?.());
+    $('#matchesCsvTemplateBtn').addEventListener('click', () => window.__admin?.downloadMatchesCSVTemplate?.());
     /** Refresh everything on the main page after a team-code remap. */
     async function afterTeamCodeFix() {
       window.__admin?.renderMatchesAdmin?.(); renderMatchSelector(); window.__admin?.renderTeamsAdmin?.();

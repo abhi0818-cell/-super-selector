@@ -2032,6 +2032,52 @@ export function createDb(cfg = {}) {
       return data;
     },
 
+    /**
+     * Bulk-insert matches (used by the Schedule tab's CSV importer). Unlike
+     * bulkUpsertPlayers this is insert-only — CSV-uploaded matches have no
+     * external_id to key an upsert on, so re-uploading the same CSV creates
+     * duplicates rather than updating existing rows (same as adding the same
+     * match twice by hand via addMatch).
+     *
+     * Splits into 50-row chunks for the same reason bulkUpsertPlayers does.
+     *
+     * @param {Array<{tournamentId, matchNumber, format, homeTeamId, awayTeamId, playedOn, startTime}>} rows
+     * @returns {Promise<Array<object>>} the inserted match rows
+     */
+    async bulkAddMatches(rows) {
+      if (!Array.isArray(rows) || rows.length === 0) return [];
+      const sb = await getClient();
+
+      const payload = rows.map(r => {
+        if (!r.format || !r.homeTeamId || !r.awayTeamId || !r.playedOn || !r.startTime) {
+          throw new Error(`bulkAddMatches: row missing required fields → ${JSON.stringify(r)}`);
+        }
+        return {
+          tournament_id: r.tournamentId ?? null,
+          match_number : r.matchNumber  ?? null,
+          format       : r.format,
+          home_team_id : r.homeTeamId,
+          away_team_id : r.awayTeamId,
+          played_on    : r.playedOn,
+          start_time   : r.startTime,
+          status       : 'scheduled',
+          data_source  : 'auto',
+        };
+      });
+
+      const CHUNK = 50;
+      let inserted = [];
+      for (let i = 0; i < payload.length; i += CHUNK) {
+        const slice = payload.slice(i, i + CHUNK);
+        const { data, error } = await sb.from('matches').insert(slice).select();
+        if (error) {
+          throw new Error(`Insert failed on rows ${i+1}–${i+slice.length}: ${error.message}`);
+        }
+        inserted = inserted.concat(data || []);
+      }
+      return inserted;
+    },
+
     async updateMatch(id, patch) {
       const sb = await getClient();
       const row = {};
