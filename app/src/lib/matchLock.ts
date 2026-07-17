@@ -27,6 +27,17 @@ interface MatchLockCandidate {
 }
 
 /**
+ * A match that's finished OR was called off must stop being treated as "the
+ * next match" — mirrors web's isMatchOver() in index.html. Without this, an
+ * abandoned match (status flipped by admin, but its lock gate may still read
+ * as "not yet passed") would keep being picked as findNextUnlockedMatch()'s
+ * result instead of rolling users to the actual next scheduled match.
+ */
+export function isMatchOver(m: { status?: string | null }): boolean {
+  return m.status === 'completed' || m.status === 'abandoned' || m.status === 'cancelled';
+}
+
+/**
  * Given a tournament's matches, find the earliest one that hasn't locked yet.
  * Mirrors web's findNextScheduledMatch() (index.html). Deliberately excludes
  * not just 'completed' matches but anything past its lock gate — a match that
@@ -38,7 +49,7 @@ interface MatchLockCandidate {
  * the live match, so the screen kept showing its stale locked XI).
  */
 export function findNextUnlockedMatch<T extends MatchLockCandidate>(matches: T[]): T | null {
-  const candidates = matches.filter(m => m.status !== 'completed' && !isMatchLocked(m));
+  const candidates = matches.filter(m => !isMatchOver(m) && !isMatchLocked(m));
   const withTime = candidates
     .filter(m => m.lock_time || m.start_time)
     .sort((a, b) =>

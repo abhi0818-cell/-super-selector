@@ -33,6 +33,29 @@ interface AdminMatch {
   away_team_id: string | null;
   status: string;
   start_time: string | null;
+  lock_time: string | null;
+}
+
+// ─── Time helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Effective lock gate for a match — lock_time overrides start_time when set,
+ * but a 'delayed' match with no lock_time yet has NO gate at all. Mirrors
+ * web's effectiveLockTime() (index.html) and the lock-matches Edge Function,
+ * which only ever checks lock_time for status='delayed' matches.
+ */
+function effectiveLockTime(m: AdminMatch): string | null {
+  if (m.status === 'delayed' && !m.lock_time) return null;
+  return m.lock_time ?? m.start_time ?? null;
+}
+
+function formatRelative(iso: string): string {
+  const diffMs = new Date(iso).getTime() - Date.now();
+  const mins = Math.round(Math.abs(diffMs) / 60000);
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  const label = h > 0 ? `${h}h ${m}m` : `${m}m`;
+  return diffMs > 0 ? `locks in ${label}` : `overdue by ${label}`;
 }
 
 interface UnmatchedRow {
@@ -80,20 +103,51 @@ function Section({
 
 // ─── 1. Match Lock ────────────────────────────────────────────────────────────
 
-function MatchLockSection({ matches, loading }: { matches: AdminMatch[]; loading: boolean }) {
-  const [running, setRunning] = useState(false);
-  const [result, setResult]   = useState<string | null>(null);
+function MatchLockSection({
+  matches, loading, onRefresh, onDraft,
+}: {
+  matches: AdminMatch[];
+  loading: boolean;
+  onRefresh: () => Promise<void>;
+  onDraft: (title: string, body: string, tickerHours: string) => void;
+}) {
+  const [running, setRunning]       = useState(false);
+  const [result, setResult]         = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [busyId, setBusyId]         = useState<string | null>(null);
+  const [manualTime, setManualTime] = useState('');
 
-  const lockableStatuses = ['scheduled', 'delayed', 'in_progress'];
-  const lockable = matches.filter(m => lockableStatuses.includes(m.status));
+  // Live + the next 1 upcoming, or the next 2 upcoming if nothing's live —
+  // keeps this to exactly what's actionable right now instead of dumping
+  // every scheduled match in the tournament.
+  const live     = matches.filter(m => m.status === 'live' || m.status === 'in_progress');
+  const upcoming = matches
+    .filter(m => m.status === 'scheduled' || m.status === 'delayed')
+    .slice()
+    .sort((a, b) => {
+      const ta = effectiveLockTime(a);
+      const tb = effectiveLockTime(b);
+      if (!ta && !tb) return (a.match_number ?? 0) - (b.match_number ?? 0);
+      if (!ta) return 1;
+      if (!tb) return -1;
+      return new Date(ta).getTime() - new Date(tb).getTime();
+    });
+  const visible = live.length > 0
+    ? [...live, ...upcoming.slice(0, 1)]
+    : upcoming.slice(0, 2);
+
+  function matchLabel(m: AdminMatch) {
+    return `M${m.match_number ?? '?'} (${m.home_team_id} vs ${m.away_team_id})`;
+  }
 
   async function runLock() {
     setRunning(true);
     setResult(null);
     try {
-      const { data, error } = await supabase.functions.invoke('lock-matches', { body: {} });
+      const { error } = await supabase.functions.invoke('lock-matches', { body: {} });
       if (error) throw error;
       setResult('Lock run complete ✓');
+      await onRefresh();
     } catch (e: any) {
       setResult(`Error: ${e?.message ?? 'unknown'}`);
     } finally {
@@ -101,28 +155,161 @@ function MatchLockSection({ matches, loading }: { matches: AdminMatch[]; loading
     }
   }
 
+  async function applyPatch(
+    m: AdminMatch, patch: Record<string, any>,
+    successMsg: string, draftTitle: string, draftBody: string,
+  ) {
+    setBusyId(m.id);
+    try {
+      const { error } = await supabase.from('matches').update(patch).eq('id', m.id);
+      if (error) throw error;
+      await onRefresh();
+      setExpandedId(null);
+      setManualTime('');
+      // Duration floor on notifications_log.ticker_hours is 0.25h (15 min) —
+      // there's no true 5-min option without loosening that shared validation,
+      // so delay pings default to the floor rather than touching it.
+      onDraft(draftTitle, draftBody, '0.25');
+      Alert.alert('Done', successMsg);
+    } catch (e: any) {
+      Alert.alert('Failed', e?.message ?? 'unknown error');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  // Pushes lock_time if one's already set (the active gate once delayed),
+  // otherwise start_time (still just the informational kickoff). First push
+  // also promotes 'scheduled' → 'delayed' — the lock-matches Edge Function
+  // only checks lock_time for status='delayed' matches, so a start_time push
+  // alone wouldn't otherwise change when the match actually locks.
+  async function pushTime(m: AdminMatch, minutes: number) {
+    const base = m.lock_time || m.start_time;
+    if (!base) { Alert.alert('No start time set', 'Set a start time first (web admin).'); return; }
+    const target   = m.lock_time ? 'lock_time' : 'start_time';
+    const newTime  = new Date(new Date(base).getTime() + minutes * 60000).toISOString();
+    const patch: Record<string, any> = { [target]: newTime };
+    if (m.status === 'scheduled') patch.status = 'delayed';
+    await applyPatch(
+      m, patch,
+      `Pushed ${target === 'lock_time' ? 'lock' : 'start'} time +${minutes} min.`,
+      `Match M${m.match_number ?? '?'} delayed`,
+      `${matchLabel(m)} delayed — team lock pushed back ${minutes} min.`,
+    );
+  }
+
+  // Sets a firm lock_time (e.g. a known toss/inspection time) rather than
+  // nudging it in 15/30-min steps — same day as the match's start_time.
+  async function setLockTime(m: AdminMatch) {
+    const hhmm = manualTime.trim();
+    if (!/^\d{1,2}:\d{2}$/.test(hhmm)) { Alert.alert('Invalid time', 'Use 24h HH:MM, e.g. 20:45.'); return; }
+    const baseDate = (m.start_time ?? new Date().toISOString()).slice(0, 10);
+    const [hh, mm] = hhmm.split(':');
+    const d = new Date(`${baseDate}T${hh.padStart(2, '0')}:${mm}:00`); // parsed as device-local time
+    if (isNaN(d.getTime())) { Alert.alert('Invalid time', 'Could not parse that time.'); return; }
+    const patch: Record<string, any> = { lock_time: d.toISOString() };
+    if (m.status === 'scheduled') patch.status = 'delayed';
+    await applyPatch(
+      m, patch,
+      `Lock time set to ${hhmm}.`,
+      `Match M${m.match_number ?? '?'} delayed`,
+      `${matchLabel(m)} delayed — team lock now set for ${hhmm}.`,
+    );
+  }
+
+  function abandon(m: AdminMatch) {
+    Alert.alert(
+      'Abandon match?',
+      `${matchLabel(m)} will no longer lock — you'll roll to the next scheduled match instead.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Abandon', style: 'destructive',
+          onPress: () => applyPatch(
+            m, { status: 'abandoned' },
+            'Match marked abandoned.',
+            `Match M${m.match_number ?? '?'} abandoned`,
+            `${matchLabel(m)} has been abandoned.`,
+          ),
+        },
+      ],
+    );
+  }
+
   if (loading) return <ActivityIndicator color={C.accent} style={{ margin: spacing.md }} />;
 
   return (
     <View>
       <Text style={s.hint}>
-        Runs the lock-matches function immediately — locks all squads for any match
-        whose lock gate has passed regardless of cron schedule.
+        Showing the live match (if any) plus the next upcoming one — tap a match to push its
+        time or mark it delayed/abandoned. "Run Lock Now" still processes every match whose
+        lock gate has passed, tournament-wide, regardless of the cron schedule.
       </Text>
 
-      {lockable.length === 0 ? (
-        <Text style={s.empty}>No lockable matches right now.</Text>
+      {visible.length === 0 ? (
+        <Text style={s.empty}>No live or upcoming matches right now.</Text>
       ) : (
-        lockable.map(m => (
-          <View key={m.id} style={s.matchRow}>
-            <Text style={s.matchLabel}>
-              M{m.match_number ?? '?'} · {m.home_team_id} vs {m.away_team_id}
-            </Text>
-            <View style={[s.statusPill, { backgroundColor: statusColor(m.status) }]}>
-              <Text style={s.statusText}>{m.status}</Text>
+        visible.map(m => {
+          const lockAt      = effectiveLockTime(m);
+          const isExpanded  = expandedId === m.id;
+          return (
+            <View key={m.id}>
+              <Pressable
+                style={s.matchRow}
+                onPress={() => setExpandedId(isExpanded ? null : m.id)}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={s.matchLabel}>{matchLabel(m)}</Text>
+                  <Text style={s.matchSub}>
+                    {lockAt ? formatRelative(lockAt) : 'no lock gate set — will not auto-lock'}
+                  </Text>
+                </View>
+                <View style={[s.statusPill, { backgroundColor: statusColor(m.status) }]}>
+                  <Text style={s.statusText}>{m.status}</Text>
+                </View>
+              </Pressable>
+
+              {isExpanded && (
+                <View style={s.delayPanel}>
+                  <Text style={s.delayPanelLabel}>
+                    Push {m.lock_time ? 'lock' : 'start'} time
+                  </Text>
+                  <View style={s.delayBtnRow}>
+                    <Pressable style={s.delayBtn} onPress={() => pushTime(m, 15)} disabled={busyId === m.id}>
+                      <Text style={s.delayBtnText}>+15m</Text>
+                    </Pressable>
+                    <Pressable style={s.delayBtn} onPress={() => pushTime(m, 30)} disabled={busyId === m.id}>
+                      <Text style={s.delayBtnText}>+30m</Text>
+                    </Pressable>
+                  </View>
+
+                  <Text style={s.delayPanelLabel}>Or set a firm lock time (24h, same day)</Text>
+                  <View style={s.delayBtnRow}>
+                    <TextInput
+                      style={s.manualTimeInput}
+                      placeholder="20:45"
+                      placeholderTextColor={C.muted}
+                      value={manualTime}
+                      onChangeText={setManualTime}
+                      keyboardType="numbers-and-punctuation"
+                      maxLength={5}
+                    />
+                    <Pressable style={s.delayBtn} onPress={() => setLockTime(m)} disabled={busyId === m.id}>
+                      <Text style={s.delayBtnText}>Set</Text>
+                    </Pressable>
+                  </View>
+
+                  <Pressable style={s.abandonBtn} onPress={() => abandon(m)} disabled={busyId === m.id}>
+                    {busyId === m.id
+                      ? <ActivityIndicator color={C.bad} size="small" />
+                      : <Text style={s.abandonBtnText}>🚫 Abandon match</Text>
+                    }
+                  </Pressable>
+                </View>
+              )}
             </View>
-          </View>
-        ))
+          );
+        })
       )}
 
       <Pressable
@@ -132,7 +319,7 @@ function MatchLockSection({ matches, loading }: { matches: AdminMatch[]; loading
       >
         {running
           ? <ActivityIndicator color="#1C1F26" />
-          : <Text style={s.primaryBtnText}>🔒 Run Lock Now</Text>
+          : <Text style={s.primaryBtnText}>🔒 Run Lock Now (all matches)</Text>
         }
       </Pressable>
 
@@ -426,10 +613,13 @@ function PlayerMapSection({ tournamentId }: { tournamentId: string | null }) {
 
 // ─── 4. Notify ────────────────────────────────────────────────────────────────
 
-function NotifySection() {
-  const [title, setTitle]   = useState('');
-  const [body, setBody]     = useState('');
-  const [tickerHours, setTickerHours] = useState('6');
+function NotifySection({
+  title, setTitle, body, setBody, tickerHours, setTickerHours,
+}: {
+  title: string; setTitle: (v: string) => void;
+  body: string; setBody: (v: string) => void;
+  tickerHours: string; setTickerHours: (v: string) => void;
+}) {
   const [sending, setSending] = useState(false);
   const [result, setResult] = useState<string | null>(null);
 
@@ -537,6 +727,8 @@ function statusColor(status: string): string {
     case 'in_progress': return 'rgba(45,106,53,0.15)';
     case 'delayed':     return 'rgba(201,168,76,0.2)';
     case 'completed':   return 'rgba(120,120,120,0.12)';
+    case 'abandoned':
+    case 'cancelled':   return 'rgba(184,60,60,0.15)';
     default:            return 'rgba(120,120,120,0.08)';
   }
 }
@@ -550,6 +742,12 @@ export default function AdminScreen() {
   const [matchLoading, setMatchLoading] = useState(false);
 
   const [openSection, setOpenSection] = useState<'lock' | 'fetch' | 'map' | 'notify' | null>('lock');
+
+  // Lifted out of NotifySection so Match Lock's delay/abandon actions can
+  // pre-fill and auto-open a draft notification (draftNotification below).
+  const [notifyTitle, setNotifyTitle]     = useState('');
+  const [notifyBody, setNotifyBody]       = useState('');
+  const [notifyHours, setNotifyHours]     = useState('6');
 
   // Guard — should never render for non-admins (tab is hidden), but belt + suspenders
   if (user?.email !== ADMIN_EMAIL) {
@@ -567,9 +765,9 @@ export default function AdminScreen() {
     setMatchLoading(true);
     const { data } = await supabase
       .from('matches')
-      .select('id, match_number, home_team_id, away_team_id, status, start_time')
+      .select('id, match_number, home_team_id, away_team_id, status, start_time, lock_time')
       .eq('tournament_id', selectedTournamentId)
-      .neq('status', 'completed')
+      .not('status', 'in', '(completed,abandoned,cancelled)')
       .order('match_number', { ascending: true });
     setMatches((data ?? []) as AdminMatch[]);
     setMatchLoading(false);
@@ -579,6 +777,16 @@ export default function AdminScreen() {
 
   function toggle(s: 'lock' | 'fetch' | 'map' | 'notify') {
     setOpenSection(o => o === s ? null : s);
+  }
+
+  // Called from MatchLockSection after a delay push / manual lock-time set /
+  // abandon — pre-fills the Notify draft and jumps straight to that section
+  // so the admin can review + send in one flow instead of hunting for it.
+  function draftNotification(title: string, body: string, hours: string) {
+    setNotifyTitle(title);
+    setNotifyBody(body);
+    setNotifyHours(hours);
+    setOpenSection('notify');
   }
 
   const unmatchedCount = 0; // loaded inside PlayerMapSection; badge shown generically
@@ -603,7 +811,12 @@ export default function AdminScreen() {
               open={openSection === 'lock'}
               onToggle={() => toggle('lock')}
             >
-              <MatchLockSection matches={matches} loading={matchLoading} />
+              <MatchLockSection
+                matches={matches}
+                loading={matchLoading}
+                onRefresh={loadMatches}
+                onDraft={draftNotification}
+              />
             </Section>
 
             <Section
@@ -627,7 +840,11 @@ export default function AdminScreen() {
               open={openSection === 'notify'}
               onToggle={() => toggle('notify')}
             >
-              <NotifySection />
+              <NotifySection
+                title={notifyTitle} setTitle={setNotifyTitle}
+                body={notifyBody} setBody={setNotifyBody}
+                tickerHours={notifyHours} setTickerHours={setNotifyHours}
+              />
             </Section>
 
           </ScrollView>
@@ -657,8 +874,19 @@ const s = StyleSheet.create({
   // Shared match row
   matchRow:   { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: C.border },
   matchLabel: { fontSize: fontSize.md, color: C.text, flex: 1 },
+  matchSub:   { fontSize: fontSize.xs, color: C.muted, marginTop: 2 },
   statusPill: { borderRadius: radius.full, paddingHorizontal: 8, paddingVertical: 2 },
   statusText: { fontSize: fontSize.xs, color: C.text, fontWeight: '600', textTransform: 'uppercase' },
+
+  // Match Lock — delay panel
+  delayPanel:      { backgroundColor: C.panel2, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.sm },
+  delayPanelLabel: { fontSize: fontSize.xs, color: C.muted, marginBottom: spacing.xs, marginTop: spacing.xs, textTransform: 'uppercase', fontWeight: '600' },
+  delayBtnRow:     { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.sm },
+  delayBtn:        { flex: 1, backgroundColor: C.panel, borderWidth: 1, borderColor: C.accent, borderRadius: radius.md, paddingVertical: spacing.sm, alignItems: 'center' },
+  delayBtnText:    { fontSize: fontSize.sm, fontWeight: '700', color: C.accent },
+  manualTimeInput: { flex: 1, backgroundColor: C.panel, borderWidth: 1, borderColor: C.border, borderRadius: radius.md, padding: spacing.sm, fontSize: fontSize.base, color: C.text, textAlign: 'center' },
+  abandonBtn:      { borderWidth: 1, borderColor: C.bad, borderRadius: radius.md, paddingVertical: spacing.sm, alignItems: 'center', marginTop: spacing.xs },
+  abandonBtnText:  { fontSize: fontSize.sm, fontWeight: '700', color: C.bad },
 
   // Hints + empty
   hint:  { fontSize: fontSize.sm, color: C.muted, marginBottom: spacing.md, lineHeight: 16 },
