@@ -409,6 +409,21 @@ function FetchScoresSection({ matches, loading }: { matches: AdminMatch[]; loadi
 
 // ─── 3. Player Map ────────────────────────────────────────────────────────────
 
+/**
+ * Names a source (CricAPI, CricketAddictor, Business Standard) sends when IT
+ * failed to identify a player — not a real name. These can never be aliased
+ * to one specific local player: the same literal string shows up for
+ * different actual players across different matches, so a static alias just
+ * silently mis-credits stats to whoever was picked the first time (this is
+ * exactly how "player not found" → Abayanga Khaka happened).
+ * Mirrors db.js's isPlaceholderName (web admin) — keep in sync.
+ */
+function isPlaceholderName(rawName: string): boolean {
+  const PLACEHOLDER_NAMES = new Set(['player not found']);
+  const norm = String(rawName ?? '').toLowerCase().trim();
+  return PLACEHOLDER_NAMES.has(norm) || norm.startsWith('empty');
+}
+
 function PlayerMapSection({ tournamentId }: { tournamentId: string | null }) {
   const { players } = useTeamStore();
   const [tab, setTab]               = useState<'unmatched' | 'fielding'>('unmatched');
@@ -459,6 +474,13 @@ function PlayerMapSection({ tournamentId }: { tournamentId: string | null }) {
   }
 
   async function resolveAlias(row: UnmatchedRow, player: { id: string; name: string }) {
+    if (isPlaceholderName(row.raw_name)) {
+      Alert.alert(
+        'Cannot alias',
+        `"${row.raw_name}" is a generic "not found" placeholder from the source feed, not a real name — it can't be mapped to one player. Use Ignore instead.`,
+      );
+      return;
+    }
     setBusy(row.id);
     // 1. Create alias
     const { error: aliasErr } = await supabase
@@ -468,7 +490,7 @@ function PlayerMapSection({ tournamentId }: { tournamentId: string | null }) {
         tournament_id: tournamentId,
         alias:         row.raw_name.toLowerCase().trim(),
         source:        row.source,
-      }, { onConflict: 'alias,source,tournament_id' });
+      }, { onConflict: 'alias,source,tournament_id', ignoreDuplicates: true });
     if (aliasErr) { Alert.alert('Alias error', aliasErr.message); setBusy(null); return; }
 
     // 2. Mark resolved
