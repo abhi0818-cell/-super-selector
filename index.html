@@ -6277,11 +6277,14 @@ p31,Sample Player,MI,bat,9.0,false
         $('#slXiSaveLabel').textContent = `⚡ Saving for next: M${nextNum} · ${nextHome} vs ${nextAway} — ${capName} (C), ${vcName} (VC)`;
       } else {
         // Full explanation ("Only N transfers left this season/playoff — reduce
-        // to N changes.") already shows in #slXferInfoBar above the pitch —
-        // this save-bar label just needs to point there, not restate the same
-        // fact in different words right next to it.
+        // to N changes.") already shows in #slXferInfoBar above the pitch, and
+        // is visible on screen at the same time as this save-bar label — a
+        // "see note above" pointer here was still just restating that the note
+        // exists. The disabled Save button + that note together already say
+        // everything needed, so this label adds nothing and stays blank here,
+        // same as the noSlChangesYet case below.
         $('#slXiSaveLabel').textContent = wouldExceedCap
-            ? 'Too many changes for your remaining transfer budget — see note above.'
+            ? ''
             : (!budgetCapOff && budgetLeft < 0)
               ? 'Over budget by ' + Math.abs(budgetLeft).toFixed(1) + ' cr.'
               : saveEnabled
@@ -6378,7 +6381,16 @@ p31,Sample Player,MI,bat,9.0,false
         infoBar.innerHTML = `No changes from last locked XI.${lockNote}`;
       } else if (pendingExceedsCap) {
         const phaseScope = isPlayoff ? 'this playoff' : 'this season';
-        infoBar.innerHTML = `<span style="color:var(--danger,#e55);">Only ${seasonRemaining} transfer${seasonRemaining !== 1 ? 's' : ''} left ${phaseScope} — reduce to ${seasonRemaining} change${seasonRemaining !== 1 ? 's' : ''}.</span>`;
+        // Running out of transfers is a normal, allowed end state — not a
+        // violation — so don't word it like one. seasonRemaining === 0 means
+        // the budget is fully (and legitimately) spent; the actual problem is
+        // just that these particular pending edits can't be saved, and the fix
+        // is to revert them, not "reduce to 0 changes" (which reads like an
+        // instruction to do the impossible). Some-but-not-enough-remaining
+        // gets its own wording since trimming down to N is a real option there.
+        infoBar.innerHTML = seasonRemaining === 0
+          ? `<span style="color:var(--danger,#e55);">You've used your full transfer budget ${phaseScope} — that's expected. These pending changes can't be saved; revert them to keep your current XI.</span>`
+          : `<span style="color:var(--danger,#e55);">Only ${seasonRemaining} transfer${seasonRemaining !== 1 ? 's' : ''} left ${phaseScope} — trim your pending changes to ${seasonRemaining} or fewer to save.</span>`;
       } else if (seasonCap === null) {
         // Genuinely uncapped — either no budget configured at all, or (the
         // playoff-opener case) playoff_first_match_unlimited carved this

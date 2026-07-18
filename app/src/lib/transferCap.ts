@@ -303,12 +303,24 @@ export async function getTransferUsage(
     config.playoff_first_match_unlimited ?? false,
   );
 
+  // Exclude the current match's own rows — they're that match's
+  // already-saved-but-unlocked draft, which the caller (HomeScreen's
+  // Transfers tile / MyXIScreen's info pill) already accounts for
+  // separately as the current in-progress edit. Without this, re-opening
+  // a match you already saved once this session double-counts it: once
+  // here (as "used") and again as whatever's currently on screen — making
+  // a fully legitimate save (e.g. using exactly your remaining transfers)
+  // look like it's already over budget. Mirrors the same exclusion
+  // checkAndLogTransfers's own enforcement query already applies below,
+  // and the equivalent fix just applied to web's getSeasonTransferCount
+  // (db.js) for the identical bug.
   let countQuery = supabase
     .from('user_transfers')
     .select('id', { count: 'exact', head: true })
-    .eq('squad_id', squadId);
+    .eq('squad_id', squadId)
+    .neq('match_id', currentMatchId);
   if (phaseIds) {
-    const ids = [...phaseIds];
+    const ids = [...phaseIds].filter(id => id !== currentMatchId);
     countQuery = countQuery.in('match_id', ids.length ? ids : ['__none__']);
   }
   const { count } = await countQuery;

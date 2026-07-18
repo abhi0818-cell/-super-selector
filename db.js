@@ -4072,12 +4072,28 @@ export function createDb(cfg = {}) {
           .map(m => m.id);
       })();
 
+      // Exclude the target match's own id — its rows (if any) are that
+      // match's OWN already-saved-but-unlocked draft, which the caller
+      // (renderSlXferInfoBar) already shows separately as "pending changes"
+      // via slTransferCount(). Without this exclusion, re-opening a match you
+      // already saved once this session double-counts: once here (as "used")
+      // and again as "pending" — making a fully legitimate save (e.g. using
+      // exactly your remaining 6 transfers) look like it's already over
+      // budget, when it's actually fine. Mirrors the same exclusion
+      // saveMatchXI's own cap-check query already applies (`.neq('match_id',
+      // matchId)`) — this just brings the read-only display query in line
+      // with the enforcement query it's supposed to reflect.
+      const targetMatchId = allMatches.find(m => m.match_number === targetMatchNumber)?.id ?? null;
+
       let q = sb
         .from('user_transfers')
         .select('id', { count: 'exact', head: true })
         .eq('squad_id', squadId);
       if (phaseIds) {
-        q = q.in('match_id', phaseIds.length ? phaseIds : ['__none__']);
+        const ids = targetMatchId ? phaseIds.filter(id => id !== targetMatchId) : phaseIds;
+        q = q.in('match_id', ids.length ? ids : ['__none__']);
+      } else if (targetMatchId) {
+        q = q.neq('match_id', targetMatchId);
       }
       const { count, error } = await q;
       if (error) throw error;
