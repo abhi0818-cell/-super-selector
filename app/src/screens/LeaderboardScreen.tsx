@@ -15,6 +15,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -31,6 +32,8 @@ import {
   DailyMatchOption,
 } from '../lib/dailyLeaderboard';
 import { useLiveMatch } from '../lib/liveScore';
+import { getLeaderboardHistory, LeaderboardHistory } from '../lib/leaderboardHistory';
+import { LeaderboardProgressChart } from '../components/LeaderboardProgressChart';
 
 // ─── Domain types ─────────────────────────────────────────────────────────────
 
@@ -469,12 +472,8 @@ export default function LeaderboardScreen() {
   const { entries: sbEntries, loading,
           loadLeaderboard, setCurrentUser }              = useLeaderboardStore();
   const { selectedTournamentId }                         = useTournamentStore();
+  const { width: screenWidth }                           = useWindowDimensions();
 
-  // Live match flag only — used to mark the live match's chip with 🔴 in the
-  // Daily match-picker below. The live-team-with-points view used to also be
-  // surfaced here via a banner/modal, but that duplicated what tapping any
-  // entry's row already shows (TeamDetailModal now includes the live match
-  // as a tab since isMatchPlayed() covers status 'live') — removed.
   const liveMatch = useLiveMatch(selectedTournamentId);
 
   // Build tabs from real contests, fall back to hardcoded placeholders
@@ -492,6 +491,12 @@ export default function LeaderboardScreen() {
 
   const [activeTab, setActiveTab]         = useState<string>(tabs[0]?.id ?? 'daily');
   const [selectedEntry, setSelectedEntry] = useState<LeaderboardEntry | null>(null);
+
+  // ── Progress chart view state ────────────────────────────────────────────────
+  const [viewMode,       setViewMode]       = useState<'table' | 'chart'>('table');
+  const [chartHistory,   setChartHistory]   = useState<LeaderboardHistory | null>(null);
+  const [chartLoading,   setChartLoading]   = useState(false);
+  const [chartError,     setChartError]     = useState<string | null>(null);
 
   // ── Daily-only state ────────────────────────────────────────────────────────
   // Daily has no persistent squad, so it ranks ONE match at a time (mirrors
@@ -573,6 +578,27 @@ export default function LeaderboardScreen() {
       .finally(() => setDailyLoading(false));
   }, [selectedDailyMatchId, isDailyTab, user?.id]);
 
+  // Reset to table view when switching to Daily (no history for Daily)
+  useEffect(() => {
+    if (isDailyTab && viewMode === 'chart') {
+      setViewMode('table');
+      setChartHistory(null);
+    }
+  }, [isDailyTab]);
+
+  // Fetch history when entering chart mode for an SL/private tab
+  useEffect(() => {
+    if (viewMode !== 'chart' || isDailyTab) return;
+    const isRealUuid = activeTab.includes('-');
+    if (!isRealUuid) return;
+    setChartLoading(true);
+    setChartError(null);
+    getLeaderboardHistory(activeTab)
+      .then(h => setChartHistory(h))
+      .catch(err => setChartError(err.message ?? 'Failed to load chart'))
+      .finally(() => setChartLoading(false));
+  }, [viewMode, activeTab, isDailyTab]);
+
   const entries = isDailyTab ? dailyEntries : (sbEntries[activeTab] ?? []);
   const myEntry = entries.find(e => e.isCurrentUser);
   const listLoading = isDailyTab ? dailyLoading : loading;
@@ -631,6 +657,28 @@ export default function LeaderboardScreen() {
         ))}
       </ScrollView>
 
+      {/* ── Table / Progress toggle — SL and private tabs only ── */}
+      {!isDailyTab && (
+        <View style={styles.viewToggle}>
+          <Pressable
+            style={[styles.viewPill, viewMode === 'table' && styles.viewPillActive]}
+            onPress={() => setViewMode('table')}
+          >
+            <Text style={[styles.viewPillText, viewMode === 'table' && styles.viewPillTextActive]}>
+              📋 Table
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.viewPill, viewMode === 'chart' && styles.viewPillActive]}
+            onPress={() => setViewMode('chart')}
+          >
+            <Text style={[styles.viewPillText, viewMode === 'chart' && styles.viewPillTextActive]}>
+              📈 Progress
+            </Text>
+          </Pressable>
+        </View>
+      )}
+
       {/* ── Daily match selector — Daily ranks one match at a time, never a
             season aggregate, so this picker IS the equivalent of "which
             matchweek" for this tab. ── */}
@@ -659,43 +707,66 @@ export default function LeaderboardScreen() {
         </ScrollView>
       )}
 
-      {/* ── User highlight ── */}
-      {myEntry && <UserHighlight entry={myEntry} showSlCols={showSlCols} />}
-
-      {/* ── Section label ── */}
-      <View style={styles.divider}>
-        <View style={styles.dividerLine} />
-        <Text style={styles.dividerText}>All Rankings</Text>
-        <View style={styles.dividerLine} />
-      </View>
-
-      {/* ── Rankings list (or spinner while first load) ── */}
-      {listLoading && entries.length === 0 ? (
-        <View style={styles.spinnerWrap}>
-          <ActivityIndicator size="large" color="#C9A84C" />
-        </View>
+      {/* ── Chart view ── */}
+      {viewMode === 'chart' ? (
+        <ScrollView contentContainerStyle={styles.chartScroll} showsVerticalScrollIndicator={false}>
+          {chartLoading ? (
+            <View style={styles.spinnerWrap}>
+              <ActivityIndicator size="large" color="#C9A84C" />
+            </View>
+          ) : chartError ? (
+            <Text style={styles.empty}>{chartError}</Text>
+          ) : chartHistory && chartHistory.squads.length > 0 ? (
+            <LeaderboardProgressChart
+              history={chartHistory}
+              myUserId={user?.id}
+              width={screenWidth - spacing.lg * 2}
+            />
+          ) : chartHistory ? (
+            <Text style={styles.empty}>No match data yet for this contest</Text>
+          ) : null}
+        </ScrollView>
       ) : (
-        <FlatList
-          data={entries}
-          keyExtractor={item => item.userId}
-          renderItem={({ item }) => (
-            <EntryRow
-              entry={item}
-              onPress={() => setSelectedEntry(item)}
-              showSlCols={showSlCols}
+        <>
+          {/* ── User highlight ── */}
+          {myEntry && <UserHighlight entry={myEntry} showSlCols={showSlCols} />}
+
+          {/* ── Section label ── */}
+          <View style={styles.divider}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>All Rankings</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          {/* ── Rankings list ── */}
+          {listLoading && entries.length === 0 ? (
+            <View style={styles.spinnerWrap}>
+              <ActivityIndicator size="large" color="#C9A84C" />
+            </View>
+          ) : (
+            <FlatList
+              data={entries}
+              keyExtractor={item => item.userId}
+              renderItem={({ item }) => (
+                <EntryRow
+                  entry={item}
+                  onPress={() => setSelectedEntry(item)}
+                  showSlCols={showSlCols}
+                />
+              )}
+              contentContainerStyle={styles.list}
+              ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
+              ListEmptyComponent={
+                <Text style={styles.empty}>
+                  {isDailyTab && dailyMatchOptions.length === 0
+                    ? 'No locked Daily matches yet'
+                    : 'No leaderboard data yet for this contest'}
+                </Text>
+              }
+              showsVerticalScrollIndicator={false}
             />
           )}
-          contentContainerStyle={styles.list}
-          ItemSeparatorComponent={() => <View style={{ height: 6 }} />}
-          ListEmptyComponent={
-            <Text style={styles.empty}>
-              {isDailyTab && dailyMatchOptions.length === 0
-                ? 'No locked Daily matches yet'
-                : 'No leaderboard data yet for this contest'}
-            </Text>
-          }
-          showsVerticalScrollIndicator={false}
-        />
+        </>
       )}
 
       {/* ── Team detail modal ── */}
@@ -891,6 +962,44 @@ const styles = StyleSheet.create({
   rowArrow:      { color: C.muted, fontSize: fontSize.lg, fontWeight: '400', marginLeft: -4 },
 
   empty: { color: C.muted, fontSize: fontSize.base, textAlign: 'center', marginTop: spacing.xxl },
+
+  // Table / Progress toggle
+  viewToggle: {
+    flexDirection:     'row',
+    gap:               4,
+    paddingHorizontal: spacing.lg,
+    paddingVertical:   spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(28,31,38,0.08)',
+    backgroundColor:   'rgba(245,240,224,0.6)',
+  },
+  viewPill: {
+    paddingHorizontal: spacing.md,
+    paddingVertical:   5,
+    borderRadius:      radius.full,
+    borderWidth:       1,
+    borderColor:       C.border,
+    backgroundColor:   'transparent',
+  },
+  viewPillActive: {
+    backgroundColor: 'rgba(201,168,76,0.15)',
+    borderColor:     'rgba(201,168,76,0.5)',
+  },
+  viewPillText: {
+    color:      C.muted,
+    fontSize:   fontSize.sm,
+    fontWeight: '600',
+  },
+  viewPillTextActive: {
+    color: C.text,
+    fontWeight: '700',
+  },
+
+  // Chart scroll wrapper
+  chartScroll: {
+    padding:       spacing.lg,
+    paddingBottom: spacing.xxl,
+  },
 
   // ── Team Detail Modal ─────────────────────────────────────────────────────
 
