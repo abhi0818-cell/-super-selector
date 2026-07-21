@@ -906,7 +906,7 @@
 
       /* ── Player pool ────────────────────────────────────────────── */
       .player-grid {
-        grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
         max-height: 420px;
         gap: 6px;
         padding: 10px 12px;
@@ -995,9 +995,10 @@
       /* ── Main ───────────────────────────────────────────────────── */
       main { padding: 8px 8px 24px; }
 
-      /* ── Player grid: 2 equal columns ───────────────────────────── */
+      /* ── Player grid: single column on phones — 2-col at 155px min was
+           too narrow for jersey (44px) + name + pips; 1fr gives ~350px cards */
       .player-grid {
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: 1fr;
         max-height: 380px;
         padding: 8px 10px;
       }
