@@ -3791,7 +3791,7 @@ p31,Sample Player,MI,bat,9.0,false
       for (let v = step; v < maxPts; v += step) {
         const y = pyOf(v);
         svg.appendChild(mk('line', { x1: ML, x2: W - MR, y1: y, y2: y, stroke: '#e8e3d8', 'stroke-width': '1' }));
-        const t = mk('text', { x: ML - 5, y: y + 3.5, 'font-size': '9', fill: '#bbb', 'text-anchor': 'end', 'font-family': 'inherit' });
+        const t = mk('text', { x: ML - 5, y: y + 3.5, 'font-size': '7.5', fill: '#bbb', 'text-anchor': 'end', 'font-family': 'inherit' });
         t.textContent = v; svg.appendChild(t);
       }
       // X axis baseline
@@ -3816,17 +3816,17 @@ p31,Sample Player,MI,bat,9.0,false
         if (!pts.length) return;
 
         if (me) {
-          const glow = mk('path', { fill: 'none', stroke: 'rgba(201,168,76,0.18)', 'stroke-width': '8', 'stroke-linejoin': 'round', 'stroke-linecap': 'round', d: '' });
+          const glow = mk('path', { fill: 'none', stroke: 'rgba(201,168,76,0.10)', 'stroke-width': '4', 'stroke-linejoin': 'round', 'stroke-linecap': 'round', d: '' });
           svg.appendChild(glow);
           glowEls[sq.squadId] = glow;
         }
-        const path = mk('path', { fill: 'none', stroke: color, 'stroke-width': me ? '2.4' : '1.6', 'stroke-linejoin': 'round', 'stroke-linecap': 'round', d: '', opacity: me ? '1' : '0.85' });
+        const path = mk('path', { fill: 'none', stroke: color, 'stroke-width': me ? '1.8' : '1.4', 'stroke-linejoin': 'round', 'stroke-linecap': 'round', d: '', opacity: me ? '1' : '0.85' });
         svg.appendChild(path);
         pathEls[sq.squadId] = path;
 
         dotsByMn[sq.squadId] = {};
         pts.forEach(pt => {
-          const dot = mk('circle', { cx: pxOf(mxi(pt.matchNumber)), cy: pyOf(pt.cumulative), r: me ? '3.5' : '2.5', fill: color, stroke: 'white', 'stroke-width': me ? '1.5' : '1', opacity: '0' });
+          const dot = mk('circle', { cx: pxOf(mxi(pt.matchNumber)), cy: pyOf(pt.cumulative), r: me ? '3' : '2', fill: color, stroke: 'white', 'stroke-width': me ? '1.2' : '0.8', opacity: '0' });
           svg.appendChild(dot);
           dotsByMn[sq.squadId][pt.matchNumber] = dot;
         });
