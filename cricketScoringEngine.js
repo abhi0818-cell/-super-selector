@@ -14,6 +14,7 @@ export const SCORING_RULES = {
     run: 1,
     boundary4: 1,          // bonus per four
     boundary6: 2,          // bonus per six
+    thirty_run_bonus: 4,   // 30+ runs bonus
     half_century: 8,       // 50+ runs bonus
     century: 16,           // 100+ runs bonus
     duck: -2,              // dismissed for 0 (batters/AR/WK only)
@@ -29,6 +30,9 @@ export const SCORING_RULES = {
     lbw_bowled_bonus: 8,   // extra if wicket type is LBW or Bowled
     maiden_over: 12,
     dot_ball: 1,
+    three_wicket_haul: 8,
+    four_wicket_haul: 8,
+    five_wicket_haul: 16,
 
     // Economy rate bonuses/penalties (min 2 overs)
     economy_below_5: 6,
@@ -155,6 +159,8 @@ export function calcBattingPoints(innings, format = 'T20') {
     breakdown.century = rules.century || 0;
   } else if (runs >= 50) {
     breakdown.half_century = rules.half_century || 0;
+  } else if (runs >= 30) {
+    breakdown.thirtyRunBonus = rules.thirty_run_bonus || 0;
   }
 
   // Duck penalty — applies to batters / all-rounders / wicket-keepers,
@@ -221,6 +227,7 @@ export function calcBowlingPoints(spell, format = 'T20') {
   // Haul bonuses
   if (wickets >= 5 && rules.five_wicket_haul) breakdown.fiveWicket = rules.five_wicket_haul;
   else if (wickets >= 4 && rules.four_wicket_haul) breakdown.fourWicket = rules.four_wicket_haul;
+  else if (wickets >= 3 && rules.three_wicket_haul) breakdown.threeWicket = rules.three_wicket_haul;
 
   // Maidens
   breakdown.maidens = (maidens || 0) * rules.maiden_over;

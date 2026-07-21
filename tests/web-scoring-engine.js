@@ -17,9 +17,10 @@
 
 const DEFAULT_SCORING_RULES = {
   T20: {
-    run: 1, boundary4: 1, boundary6: 2, half_century: 8, century: 16, duck: -2,
+    run: 1, boundary4: 1, boundary6: 2, thirty_run_bonus: 4, half_century: 8, century: 16, duck: -2,
     sr_above_170: 6, sr_140_to_170: 4, sr_below_70: -6, sr_70_to_100: -2,
     wicket: 25, lbw_bowled_bonus: 8, maiden_over: 12, dot_ball: 1,
+    three_wicket_haul: 8, four_wicket_haul: 8, five_wicket_haul: 16,
     economy_below_5: 6, economy_5_to_6: 4, economy_10_to_11: -4, economy_above_11: -6,
     catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
     no_ball: -1, wide: -1,
@@ -91,6 +92,7 @@ function calcBatting(inn, fmt = 'T20', rulesOverride) {
   b.boundary6 = sixes * (r.boundary6 || 0);
   if (runs >= 100) b.century       = r.century || 0;
   else if (runs >= 50) b.half_century = r.half_century || 0;
+  else if (runs >= 30) b.thirtyRunBonus = r.thirty_run_bonus || 0;
   if (isDismissed && runs === 0 && role !== 'bowl') b.duck = r.duck || 0;
   if (r.sr_above_170 !== undefined && ballsFaced >= 10) {
     b.strikeRateBonus = srBonus(strikeRate(runs, ballsFaced), fmt, r);
@@ -109,6 +111,7 @@ function calcBowling(s, fmt = 'T20', rulesOverride) {
   b.lbwBowledBonus = prem * (r.lbw_bowled_bonus || 0);
   if (wickets >= 5 && r.five_wicket_haul) b.fiveWicket = r.five_wicket_haul;
   else if (wickets >= 4 && r.four_wicket_haul) b.fourWicket = r.four_wicket_haul;
+  else if (wickets >= 3 && r.three_wicket_haul) b.threeWicket = r.three_wicket_haul;
   b.maidens  = maidens * r.maiden_over;
   b.dotBalls = dotBalls * (r.dot_ball || 0);
   b.economyBonus = ballsBowled > 6 ? ecoBonus(economyRate(runsConceded, ballsBowled), fmt, r) : 0;

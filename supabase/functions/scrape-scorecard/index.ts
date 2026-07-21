@@ -640,6 +640,7 @@ function calcBatting(bat: BatRow, role: string, fmt: string, r: Rules): number {
   pts += bat.sixes * (r.boundary6 ?? 0)
   if (bat.runs >= 100) pts += (r.century ?? 0)
   else if (bat.runs >= 50) pts += (r.half_century ?? 0)
+  else if (bat.runs >= 30) pts += (r.thirty_run_bonus ?? 0)
   if (bat.dismissed && bat.runs === 0 && role !== 'bowl') pts += (r.duck ?? 0)
   if (r.sr_above_170 !== undefined && bat.balls >= 10) {
     const sr = (bat.runs / bat.balls) * 100
@@ -653,6 +654,7 @@ function calcBowling(bowl: BowlRow, fmt: string, r: Rules): number {
   pts += bowl.wickets * (r.wicket ?? 25)
   if (bowl.wickets >= 5 && r.five_wicket_haul) pts += r.five_wicket_haul
   else if (bowl.wickets >= 4 && r.four_wicket_haul) pts += r.four_wicket_haul
+  else if (bowl.wickets >= 3 && r.three_wicket_haul) pts += r.three_wicket_haul
   pts += bowl.maidens * (r.maiden_over ?? 0)
   pts += bowl.dots    * (r.dot_ball ?? 0)
   const ballsBowled = Math.round(bowl.overs) * 6 + Math.round((bowl.overs % 1) * 10)
@@ -666,10 +668,10 @@ function calcBowling(bowl: BowlRow, fmt: string, r: Rules): number {
 // ─── Default T20 scoring rules (fallback if tournament has none) ──────────────
 const DEFAULT_T20_RULES: Rules = {
   run: 1, boundary4: 1, boundary6: 2,
-  half_century: 8, century: 16, duck: -2,
+  thirty_run_bonus: 4, half_century: 8, century: 16, duck: -2,
   sr_above_170: 6, sr_140_to_170: 4, sr_below_70: -6, sr_70_to_100: -4,
   wicket: 25, maiden_over: 8, dot_ball: 0,
-  four_wicket_haul: 8, five_wicket_haul: 16,
+  three_wicket_haul: 8, four_wicket_haul: 8, five_wicket_haul: 16,
   economy_below_5: 6, economy_5_to_6: 4, economy_10_to_11: -4, economy_above_11: -6,
   catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
   lbw_bowled_bonus: 8,

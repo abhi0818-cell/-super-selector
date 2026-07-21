@@ -4172,6 +4172,13 @@
         if (!meta) return;
         (grouped[meta.group] ||= []).push(key);
       });
+      // Minimum-sample-size gates: these bonuses/penalties only kick in once
+      // the player has enough balls faced/bowled to make the rate meaningful.
+      // Keep in sync with calcStrikeRateBonus/calcEconomyBonus in the scoring engine.
+      const GROUP_THRESHOLD_NOTE = {
+        'Strike rate': 'Only applied once the batter has faced ≥10 balls.',
+        'Economy':     'Only applied once the bowler has bowled more than 6 balls (past the 1st over).',
+      };
       return RULE_GROUP_ORDER.filter(g => grouped[g]?.length).map(group => {
         const rows = grouped[group].map(key => {
           const v = cur[key];
@@ -4185,7 +4192,10 @@
             ${cell}
           `;
         }).join('');
-        return `<div class="rule-group-title">${group}</div><div class="rule-grid">${rows}</div>`;
+        const note = GROUP_THRESHOLD_NOTE[group]
+          ? `<div class="rule-group-note" style="font-size:11px; color:var(--muted); margin:-4px 0 6px;">${GROUP_THRESHOLD_NOTE[group]}</div>`
+          : '';
+        return `<div class="rule-group-title">${group}</div>${note}<div class="rule-grid">${rows}</div>`;
       }).join('');
     }
 

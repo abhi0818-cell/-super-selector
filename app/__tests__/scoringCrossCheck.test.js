@@ -24,6 +24,8 @@ const mob = require('../src/engine/cricketScoringEngine');
 
 const BATTING_CASES = [
   { label: 'basic batter 30 runs',        inn: { runs: 30, ballsFaced: 25, fours: 2, sixes: 0, isDismissed: false, role: 'bat' } },
+  { label: '30-run bonus, no half-century', inn: { runs: 32, ballsFaced: 26, fours: 1, sixes: 0, isDismissed: false, role: 'bat' } },
+  { label: 'below 30 — no milestone bonus', inn: { runs: 29, ballsFaced: 25, fours: 0, sixes: 0, isDismissed: false, role: 'bat' } },
   { label: '50+ bonus',                   inn: { runs: 55, ballsFaced: 40, fours: 3, sixes: 1, isDismissed: true,  role: 'bat' } },
   { label: 'century',                     inn: { runs: 110,ballsFaced: 80, fours: 8, sixes: 4, isDismissed: false, role: 'bat' } },
   { label: 'duck — batter',               inn: { runs: 0,  ballsFaced: 4,  fours: 0, sixes: 0, isDismissed: true,  role: 'bat' } },
@@ -43,6 +45,10 @@ const BOWLING_CASES = [
   { label: 'no-balls and wides',          spell: { wickets: 1, wicketTypes: [], maidens: 0, runsConceded: 15, ballsBowled: 12, dotBalls: 2, noBalls: 2, wides: 3 } },
   { label: 'ODI 5-wkt haul',             spell: { wickets: 5, wicketTypes: [], maidens: 0, runsConceded: 30, ballsBowled: 48, dotBalls: 0, noBalls: 0, wides: 0 }, fmt: 'ODI' },
   { label: 'ODI 4-wkt haul',             spell: { wickets: 4, wicketTypes: [], maidens: 0, runsConceded: 25, ballsBowled: 36, dotBalls: 0, noBalls: 0, wides: 0 }, fmt: 'ODI' },
+  { label: 'T20 5-wkt haul',             spell: { wickets: 5, wicketTypes: [], maidens: 0, runsConceded: 30, ballsBowled: 24, dotBalls: 0, noBalls: 0, wides: 0 } },
+  { label: 'T20 4-wkt haul',             spell: { wickets: 4, wicketTypes: [], maidens: 0, runsConceded: 25, ballsBowled: 24, dotBalls: 0, noBalls: 0, wides: 0 } },
+  { label: 'T20 3-wkt haul',             spell: { wickets: 3, wicketTypes: [], maidens: 0, runsConceded: 20, ballsBowled: 24, dotBalls: 0, noBalls: 0, wides: 0 } },
+  { label: 'T20 2 wickets — no haul bonus', spell: { wickets: 2, wicketTypes: [], maidens: 0, runsConceded: 20, ballsBowled: 24, dotBalls: 0, noBalls: 0, wides: 0 } },
   { label: '≤ 6 balls: no eco bonus',    spell: { wickets: 1, wicketTypes: [], maidens: 0, runsConceded: 4, ballsBowled: 6, dotBalls: 2, noBalls: 0, wides: 0 } },
 ];
 
@@ -86,7 +92,7 @@ describe('calcBatting — web vs mobile identical', () => {
       const m = mob.calcBattingPoints(inn, 'T20');
       assert.equal(w.points, m.points, `points mismatch: web=${w.points} mob=${m.points}`);
       // Key breakdown entries must match
-      for (const key of ['runs','boundary4','boundary6','half_century','century','duck','strikeRateBonus']) {
+      for (const key of ['runs','boundary4','boundary6','thirtyRunBonus','half_century','century','duck','strikeRateBonus']) {
         const wv = w.breakdown[key] ?? 0;
         const mv = m.breakdown[key] ?? 0;
         assert.equal(wv, mv, `breakdown.${key}: web=${wv} mob=${mv}`);
@@ -103,7 +109,7 @@ describe('calcBowling — web vs mobile identical', () => {
       const w = web.calcBowling(spell, fmt);
       const m = mob.calcBowlingPoints(spell, fmt);
       assert.equal(w.points, m.points, `points: web=${w.points} mob=${m.points}`);
-      for (const key of ['wickets','lbwBowledBonus','maidens','dotBalls','economyBonus','noBalls','wides','fiveWicket','fourWicket']) {
+      for (const key of ['wickets','lbwBowledBonus','maidens','dotBalls','economyBonus','noBalls','wides','fiveWicket','fourWicket','threeWicket']) {
         const wv = w.breakdown[key] ?? 0;
         const mv = m.breakdown[key] ?? 0;
         assert.equal(wv, mv, `breakdown.${key}: web=${wv} mob=${mv}`);

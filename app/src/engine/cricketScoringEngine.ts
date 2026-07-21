@@ -22,9 +22,10 @@ type ScoringRuleSet = Record<string, number>;
 export const SCORING_RULES: Record<MatchFormat, ScoringRuleSet> = {
   T20: {
     run: 1, boundary4: 1, boundary6: 2,
-    half_century: 8, century: 16, duck: -2,
+    thirty_run_bonus: 4, half_century: 8, century: 16, duck: -2,
     sr_above_170: 6, sr_140_to_170: 4, sr_below_70: -6, sr_70_to_100: -2,
     wicket: 25, lbw_bowled_bonus: 8, maiden_over: 12, dot_ball: 1,
+    three_wicket_haul: 8, four_wicket_haul: 8, five_wicket_haul: 16,
     economy_below_5: 6, economy_5_to_6: 4, economy_10_to_11: -4, economy_above_11: -6,
     catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
     no_ball: -1, wide: -1,
@@ -115,6 +116,7 @@ export function calcBattingPoints(
 
   if (runs >= 100) breakdown.century = rules.century ?? 0;
   else if (runs >= 50) breakdown.half_century = rules.half_century ?? 0;
+  else if (runs >= 30) breakdown.thirtyRunBonus = rules.thirty_run_bonus ?? 0;
 
   if (isDismissed && runs === 0 && role !== 'bowl') {
     breakdown.duck = rules.duck ?? 0;
@@ -151,6 +153,7 @@ export function calcBowlingPoints(
 
   if (wickets >= 5 && rules.five_wicket_haul) breakdown.fiveWicket = rules.five_wicket_haul;
   else if (wickets >= 4 && rules.four_wicket_haul) breakdown.fourWicket = rules.four_wicket_haul;
+  else if (wickets >= 3 && rules.three_wicket_haul) breakdown.threeWicket = rules.three_wicket_haul;
 
   breakdown.maidens  = (maidens  ?? 0) * rules.maiden_over;
   breakdown.dotBalls = (dotBalls ?? 0) * (rules.dot_ball ?? 0);

@@ -2396,9 +2396,10 @@ p31,Sample Player,MI,bat,9.0,false
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
     // is the immutable baseline used for "Reset to defaults".
     const DEFAULT_SCORING_RULES = {
-      T20: { run:1, boundary4:1, boundary6:2, half_century:8, century:16, duck:-2,
+      T20: { run:1, boundary4:1, boundary6:2, thirty_run_bonus:4, half_century:8, century:16, duck:-2,
         sr_above_170:6, sr_140_to_170:4, sr_below_70:-6, sr_70_to_100:-2,
         wicket:25, lbw_bowled_bonus:8, maiden_over:12, dot_ball:1,
+        three_wicket_haul:8, four_wicket_haul:8, five_wicket_haul:16,
         economy_below_5:6, economy_5_to_6:4, economy_10_to_11:-4, economy_above_11:-6,
         catch:8, stumping:12, run_out_direct:12, run_out_indirect:6,
         no_ball:-1, wide:-1 },
@@ -2433,6 +2434,7 @@ p31,Sample Player,MI,bat,9.0,false
       run:              { group:'Batting',     label:'Per run' },
       boundary4:        { group:'Batting',     label:'Four (bonus)' },
       boundary6:        { group:'Batting',     label:'Six (bonus)' },
+      thirty_run_bonus: { group:'Batting',     label:'30+ bonus' },
       half_century:     { group:'Batting',     label:'50+ bonus' },
       century:          { group:'Batting',     label:'100+ bonus' },
       duck:             { group:'Batting',     label:'Duck (penalty)' },
@@ -2450,6 +2452,7 @@ p31,Sample Player,MI,bat,9.0,false
       lbw_bowled_bonus: { group:'Bowling',     label:'LBW/Bowled bonus' },
       maiden_over:      { group:'Bowling',     label:'Maiden over' },
       dot_ball:         { group:'Bowling',     label:'Per dot ball' },
+      three_wicket_haul:{ group:'Bowling',     label:'3-wicket haul' },
       four_wicket_haul: { group:'Bowling',     label:'4-wicket haul' },
       five_wicket_haul: { group:'Bowling',     label:'5-wicket haul' },
       // Economy
@@ -2490,7 +2493,7 @@ p31,Sample Player,MI,bat,9.0,false
     function calcBatting(inn,fmt='T20',rulesOverride){
       const r=rulesOverride||SCORING_RULES[fmt]; const {runs=0,ballsFaced=0,fours=0,sixes=0,isDismissed=false,role}=inn||{}; const b={};
       b.runs=runs*r.run; b.boundary4=fours*(r.boundary4||0); b.boundary6=sixes*(r.boundary6||0);
-      if(runs>=100) b.century=r.century||0; else if(runs>=50) b.half_century=r.half_century||0;
+      if(runs>=100) b.century=r.century||0; else if(runs>=50) b.half_century=r.half_century||0; else if(runs>=30) b.thirtyRunBonus=r.thirty_run_bonus||0;
       // Duck penalty: does NOT apply to bowlers — only batters / AR / WK.
       if(isDismissed&&runs===0&&role!=='bowl') b.duck=r.duck||0;
       if(r.sr_above_170!==undefined&&ballsFaced>=10){ b.strikeRateBonus=srBonus(strikeRate(runs,ballsFaced),fmt,r); } else b.strikeRateBonus=0;
@@ -2503,6 +2506,7 @@ p31,Sample Player,MI,bat,9.0,false
       b.lbwBowledBonus=prem*(r.lbw_bowled_bonus||0);
       if(wickets>=5&&r.five_wicket_haul) b.fiveWicket=r.five_wicket_haul;
       else if(wickets>=4&&r.four_wicket_haul) b.fourWicket=r.four_wicket_haul;
+      else if(wickets>=3&&r.three_wicket_haul) b.threeWicket=r.three_wicket_haul;
       b.maidens=maidens*r.maiden_over; b.dotBalls=dotBalls*(r.dot_ball||0);
       // Economy bonus: bowler must have bowled MORE than 1 over (>6 balls).
       b.economyBonus = ballsBowled>6 ? ecoBonus(economyRate(runsConceded,ballsBowled),fmt,r) : 0;
@@ -11181,6 +11185,7 @@ p31,Sample Player,MI,bat,9.0,false
       { label:'Run scored',         key:'run',            unit:'per run' },
       { label:'Boundary (4)',       key:'boundary4',      unit:'bonus' },
       { label:'Six (6)',            key:'boundary6',      unit:'bonus' },
+      { label:'30-run bonus',       key:'thirty_run_bonus', unit:'bonus' },
       { label:'Half-century (50)',  key:'half_century',   unit:'bonus' },
       { label:'Century (100)',      key:'century',        unit:'bonus' },
       { label:'Duck (dismissed 0)', key:'duck',           unit:'pts' },
@@ -11191,6 +11196,7 @@ p31,Sample Player,MI,bat,9.0,false
     ];
     const RULES_BOWLING = [
       { label:'Wicket',             key:'wicket',           unit:'per wkt' },
+      { label:'3-wicket haul',      key:'three_wicket_haul', unit:'bonus' },
       { label:'4-wicket haul',      key:'four_wicket_haul', unit:'bonus' },
       { label:'5-wicket haul',      key:'five_wicket_haul', unit:'bonus' },
       { label:'Maiden over',        key:'maiden_over',      unit:'bonus' },
@@ -11210,9 +11216,9 @@ p31,Sample Player,MI,bat,9.0,false
     ];
 
     const DEFAULT_T20_RULES_WEB = {
-      run:1, boundary4:1, boundary6:2, half_century:8, century:16, duck:-2,
+      run:1, boundary4:1, boundary6:2, thirty_run_bonus:4, half_century:8, century:16, duck:-2,
       sr_above_170:6, sr_140_to_170:4, sr_below_70:-6, sr_70_to_100:-4,
-      wicket:25, maiden_over:8, dot_ball:0, four_wicket_haul:8, five_wicket_haul:16,
+      wicket:25, maiden_over:8, dot_ball:0, three_wicket_haul:8, four_wicket_haul:8, five_wicket_haul:16,
       economy_below_5:6, economy_5_to_6:4, economy_10_to_11:-4, economy_above_11:-6,
       catch:8, stumping:12, run_out_direct:12, run_out_indirect:6,
     };
@@ -11319,7 +11325,13 @@ p31,Sample Player,MI,bat,9.0,false
             <strong style="color:var(--accent)">Vice-Captain 1.5×</strong> their base points.
           </div>
           ${ruleTableHtml('Batting', RULES_BATTING, displayRules)}
+          <div style="font-size:11px; color:var(--muted); margin:-6px 0 10px; padding:0 2px;">
+            SR bonus/penalty only applies once the batter has faced <strong>10+ balls</strong>.
+          </div>
           ${ruleTableHtml('Bowling', bowlingRows, displayRules)}
+          <div style="font-size:11px; color:var(--muted); margin:-6px 0 10px; padding:0 2px;">
+            Economy bonus/penalty only applies once the bowler has bowled <strong>more than 6 balls</strong> (past the 1st over).
+          </div>
           ${ruleTableHtml('Fielding', RULES_FIELDING, displayRules)}
         `;
 
@@ -13027,6 +13039,7 @@ p31,Sample Player,MI,bat,9.0,false
         if (br.breakdown.boundary6)         lines.push(['Sixes (' + (bat.sixes||0) + ' × ' + rules.boundary6 + ')', br.breakdown.boundary6]);
         if (br.breakdown.century)           lines.push(['100+ bonus', br.breakdown.century]);
         else if (br.breakdown.half_century) lines.push(['50+ bonus', br.breakdown.half_century]);
+        else if (br.breakdown.thirtyRunBonus) lines.push(['30+ bonus', br.breakdown.thirtyRunBonus]);
         if (br.breakdown.duck)              lines.push(['Duck penalty', br.breakdown.duck]);
         if (br.breakdown.strikeRateBonus)   lines.push(['Strike-rate bonus', br.breakdown.strikeRateBonus]);
         metaParts.push((bat.runs||0) + ' (' + (bat.ballsFaced||0) + ')');
@@ -13040,6 +13053,7 @@ p31,Sample Player,MI,bat,9.0,false
         }
         if (bwr.breakdown.fiveWicket)       lines.push(['5-wicket haul bonus', bwr.breakdown.fiveWicket]);
         else if (bwr.breakdown.fourWicket)  lines.push(['4-wicket haul bonus', bwr.breakdown.fourWicket]);
+        else if (bwr.breakdown.threeWicket) lines.push(['3-wicket haul bonus', bwr.breakdown.threeWicket]);
         if (bwr.breakdown.maidens)          lines.push(['Maidens (' + (bowl.maidens||0) + ' × ' + rules.maiden_over + ')', bwr.breakdown.maidens]);
         if (bwr.breakdown.dotBalls)         lines.push(['Dot balls (' + (bowl.dotBalls||0) + ' × ' + (rules.dot_ball||0) + ')', bwr.breakdown.dotBalls]);
         if (bwr.breakdown.economyBonus)     lines.push(['Economy bonus', bwr.breakdown.economyBonus]);

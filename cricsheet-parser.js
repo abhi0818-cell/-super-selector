@@ -76,9 +76,10 @@
 export const DEFAULT_RULES = {
   T20: {
     run: 1, boundary4: 1, boundary6: 2,
-    half_century: 8, century: 16, duck: -2,
+    thirty_run_bonus: 4, half_century: 8, century: 16, duck: -2,
     sr_above_170: 6, sr_140_to_170: 4, sr_below_70: -6, sr_70_to_100: -2,
     wicket: 25, lbw_bowled_bonus: 8, maiden_over: 12, dot_ball: 1,
+    three_wicket_haul: 8, four_wicket_haul: 8, five_wicket_haul: 16,
     economy_below_5: 6, economy_5_to_6: 4, economy_10_to_11: -4, economy_above_11: -6,
     catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
     no_ball: -1, wide: -1,
@@ -213,6 +214,7 @@ function scoreBatting(bat, fmt, rules) {
   pts += sixes  * (r.boundary6 || 0);
   if (runs >= 100) pts += r.century      || 0;
   else if (runs >= 50) pts += r.half_century || 0;
+  else if (runs >= 30) pts += r.thirty_run_bonus || 0;
   if (isDismissed && runs === 0 && role !== 'bowl') pts += r.duck || 0;
   if (r.sr_above_170 !== undefined && ballsFaced >= 10) {
     pts += srBonus(strikeRate(runs, ballsFaced), fmt, r);
@@ -229,6 +231,8 @@ function scoreBowling(bowl, fmt, rules) {
   const premium = wicketTypes.filter(t => ['lbw', 'bowled'].includes(String(t).toLowerCase())).length;
   pts += premium * (r.lbw_bowled_bonus || 0);
   if (wickets >= 5 && r.five_wicket_haul) pts += r.five_wicket_haul;
+  else if (wickets >= 4 && r.four_wicket_haul) pts += r.four_wicket_haul;
+  else if (wickets >= 3 && r.three_wicket_haul) pts += r.three_wicket_haul;
   pts += maidens  * (r.maiden_over || 0);
   pts += dotBalls * (r.dot_ball    || 0);
   if (ballsBowled >= 12) pts += ecoBonus(economy(runsConceded, ballsBowled), fmt, r);

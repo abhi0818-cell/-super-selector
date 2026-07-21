@@ -37,8 +37,21 @@ describe('SCORING_RULES constants', () => {
 
 describe('calcBattingPoints — T20', () => {
   it('basic run scoring', () => {
-    const { points } = calcBattingPoints({ runs: 30, ballsFaced: 25, fours: 0, sixes: 0, isDismissed: false, role: 'bat' }, 'T20');
-    assert.equal(points, 30); // 30×1
+    // 22 runs off 20 balls: no milestone (< 30), SR 110 falls in the neutral 100-140 zone → no SR effect
+    const { points } = calcBattingPoints({ runs: 22, ballsFaced: 20, fours: 0, sixes: 0, isDismissed: false, role: 'bat' }, 'T20');
+    assert.equal(points, 22); // 22×1
+  });
+
+  it('30-run bonus at exactly 30 runs (no half-century added)', () => {
+    // 30 runs off 25 balls: SR 120 is neutral, isolates the milestone bonus
+    const { breakdown } = calcBattingPoints({ runs: 30, ballsFaced: 25, fours: 0, sixes: 0, isDismissed: false, role: 'bat' }, 'T20');
+    assert.equal(breakdown.thirtyRunBonus, 4);
+    assert.equal(breakdown.half_century, undefined);
+  });
+
+  it('no 30-run bonus below 30 runs', () => {
+    const { breakdown } = calcBattingPoints({ runs: 29, ballsFaced: 25, fours: 0, sixes: 0, isDismissed: false, role: 'bat' }, 'T20');
+    assert.equal(breakdown.thirtyRunBonus, undefined);
   });
 
   it('boundaries add bonus pts on top of run points', () => {
@@ -130,10 +143,29 @@ describe('calcBowlingPoints — T20', () => {
     assert.equal(breakdown.dotBalls, 4); // 4×1pt
   });
 
-  it('5-wicket haul bonus', () => {
+  it('T20 5-wicket haul bonus', () => {
     const { breakdown } = calcBowlingPoints({ wickets: 5, wicketTypes: [], maidens: 0, runsConceded: 30, ballsBowled: 24, dotBalls: 0, noBalls: 0, wides: 0 }, 'T20');
-    assert.equal(breakdown.fiveWicket, undefined); // T20 has no five_wicket_haul key
+    assert.equal(breakdown.fiveWicket, 16);
+    assert.equal(breakdown.fourWicket, undefined);
+    assert.equal(breakdown.threeWicket, undefined);
     assert.equal(breakdown.wickets, 125);
+  });
+
+  it('T20 4-wicket haul bonus (no 5-wicket bonus stacked)', () => {
+    const { breakdown } = calcBowlingPoints({ wickets: 4, wicketTypes: [], maidens: 0, runsConceded: 30, ballsBowled: 24, dotBalls: 0, noBalls: 0, wides: 0 }, 'T20');
+    assert.equal(breakdown.fourWicket, 8);
+    assert.equal(breakdown.fiveWicket, undefined);
+  });
+
+  it('T20 3-wicket haul bonus (no 4/5-wicket bonus stacked)', () => {
+    const { breakdown } = calcBowlingPoints({ wickets: 3, wicketTypes: [], maidens: 0, runsConceded: 30, ballsBowled: 24, dotBalls: 0, noBalls: 0, wides: 0 }, 'T20');
+    assert.equal(breakdown.threeWicket, 8);
+    assert.equal(breakdown.fourWicket, undefined);
+  });
+
+  it('no wicket-haul bonus below 3 wickets', () => {
+    const { breakdown } = calcBowlingPoints({ wickets: 2, wicketTypes: [], maidens: 0, runsConceded: 30, ballsBowled: 24, dotBalls: 0, noBalls: 0, wides: 0 }, 'T20');
+    assert.equal(breakdown.threeWicket, undefined);
   });
 
   it('ODI 5-wicket haul bonus', () => {

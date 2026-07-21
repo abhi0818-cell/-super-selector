@@ -80,6 +80,7 @@ const BATTING_ROWS: RuleRow[] = [
   { label: 'Run scored',          key: 'run',            unit: 'per run' },
   { label: 'Boundary (4)',        key: 'boundary4',      unit: 'bonus' },
   { label: 'Six (6)',             key: 'boundary6',      unit: 'bonus' },
+  { label: '30-run bonus',        key: 'thirty_run_bonus', unit: 'bonus' },
   { label: 'Half-century (50)',   key: 'half_century',   unit: 'bonus' },
   { label: 'Century (100)',       key: 'century',        unit: 'bonus' },
   { label: 'Duck (dismissed 0)',  key: 'duck',           unit: 'pts' },
@@ -91,6 +92,7 @@ const BATTING_ROWS: RuleRow[] = [
 
 const BOWLING_ROWS: RuleRow[] = [
   { label: 'Wicket',              key: 'wicket',           unit: 'per wkt' },
+  { label: '3-wicket haul',       key: 'three_wicket_haul', unit: 'bonus' },
   { label: '4-wicket haul',       key: 'four_wicket_haul', unit: 'bonus' },
   { label: '5-wicket haul',       key: 'five_wicket_haul', unit: 'bonus' },
   { label: 'Maiden over',         key: 'maiden_over',      unit: 'bonus' },
@@ -251,10 +253,10 @@ export default function RulesScreen() {
   // ── Default T20 rules (shown when tournament has none configured) ─────────────
   const DEFAULT_RULES: Record<string, number> = {
     run: 1, boundary4: 1, boundary6: 2,
-    half_century: 8, century: 16, duck: -2,
+    thirty_run_bonus: 4, half_century: 8, century: 16, duck: -2,
     sr_above_170: 6, sr_140_to_170: 4, sr_below_70: -6, sr_70_to_100: -4,
     wicket: 25, maiden_over: 8, dot_ball: 0,
-    four_wicket_haul: 8, five_wicket_haul: 16,
+    three_wicket_haul: 8, four_wicket_haul: 8, five_wicket_haul: 16,
     economy_below_5: 6, economy_5_to_6: 4, economy_10_to_11: -4, economy_above_11: -6,
     catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
   };
@@ -311,11 +313,17 @@ export default function RulesScreen() {
             </InfoCard>
 
             <RuleTable title="Batting"  rows={BATTING_ROWS}  rules={displayRules} />
+            <Text style={styles.ruleNote}>
+              SR bonus/penalty only applies once the batter has faced 10+ balls.
+            </Text>
             <RuleTable
               title="Bowling"
               rows={dotBallEnabled ? BOWLING_ROWS : BOWLING_ROWS.filter(r => r.key !== 'dot_ball')}
               rules={displayRules}
             />
+            <Text style={styles.ruleNote}>
+              Economy bonus/penalty only applies once the bowler has bowled more than 6 balls (past the 1st over).
+            </Text>
             <RuleTable title="Fielding" rows={FIELDING_ROWS} rules={displayRules} />
 
             {/* ── 2. Boosters ─────────────────────────────────────────────── */}
@@ -506,6 +514,13 @@ const styles = StyleSheet.create({
   },
   tableValueNeg: {
     color: colors.bad,
+  },
+  ruleNote: {
+    fontSize:   fontSize.sm - 1,
+    color:      colors.muted,
+    marginTop:  -spacing.xs,
+    marginBottom: spacing.xs,
+    paddingHorizontal: 2,
   },
 
   // Booster cards
