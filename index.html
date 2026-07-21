@@ -3837,7 +3837,7 @@ p31,Sample Player,MI,bat,9.0,false
         .filter(Boolean)
         .sort((a, b) => a.rawY - b.rawY);
 
-      const MIN_GAP = 22;
+      const MIN_GAP = 13;  // single-line labels need less vertical space
       for (let i = 1; i < finalData.length; i++) {
         if (finalData[i].rawY - finalData[i-1].rawY < MIN_GAP)
           finalData[i].rawY = finalData[i-1].rawY + MIN_GAP;
@@ -3848,18 +3848,16 @@ p31,Sample Player,MI,bat,9.0,false
         const lx = W - MR + 8;
         const actualY = pyOf(last.cumulative);
 
-        const tick = mk('line', { x1: W - MR + 2, x2: lx - 3, y1: actualY, y2: rawY + 3, stroke: color, 'stroke-width': '0.8', opacity: '0' });
+        const tick = mk('line', { x1: W - MR + 2, x2: lx - 3, y1: actualY, y2: rawY + 2, stroke: color, 'stroke-width': '0.7', opacity: '0' });
         svg.appendChild(tick);
 
-        const nm = mk('text', { x: lx, y: rawY, 'font-size': me ? '10.5' : '10', fill: color, 'font-weight': me ? '700' : '500', 'font-family': 'inherit', opacity: '0' });
-        nm.textContent = sq.squadName.length > 14 ? sq.squadName.slice(0, 13) + '…' : sq.squadName;
+        // Single line: "Name · Xpts"
+        const shortName = sq.squadName.length > 11 ? sq.squadName.slice(0, 10) + '…' : sq.squadName;
+        const nm = mk('text', { x: lx, y: rawY + 4, 'font-size': '9', fill: color, 'font-weight': me ? '700' : '500', 'font-family': 'inherit', opacity: '0' });
+        nm.textContent = `${shortName} · ${last.cumulative}`;
         svg.appendChild(nm);
 
-        const ptsTxt = mk('text', { x: lx, y: rawY + 12, 'font-size': '9.5', fill: color, 'font-family': 'inherit', opacity: '0' });
-        ptsTxt.textContent = `${last.cumulative} pts`;
-        svg.appendChild(ptsTxt);
-
-        labelGroup.push({ tick, nm, ptsTxt, lastMn: last.matchNumber });
+        labelGroup.push({ tick, nm, lastMn: last.matchNumber });
       });
 
       // Booster markers (rendered on top of lines)
@@ -3871,15 +3869,15 @@ p31,Sample Player,MI,bat,9.0,false
         const cx = pxOf(ci), cy = pyOf(cum);
         const color = colorMap[b.squadId] || '#888';
 
-        const ring = mk('circle', { cx, cy, r: '7.5', fill: 'white', stroke: color, 'stroke-width': '1.5', opacity: '0' });
+        const ring = mk('circle', { cx, cy, r: '5', fill: 'white', stroke: color, 'stroke-width': '1.2', opacity: '0' });
         svg.appendChild(ring);
 
         const fo = document.createElementNS(ns, 'foreignObject');
-        fo.setAttribute('x', cx - 7); fo.setAttribute('y', cy - 8);
-        fo.setAttribute('width', '14'); fo.setAttribute('height', '14');
+        fo.setAttribute('x', cx - 5); fo.setAttribute('y', cy - 6);
+        fo.setAttribute('width', '10'); fo.setAttribute('height', '10');
         fo.style.opacity = '0';
         const sp = document.createElement('span');
-        sp.style.cssText = 'font-size:9px;line-height:14px;display:block;text-align:center;';
+        sp.style.cssText = 'font-size:7px;line-height:10px;display:block;text-align:center;';
         sp.textContent = b.booster;
         fo.appendChild(sp); svg.appendChild(fo);
 
@@ -3976,10 +3974,9 @@ p31,Sample Player,MI,bat,9.0,false
 
         // Reveal right-side labels once animation is done
         if (elapsed >= TOTAL_MS) {
-          labelGroup.forEach(({ tick, nm, ptsTxt }) => {
+          labelGroup.forEach(({ tick, nm }) => {
             tick.setAttribute('opacity', '0.5');
             nm.setAttribute('opacity', '1');
-            ptsTxt.setAttribute('opacity', '0.8');
           });
         }
 
