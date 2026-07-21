@@ -3085,12 +3085,15 @@ export function createDb(cfg = {}) {
 
       const isLocked = id => matchMeta[id]?.locked ?? false;
 
-      // Booster key → display emoji
+      // Booster key → display emoji (mirrors app's BOOSTER_META in RulesScreen.tsx)
       const BOOSTER_EMOJI = {
-        triple_captain : '🚀',
-        unlimited      : '♾️',
-        wildcard       : '🔄',
-        free_hit       : '🛡️',
+        triple_captain : '⚡',
+        dual_captain   : '👥',
+        team_double    : '🚀',
+        free_hit       : '🔄',
+        wildcard       : '♾️',
+        indian_double  : '🇺🇸',
+        os_double      : '✈️',
       };
 
       // Transfer penalties per (squad_id::match_id) key — locked only

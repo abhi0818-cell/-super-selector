@@ -3786,8 +3786,11 @@ p31,Sample Player,MI,bat,9.0,false
 
       const svg = mk('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', style: 'overflow:visible;display:block' });
 
-      // Grid lines + Y labels
-      const step = maxPts > 1200 ? 300 : maxPts > 600 ? 150 : maxPts > 300 ? 100 : 50;
+      // Grid lines + Y labels — target ~5 clean lines regardless of scale
+      const _rawStep = maxPts / 5;
+      const _mag = Math.pow(10, Math.floor(Math.log10(_rawStep)));
+      const _norm = _rawStep / _mag;
+      const step = (_norm <= 1.5 ? 1 : _norm <= 3.5 ? 2 : _norm <= 7.5 ? 5 : 10) * _mag;
       for (let v = step; v < maxPts; v += step) {
         const y = pyOf(v);
         svg.appendChild(mk('line', { x1: ML, x2: W - MR, y1: y, y2: y, stroke: '#e8e3d8', 'stroke-width': '1' }));
@@ -3804,10 +3807,9 @@ p31,Sample Player,MI,bat,9.0,false
         t.textContent = `M${mn}`; svg.appendChild(t);
       });
 
-      // Per-squad paths + dots
+      // Per-squad paths (no per-match dots — they made lines look thick/dotted)
       const pathEls  = {};
       const glowEls  = {};
-      const dotsByMn = {};   // squadId -> matchNumber -> circle el
 
       sortedSquads.forEach(sq => {
         const me    = mySquadIds.has(sq.squadId);
@@ -3823,13 +3825,6 @@ p31,Sample Player,MI,bat,9.0,false
         const path = mk('path', { fill: 'none', stroke: color, 'stroke-width': me ? '1.8' : '1.4', 'stroke-linejoin': 'round', 'stroke-linecap': 'round', d: '', opacity: me ? '1' : '0.85' });
         svg.appendChild(path);
         pathEls[sq.squadId] = path;
-
-        dotsByMn[sq.squadId] = {};
-        pts.forEach(pt => {
-          const dot = mk('circle', { cx: pxOf(mxi(pt.matchNumber)), cy: pyOf(pt.cumulative), r: me ? '3' : '2', fill: color, stroke: 'white', 'stroke-width': me ? '1.2' : '0.8', opacity: '0' });
-          svg.appendChild(dot);
-          dotsByMn[sq.squadId][pt.matchNumber] = dot;
-        });
       });
 
       // Right-side labels with Y de-collision
@@ -3895,7 +3890,10 @@ p31,Sample Player,MI,bat,9.0,false
       container.innerHTML = '';
       const hdr = document.createElement('div');
       hdr.className = 'lb-chart-hdr';
-      hdr.innerHTML = '<span class="lb-chart-hdr-l">Cumulative points over season</span><span class="lb-chart-hdr-r">🚀♾️🔄 = Boosters</span>';
+      // Build dynamic booster icon legend from actual boosters in this data
+      const uniqueBoosterIcons = [...new Set(boosters.map(b => b.booster))].join(' ');
+      const boosterLegendStr = uniqueBoosterIcons ? `${uniqueBoosterIcons} = Booster used` : '';
+      hdr.innerHTML = `<span class="lb-chart-hdr-l">Cumulative points over season</span><span class="lb-chart-hdr-r">${boosterLegendStr}</span>`;
       container.appendChild(hdr);
       container.appendChild(svg);
 
@@ -3967,13 +3965,6 @@ p31,Sample Player,MI,bat,9.0,false
           const d = pathDUpTo(sq.squadId, frac);
           if (pathEls[sq.squadId])  pathEls[sq.squadId].setAttribute('d', d);
           if (glowEls[sq.squadId])  glowEls[sq.squadId].setAttribute('d', d);
-        });
-
-        // Show dots as each match is reached
-        sortedSquads.forEach(sq => {
-          Object.entries(dotsByMn[sq.squadId] || {}).forEach(([mn, dot]) => {
-            dot.setAttribute('opacity', mxi(Number(mn)) <= frac ? '1' : '0');
-          });
         });
 
         // Show booster markers at their match
