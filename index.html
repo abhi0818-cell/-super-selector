@@ -11779,7 +11779,15 @@ p31,Sample Player,MI,bat,9.0,false
             content.innerHTML = '<div style="color:var(--muted);font-size:13px;padding:16px 0;">No scores yet.</div>';
             return;
           }
-          content.innerHTML = `<div style="display:grid;grid-template-columns:32px 1fr 60px 70px 70px;gap:0;background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+          content.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:0 0 10px;gap:12px;">
+              <div class="lbv-pills">
+                <button class="lbv-pill active" id="inlineBtnTable">📋 Table</button>
+                <button class="lbv-pill" id="inlineBtnChart">📈 Progress</button>
+              </div>
+              <span id="inlineLbMeta" style="font-size:11px;color:var(--muted);"></span>
+            </div>
+            <div id="inlineLbTableView"><div style="display:grid;grid-template-columns:32px 1fr 60px 70px 70px;gap:0;background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
             <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">#</div>
             <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);">Squad <span style="font-size:9px;">(tap to expand)</span></div>
             <div style="padding:8px 10px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--border);text-align:right;">Booster</div>
@@ -11809,8 +11817,22 @@ p31,Sample Player,MI,bat,9.0,false
                 <div style="padding:8px 10px;font-size:12px;text-align:right;${bg}border-bottom:1px solid var(--border);">${r.totalPoints ?? '—'}</div>
                 <div id="${detailId}" style="grid-column:1/-1;display:none;border-bottom:1px solid var(--border);"></div>`;
             }).join('')}
-          </div>`;
+          </div></div>
+            <div id="inlineLbChartView" style="display:none;"></div>`;
           wireInlineLbExpand(content, null, contestId);
+          document.getElementById('inlineBtnTable')?.addEventListener('click', () => {
+            document.getElementById('inlineLbTableView').style.display = '';
+            document.getElementById('inlineLbChartView').style.display = 'none';
+            document.getElementById('inlineBtnTable').classList.add('active');
+            document.getElementById('inlineBtnChart').classList.remove('active');
+          });
+          document.getElementById('inlineBtnChart')?.addEventListener('click', () => {
+            document.getElementById('inlineLbTableView').style.display = 'none';
+            document.getElementById('inlineLbChartView').style.display = '';
+            document.getElementById('inlineBtnTable').classList.remove('active');
+            document.getElementById('inlineBtnChart').classList.add('active');
+            buildInlineChart(contestId);
+          });
           return;
         }
 
@@ -11880,6 +11902,26 @@ p31,Sample Player,MI,bat,9.0,false
         });
       } catch(e) {
         content.innerHTML = `<div style="color:var(--muted);font-size:13px;">${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    /** Fetch history and render the animated SVG chart inside #inlineLbChartView. */
+    async function buildInlineChart(contestId) {
+      const chartEl = document.getElementById('inlineLbChartView');
+      if (!chartEl || !state.db) return;
+      if (chartEl.dataset.built === contestId) return;  // already rendered for this contest
+      chartEl.innerHTML = '<div class="lb-empty" style="padding:24px 0;">Loading chart…</div>';
+      try {
+        const history = await state.db.getLeaderboardSLHistory(contestId);
+        const played  = [...new Set(
+          Object.values(history.series).flatMap(arr => arr.map(e => e.matchNumber))
+        )].length;
+        const metaEl = document.getElementById('inlineLbMeta');
+        if (metaEl) metaEl.textContent = played ? `${played} match${played !== 1 ? 'es' : ''} played` : '';
+        renderLbChartSvg(chartEl, history);
+        chartEl.dataset.built = contestId;
+      } catch(err) {
+        chartEl.innerHTML = `<div class="lb-empty">Chart unavailable: ${err.message}</div>`;
       }
     }
 
