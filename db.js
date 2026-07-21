@@ -3003,6 +3003,151 @@ export function createDb(cfg = {}) {
         .sort((a, b) => b.totalPoints - a.totalPoints);
     },
 
+    /**
+     * Per-match progress history for the leaderboard progress chart.
+     * Returns per-match cumulative points for every squad in a Season Long
+     * contest, plus booster activations (locked matches only — same lock
+     * gate as getLeaderboardSL so no future-match info is leaked).
+     *
+     * Returns:
+     *   {
+     *     squads  : [{ squadId, userId, squadName, displayName }],
+     *     series  : { [squadId]: [{ matchNumber, pts, cumulative }] },  // asc match_number
+     *     boosters: [{ squadId, matchNumber, booster }]
+     *   }
+     */
+    async getLeaderboardSLHistory(contestId) {
+      const sb = await getClient();
+
+      const { data: squads, error: sErr } = await sb
+        .from('user_squads')
+        .select('id, name, user_id')
+        .eq('contest_id', contestId);
+      if (sErr) throw sErr;
+      if (!squads?.length) return { squads: [], series: {}, boosters: [] };
+
+      const squadIds = squads.map(s => s.id);
+
+      // Display names
+      const userIds = [...new Set(squads.map(s => s.user_id).filter(Boolean))];
+      const profileMap = {};
+      if (userIds.length) {
+        const { data: profiles } = await sb
+          .from('profiles')
+          .select('id, display_name, email, team_name, first_name, last_name')
+          .in('id', userIds);
+        (profiles || []).forEach(p => { profileMap[p.id] = resolvePersonName(p); });
+      }
+
+      // Per-player match scores — paginated (same 1000-row cap reason as getLeaderboardSL)
+      const scores = await fetchAllRows((from, to) => sb
+        .from('user_match_xi_scores')
+        .select('squad_id, match_id, total_points')
+        .in('squad_id', squadIds)
+        .range(from, to));
+
+      // Transfer penalties per squad per match
+      const xferRows = await fetchAllRows((from, to) => sb
+        .from('user_transfers')
+        .select('squad_id, match_id, points_deducted')
+        .in('squad_id', squadIds)
+        .range(from, to));
+
+      // Booster activations per squad per match
+      const boosterRows = await fetchAllRows((from, to) => sb
+        .from('user_booster_activations')
+        .select('squad_id, match_id, booster')
+        .in('squad_id', squadIds)
+        .range(from, to));
+
+      // Fetch match numbers + lock status for all referenced match IDs
+      const allMatchIds = [...new Set([
+        ...(scores      || []).map(s => s.match_id),
+        ...(xferRows    || []).map(t => t.match_id),
+        ...(boosterRows || []).map(b => b.match_id),
+      ].filter(Boolean))];
+
+      const matchMeta = {};   // match_id -> { matchNumber, locked }
+      if (allMatchIds.length) {
+        const { data: matchRows } = await sb
+          .from('matches')
+          .select('id, match_number, lock_time, start_time')
+          .in('id', allMatchIds);
+        const now = Date.now();
+        (matchRows || []).forEach(m => {
+          const lockAt = m.lock_time ?? m.start_time ?? null;
+          matchMeta[m.id] = {
+            matchNumber : m.match_number,
+            locked      : !!(lockAt && new Date(lockAt).getTime() <= now),
+          };
+        });
+      }
+
+      const isLocked = id => matchMeta[id]?.locked ?? false;
+
+      // Booster key → display emoji
+      const BOOSTER_EMOJI = {
+        triple_captain : '🚀',
+        unlimited      : '♾️',
+        wildcard       : '🔄',
+        free_hit       : '🛡️',
+      };
+
+      // Transfer penalties per (squad_id::match_id) key — locked only
+      const penMap = {};
+      (xferRows || []).forEach(t => {
+        if (!isLocked(t.match_id)) return;
+        const k = t.squad_id + '::' + t.match_id;
+        penMap[k] = (penMap[k] || 0) + Number(t.points_deducted ?? 0);
+      });
+
+      // Sum player points per (squad, match) — locked only
+      const rawBySquadMatch = {};
+      (scores || []).forEach(s => {
+        if (!isLocked(s.match_id) || !matchMeta[s.match_id]) return;
+        if (!rawBySquadMatch[s.squad_id]) rawBySquadMatch[s.squad_id] = {};
+        rawBySquadMatch[s.squad_id][s.match_id] =
+          (rawBySquadMatch[s.squad_id][s.match_id] || 0) + Number(s.total_points ?? 0);
+      });
+
+      // Per-squad series: sorted by match_number, cumulative running total
+      const series = {};
+      for (const sq of squads) {
+        const byMatch = rawBySquadMatch[sq.id] || {};
+        const entries = Object.entries(byMatch)
+          .map(([mid, raw]) => ({
+            matchNumber : matchMeta[mid].matchNumber,
+            pts         : raw - (penMap[sq.id + '::' + mid] || 0),
+          }))
+          .sort((a, b) => a.matchNumber - b.matchNumber);
+        let cum = 0;
+        series[sq.id] = entries.map(entry => {
+          cum += entry.pts;
+          return { matchNumber: entry.matchNumber, pts: entry.pts, cumulative: Math.round(cum * 10) / 10 };
+        });
+      }
+
+      // Boosters (locked only, with match_number, mapped to emoji)
+      const boosters = (boosterRows || [])
+        .filter(b => isLocked(b.match_id) && matchMeta[b.match_id])
+        .map(b => ({
+          squadId     : b.squad_id,
+          matchNumber : matchMeta[b.match_id].matchNumber,
+          booster     : BOOSTER_EMOJI[b.booster] ?? '⚡',
+        }));
+
+      return {
+        squads: squads.map(s => ({
+          squadId     : s.id,
+          userId      : s.user_id,
+          squadName   : s.name,
+          displayName : profileMap[s.user_id] ?? null,
+        })),
+        series,
+        boosters,
+      };
+    },
+
     async getAllUserTeamMatchScores() {
       const sb = await getClient();
       const { data, error } = await sb

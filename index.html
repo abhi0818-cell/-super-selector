@@ -828,6 +828,37 @@
     .lb-medal { font-size: 16px; }
     .lb-empty { padding: 40px 20px; text-align: center; color: var(--muted); font-size: 13px; }
 
+    /* ── Leaderboard view toggle (Table | Progress) ────────────────────── */
+    #lbViewToggle {
+      display: none; /* JS sets to flex for SL/private tabs */
+      align-items: center; justify-content: space-between; gap: 12px;
+      padding: 8px 20px; border-bottom: 1px solid var(--border);
+      background: var(--panel-2); flex-shrink: 0;
+    }
+    .lbv-pills {
+      display: flex; background: var(--panel); border: 1px solid var(--border);
+      border-radius: 8px; padding: 2px; gap: 2px;
+    }
+    .lbv-pill {
+      padding: 5px 14px; border-radius: 6px; font-size: 12px; font-weight: 600;
+      cursor: pointer; color: var(--muted); border: none; background: transparent;
+      transition: all 0.15s; font-family: inherit;
+    }
+    .lbv-pill.active { background: var(--accent); color: #1C1F26; }
+    #lbViewMeta { font-size: 11px; color: var(--muted); }
+    /* Chart panel inside lb-body */
+    #lbChartContent { padding: 16px 20px 20px; }
+    .lb-chart-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .lb-chart-hdr-l { font-size: 12px; font-weight: 600; color: var(--muted); }
+    .lb-chart-hdr-r { font-size: 11px; color: var(--muted); }
+    #lbChartLegend {
+      display: flex; flex-wrap: wrap; gap: 6px 16px;
+      margin-top: 10px; padding-top: 10px;
+      border-top: 1px solid rgba(214,207,168,0.5);
+    }
+    .lb-leg-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+    .lb-leg-swatch { width: 22px; height: 3px; border-radius: 2px; }
+
     /* ── Auth ─────────────────────────────────────────────── */
     #loginScreen {
       display: none;
@@ -1236,8 +1267,16 @@
       <div class="lb-controls">
         <select id="lbMatchPicker" style="display:none"></select>
       </div>
+      <div id="lbViewToggle">
+        <div class="lbv-pills">
+          <button class="lbv-pill active" id="lbBtnTable" onclick="setLbView('table')">📋 Table</button>
+          <button class="lbv-pill" id="lbBtnChart" onclick="setLbView('chart')">📈 Progress</button>
+        </div>
+        <span id="lbViewMeta"></span>
+      </div>
       <div class="lb-body">
         <div id="lbContent"></div>
+        <div id="lbChartContent" style="display:none"></div>
       </div>
     </div>
   </div>
@@ -3181,7 +3220,7 @@ p31,Sample Player,MI,bat,9.0,false
     // expandedKeys: stable per-row keys ('sl_<squadId>' / 'daily_<teamId>') that are
     // currently expanded — re-opened automatically after each render so the detail
     // view survives the periodic live-refresh poll.
-    const lbState = { tab: 'daily', profiles: {}, matchId: null, expandedKeys: new Set(), pollTimer: null };
+    const lbState = { tab: 'daily', profiles: {}, matchId: null, expandedKeys: new Set(), pollTimer: null, view: 'table' };
     const ROLE_ORDER_LB = { wk: 0, bat: 1, ar: 2, bowl: 3 };
 
     async function openLeaderboard() {
@@ -3278,9 +3317,19 @@ p31,Sample Player,MI,bat,9.0,false
       tabsRow.querySelectorAll('.lb-tab').forEach(t => {
         t.addEventListener('click', async () => {
           lbState.tab = t.dataset.lbtab;
+          // Reset to table view when switching to daily (no chart for single-match)
+          if (lbState.tab === 'daily' && lbState.view === 'chart') {
+            lbState.view = 'table';
+            const lbC = $('#lbContent');      if (lbC) lbC.style.display = '';
+            const lbCh = $('#lbChartContent'); if (lbCh) lbCh.style.display = 'none';
+            const bT = $('#lbBtnTable'); if (bT) bT.classList.add('active');
+            const bC = $('#lbBtnChart'); if (bC) bC.classList.remove('active');
+          }
           renderLbTabs();
           renderLbPickers();
           await renderLeaderboard();
+          // Rebuild chart if it was already showing for the new tab
+          if (lbState.view === 'chart' && lbState.tab !== 'daily') buildLbChart();
           maybeStartLbPolling();
         });
       });
@@ -3288,8 +3337,10 @@ p31,Sample Player,MI,bat,9.0,false
 
     function renderLbPickers() {
       const matchPicker = $('#lbMatchPicker');
+      const viewToggle  = $('#lbViewToggle');
       if (lbState.tab === 'daily') {
         matchPicker.style.display = '';
+        if (viewToggle) viewToggle.style.display = 'none';
         // Include completed AND in_progress/live matches — in_progress/live
         // matches may have partial/final scores already saved (e.g. M73 scored
         // mid-game). Two different writers use two different strings for the
@@ -3309,6 +3360,7 @@ p31,Sample Player,MI,bat,9.0,false
         if (lbState.matchId) matchPicker.value = lbState.matchId;
       } else {
         matchPicker.style.display = 'none';
+        if (viewToggle) viewToggle.style.display = 'flex';
       }
     }
 
@@ -3638,6 +3690,312 @@ p31,Sample Player,MI,bat,9.0,false
       } catch (e) {
         el.innerHTML = `<div class="lb-empty">Failed to load: ${e.message}</div>`;
       }
+    }
+
+    // ─── LEADERBOARD CHART ───────────────────────────────────────────────────
+
+    /** Toggle between Table and Progress chart view inside the leaderboard modal. */
+    function setLbView(v) {
+      lbState.view = v;
+      const tableEl = $('#lbContent');
+      const chartEl = $('#lbChartContent');
+      if (tableEl) tableEl.style.display = v === 'table' ? '' : 'none';
+      if (chartEl) chartEl.style.display = v === 'chart' ? '' : 'none';
+      const btnT = $('#lbBtnTable'), btnC = $('#lbBtnChart');
+      if (btnT) btnT.classList.toggle('active', v === 'table');
+      if (btnC) btnC.classList.toggle('active', v === 'chart');
+      if (v === 'chart' && lbState.tab !== 'daily') buildLbChart();
+    }
+
+    /** Fetch history data and render the SVG progress chart. */
+    async function buildLbChart() {
+      const chartEl = $('#lbChartContent');
+      if (!chartEl || !state.db) return;
+      chartEl.innerHTML = '<div class="lb-empty" style="padding:24px 0;">Loading chart…</div>';
+      try {
+        const history = await state.db.getLeaderboardSLHistory(lbState.tab);
+
+        // Update meta text: "N matches played"
+        const played = [...new Set(
+          Object.values(history.series).flatMap(arr => arr.map(e => e.matchNumber))
+        )].length;
+        const metaEl = $('#lbViewMeta');
+        if (metaEl) metaEl.textContent = played ? `${played} match${played !== 1 ? 'es' : ''} played` : '';
+
+        renderLbChartSvg(chartEl, history);
+      } catch (err) {
+        chartEl.innerHTML = `<div class="lb-empty">Chart unavailable: ${err.message}</div>`;
+      }
+    }
+
+    /** Build and animate the SVG cumulative-points chart inside `container`. */
+    function renderLbChartSvg(container, history) {
+      const { squads, series, boosters } = history;
+
+      // All played match numbers across all squads, sorted ascending
+      const matchNumSet = new Set();
+      squads.forEach(sq => (series[sq.squadId] || []).forEach(e => matchNumSet.add(e.matchNumber)));
+      const matchNumbers = [...matchNumSet].sort((a, b) => a - b);
+      const N = matchNumbers.length;
+
+      if (!N || !squads.length) {
+        container.innerHTML = '<div class="lb-empty">No match data yet.</div>';
+        return;
+      }
+
+      const myUserId   = state.currentUser?.id;
+      const mySquadIds = new Set(squads.filter(s => s.userId === myUserId).map(s => s.squadId));
+
+      // Color assignment: gold for "you", palette for others
+      const PALETTE = ['#2563EB','#7C3AED','#059669','#DC2626','#D97706','#0891B2','#BE185D','#064E3B'];
+      const colorMap = {};
+      let pi = 0;
+      squads.forEach(sq => {
+        colorMap[sq.squadId] = mySquadIds.has(sq.squadId) ? '#C9A84C' : PALETTE[pi++ % PALETTE.length];
+      });
+
+      // Sort: others first, "you" on top (renders last = highest z)
+      const sortedSquads = [...squads].sort((a, b) =>
+        mySquadIds.has(a.squadId) ? 1 : mySquadIds.has(b.squadId) ? -1 : 0
+      );
+
+      // Cumulative lookup: squadId -> matchNumber -> cumulative
+      const cumulMap = {};
+      squads.forEach(sq => {
+        cumulMap[sq.squadId] = {};
+        (series[sq.squadId] || []).forEach(e => { cumulMap[sq.squadId][e.matchNumber] = e.cumulative; });
+      });
+
+      const allCumuls = Object.values(cumulMap).flatMap(m => Object.values(m).map(Number));
+      const maxPts = allCumuls.length ? Math.max(...allCumuls) * 1.12 : 100;
+
+      // SVG dimensions
+      const W = 560, H = 260, ML = 38, MR = 118, MT = 14, MB = 28;
+      const PW = W - ML - MR, PH = H - MT - MB;
+
+      const pxOf = i  => ML + (N > 1 ? i * PW / (N - 1) : PW / 2);
+      const pyOf = v  => MT + PH - (v / maxPts) * PH;
+      const mxi  = mn => matchNumbers.indexOf(mn);
+
+      const ns = 'http://www.w3.org/2000/svg';
+      const mk = (tag, attrs = {}) => {
+        const el = document.createElementNS(ns, tag);
+        Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
+        return el;
+      };
+
+      const svg = mk('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', style: 'overflow:visible;display:block' });
+
+      // Grid lines + Y labels
+      const step = maxPts > 1200 ? 300 : maxPts > 600 ? 150 : maxPts > 300 ? 100 : 50;
+      for (let v = step; v < maxPts; v += step) {
+        const y = pyOf(v);
+        svg.appendChild(mk('line', { x1: ML, x2: W - MR, y1: y, y2: y, stroke: '#e8e3d8', 'stroke-width': '1' }));
+        const t = mk('text', { x: ML - 5, y: y + 3.5, 'font-size': '9', fill: '#bbb', 'text-anchor': 'end', 'font-family': 'inherit' });
+        t.textContent = v; svg.appendChild(t);
+      }
+      // X axis baseline
+      svg.appendChild(mk('line', { x1: ML, x2: W - MR, y1: MT + PH, y2: MT + PH, stroke: '#d6cfa8', 'stroke-width': '1' }));
+      // X labels — skip some if too many matches
+      const xSkip = N <= 10 ? 1 : N <= 20 ? 2 : 5;
+      matchNumbers.forEach((mn, i) => {
+        if (i % xSkip !== 0 && i !== N - 1) return;
+        const t = mk('text', { x: pxOf(i), y: MT + PH + 14, 'font-size': '9', fill: '#bbb', 'text-anchor': 'middle', 'font-family': 'inherit' });
+        t.textContent = `M${mn}`; svg.appendChild(t);
+      });
+
+      // Per-squad paths + dots
+      const pathEls  = {};
+      const glowEls  = {};
+      const dotsByMn = {};   // squadId -> matchNumber -> circle el
+
+      sortedSquads.forEach(sq => {
+        const me    = mySquadIds.has(sq.squadId);
+        const color = colorMap[sq.squadId];
+        const pts   = series[sq.squadId] || [];
+        if (!pts.length) return;
+
+        if (me) {
+          const glow = mk('path', { fill: 'none', stroke: 'rgba(201,168,76,0.18)', 'stroke-width': '8', 'stroke-linejoin': 'round', 'stroke-linecap': 'round', d: '' });
+          svg.appendChild(glow);
+          glowEls[sq.squadId] = glow;
+        }
+        const path = mk('path', { fill: 'none', stroke: color, 'stroke-width': me ? '2.4' : '1.6', 'stroke-linejoin': 'round', 'stroke-linecap': 'round', d: '', opacity: me ? '1' : '0.85' });
+        svg.appendChild(path);
+        pathEls[sq.squadId] = path;
+
+        dotsByMn[sq.squadId] = {};
+        pts.forEach(pt => {
+          const dot = mk('circle', { cx: pxOf(mxi(pt.matchNumber)), cy: pyOf(pt.cumulative), r: me ? '3.5' : '2.5', fill: color, stroke: 'white', 'stroke-width': me ? '1.5' : '1', opacity: '0' });
+          svg.appendChild(dot);
+          dotsByMn[sq.squadId][pt.matchNumber] = dot;
+        });
+      });
+
+      // Right-side labels with Y de-collision
+      const finalData = squads
+        .map(sq => {
+          const pts  = series[sq.squadId] || [];
+          const last = pts[pts.length - 1];
+          return last ? { sq, last, color: colorMap[sq.squadId], me: mySquadIds.has(sq.squadId), rawY: pyOf(last.cumulative) } : null;
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.rawY - b.rawY);
+
+      const MIN_GAP = 22;
+      for (let i = 1; i < finalData.length; i++) {
+        if (finalData[i].rawY - finalData[i-1].rawY < MIN_GAP)
+          finalData[i].rawY = finalData[i-1].rawY + MIN_GAP;
+      }
+
+      const labelGroup = [];
+      finalData.forEach(({ sq, last, color, me, rawY }) => {
+        const lx = W - MR + 8;
+        const actualY = pyOf(last.cumulative);
+
+        const tick = mk('line', { x1: W - MR + 2, x2: lx - 3, y1: actualY, y2: rawY + 3, stroke: color, 'stroke-width': '0.8', opacity: '0' });
+        svg.appendChild(tick);
+
+        const nm = mk('text', { x: lx, y: rawY, 'font-size': me ? '10.5' : '10', fill: color, 'font-weight': me ? '700' : '500', 'font-family': 'inherit', opacity: '0' });
+        nm.textContent = sq.squadName.length > 14 ? sq.squadName.slice(0, 13) + '…' : sq.squadName;
+        svg.appendChild(nm);
+
+        const ptsTxt = mk('text', { x: lx, y: rawY + 12, 'font-size': '9.5', fill: color, 'font-family': 'inherit', opacity: '0' });
+        ptsTxt.textContent = `${last.cumulative} pts`;
+        svg.appendChild(ptsTxt);
+
+        labelGroup.push({ tick, nm, ptsTxt, lastMn: last.matchNumber });
+      });
+
+      // Booster markers (rendered on top of lines)
+      const boosterItems = boosters.map(b => {
+        const ci  = mxi(b.matchNumber);
+        if (ci < 0) return null;
+        const cum = cumulMap[b.squadId]?.[b.matchNumber];
+        if (cum == null) return null;
+        const cx = pxOf(ci), cy = pyOf(cum);
+        const color = colorMap[b.squadId] || '#888';
+
+        const ring = mk('circle', { cx, cy, r: '7.5', fill: 'white', stroke: color, 'stroke-width': '1.5', opacity: '0' });
+        svg.appendChild(ring);
+
+        const fo = document.createElementNS(ns, 'foreignObject');
+        fo.setAttribute('x', cx - 7); fo.setAttribute('y', cy - 8);
+        fo.setAttribute('width', '14'); fo.setAttribute('height', '14');
+        fo.style.opacity = '0';
+        const sp = document.createElement('span');
+        sp.style.cssText = 'font-size:9px;line-height:14px;display:block;text-align:center;';
+        sp.textContent = b.booster;
+        fo.appendChild(sp); svg.appendChild(fo);
+
+        return { ring, fo, matchNumber: b.matchNumber };
+      }).filter(Boolean);
+
+      // Build DOM structure
+      container.innerHTML = '';
+      const hdr = document.createElement('div');
+      hdr.className = 'lb-chart-hdr';
+      hdr.innerHTML = '<span class="lb-chart-hdr-l">Cumulative points over season</span><span class="lb-chart-hdr-r">🚀♾️🔄 = Boosters</span>';
+      container.appendChild(hdr);
+      container.appendChild(svg);
+
+      const legend = document.createElement('div');
+      legend.id = 'lbChartLegend';
+      [...squads]
+        .sort((a, b) => ((series[b.squadId] || []).slice(-1)[0]?.cumulative ?? 0) - ((series[a.squadId] || []).slice(-1)[0]?.cumulative ?? 0))
+        .forEach(sq => {
+          const me    = mySquadIds.has(sq.squadId);
+          const color = colorMap[sq.squadId];
+          const item  = document.createElement('div'); item.className = 'lb-leg-item';
+          const sw    = document.createElement('div'); sw.className = 'lb-leg-swatch'; sw.style.background = color;
+          if (me) sw.style.boxShadow = `0 0 0 1px white, 0 0 0 2.5px ${color}`;
+          const nm = document.createElement('span');
+          nm.textContent = me ? sq.squadName + ' (you)' : sq.squadName;
+          if (me) { nm.style.fontWeight = '700'; nm.style.color = 'var(--text)'; }
+          item.appendChild(sw); item.appendChild(nm); legend.appendChild(item);
+        });
+      container.appendChild(legend);
+
+      // ── Animation: draw lines match-by-match simultaneously ──
+      // `frac` is a float from 0 to N-1 (index into matchNumbers).
+      // Each integer step = one match revealed; fraction = mid-segment interpolation.
+      const STEP_MS  = 350;   // ms to draw each match segment
+      const PAUSE_MS = 70;    // ms pause at each match vertex
+      const CYCLE    = STEP_MS + PAUSE_MS;
+      const TOTAL_MS = N * CYCLE;
+      const t0       = performance.now();
+
+      function pathDUpTo(squadId, frac) {
+        const pts = series[squadId] || [];
+        const segs = [];
+        for (let j = 0; j < pts.length; j++) {
+          const xi = mxi(pts[j].matchNumber);
+          if (xi <= frac) {
+            segs.push([pxOf(xi), pyOf(pts[j].cumulative)]);
+          } else {
+            const prevXi = j > 0 ? mxi(pts[j-1].matchNumber) : xi;
+            const range  = xi - prevXi;
+            if (range > 0 && frac > prevXi) {
+              const f  = (frac - prevXi) / range;
+              const x0 = j > 0 ? pxOf(prevXi) : pxOf(xi);
+              const y0 = j > 0 ? pyOf(pts[j-1].cumulative) : pyOf(0);
+              segs.push([x0 + (pxOf(xi) - x0) * f, y0 + (pyOf(pts[j].cumulative) - y0) * f]);
+            }
+            break;
+          }
+        }
+        return segs.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
+      }
+
+      function frame(now) {
+        const elapsed = now - t0;
+        const done    = elapsed >= TOTAL_MS + 300;
+
+        let frac;
+        if (elapsed >= TOTAL_MS) {
+          frac = N - 1;
+        } else {
+          const cycleN   = Math.floor(elapsed / CYCLE);
+          const inCycle  = elapsed % CYCLE;
+          const drawFrac = Math.min(inCycle / STEP_MS, 1);
+          // ease-out quad within each segment
+          frac = cycleN + (1 - Math.pow(1 - drawFrac, 2));
+        }
+
+        // Update each squad's path
+        sortedSquads.forEach(sq => {
+          const d = pathDUpTo(sq.squadId, frac);
+          if (pathEls[sq.squadId])  pathEls[sq.squadId].setAttribute('d', d);
+          if (glowEls[sq.squadId])  glowEls[sq.squadId].setAttribute('d', d);
+        });
+
+        // Show dots as each match is reached
+        sortedSquads.forEach(sq => {
+          Object.entries(dotsByMn[sq.squadId] || {}).forEach(([mn, dot]) => {
+            dot.setAttribute('opacity', mxi(Number(mn)) <= frac ? '1' : '0');
+          });
+        });
+
+        // Show booster markers at their match
+        boosterItems.forEach(bi => {
+          const v = mxi(bi.matchNumber) <= frac ? '1' : '0';
+          bi.ring.setAttribute('opacity', v);
+          bi.fo.style.opacity = v;
+        });
+
+        // Reveal right-side labels once animation is done
+        if (elapsed >= TOTAL_MS) {
+          labelGroup.forEach(({ tick, nm, ptsTxt }) => {
+            tick.setAttribute('opacity', '0.5');
+            nm.setAttribute('opacity', '1');
+            ptsTxt.setAttribute('opacity', '0.8');
+          });
+        }
+
+        if (!done) requestAnimationFrame(frame);
+      }
+
+      requestAnimationFrame(frame);
     }
 
     // ─── AUTH SETUP ──────────────────────────────────────────────────────────
