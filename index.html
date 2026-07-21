@@ -1269,8 +1269,8 @@
       </div>
       <div id="lbViewToggle">
         <div class="lbv-pills">
-          <button class="lbv-pill active" id="lbBtnTable" onclick="setLbView('table')">📋 Table</button>
-          <button class="lbv-pill" id="lbBtnChart" onclick="setLbView('chart')">📈 Progress</button>
+          <button class="lbv-pill active" id="lbBtnTable">📋 Table</button>
+          <button class="lbv-pill" id="lbBtnChart">📈 Progress</button>
         </div>
         <span id="lbViewMeta"></span>
       </div>
@@ -11302,6 +11302,8 @@ p31,Sample Player,MI,bat,9.0,false
       await renderLeaderboard();
       maybeStartLbPolling();
     });
+    $('#lbBtnTable').addEventListener('click', () => setLbView('table'));
+    $('#lbBtnChart').addEventListener('click', () => setLbView('chart'));
 
     // ─── Page-level tabs (Contest / My Team / Season) ────────────────────────
     let activePageTab = 'home'; // default — Home on login
