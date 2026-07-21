@@ -852,12 +852,27 @@
     .lb-chart-hdr-l { font-size: 12px; font-weight: 600; color: var(--muted); }
     .lb-chart-hdr-r { font-size: 11px; color: var(--muted); }
     #lbChartLegend {
-      display: flex; flex-wrap: wrap; gap: 6px 16px;
+      display: flex; flex-direction: column; gap: 2px;
       margin-top: 10px; padding-top: 10px;
-      border-top: 1px solid rgba(214,207,168,0.5);
+      border-top: 1px solid rgba(214,207,168,0.3);
     }
-    .lb-leg-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
-    .lb-leg-swatch { width: 22px; height: 3px; border-radius: 2px; }
+    .lb-leg-item { display:flex; align-items:center; gap:7px; font-size:11px; color:var(--muted); cursor:pointer; padding:3px 4px; border-radius:5px; transition:background 0.1s; }
+    .lb-leg-item:hover { background:var(--panel-2); }
+    .lb-leg-item.lb-leg-you { cursor:default; }
+    .lb-leg-item.lb-leg-hidden .lb-leg-swatch { opacity:0.2; }
+    .lb-leg-item.lb-leg-hidden .lb-leg-nm { opacity:0.25; }
+    .lb-leg-item.lb-leg-hidden .lb-leg-pts { opacity:0.15; }
+    .lb-leg-nm { flex:1; }
+    .lb-leg-pts { min-width:40px; text-align:right; color:var(--muted); }
+    .lb-leg-eye { font-size:12px; color:var(--muted); opacity:0.4; margin-left:2px; }
+    .lb-leg-item.lb-leg-hidden .lb-leg-eye { opacity:0.15; }
+    .lb-you-badge { font-size:9px; font-weight:700; background:rgba(201,168,76,0.15); color:#C9A84C; border-radius:3px; padding:1px 4px; margin-left:4px; vertical-align:middle; }
+    .lb-leg-swatch { width:20px; height:3px; border-radius:2px; flex-shrink:0; }
+    .lb-cap-bar { display:flex; align-items:center; justify-content:space-between; padding:6px 0 8px; }
+    .lb-cap-bar-l { font-size:11px; color:var(--muted); }
+    .lb-cap-pills { display:flex; gap:3px; }
+    .lb-cap-pill { padding:3px 9px; border-radius:5px; font-size:10px; font-weight:600; cursor:pointer; color:var(--muted); border:1px solid var(--border); background:transparent; font-family:inherit; transition:all 0.15s; }
+    .lb-cap-pill.lb-cap-active { background:rgba(201,168,76,0.12); color:#C9A84C; border-color:rgba(201,168,76,0.35); }
 
     /* ── Auth ─────────────────────────────────────────────── */
     #loginScreen {
@@ -3732,7 +3747,6 @@ p31,Sample Player,MI,bat,9.0,false
     function renderLbChartSvg(container, history) {
       const { squads, series, boosters } = history;
 
-      // All played match numbers across all squads, sorted ascending
       const matchNumSet = new Set();
       squads.forEach(sq => (series[sq.squadId] || []).forEach(e => matchNumSet.add(e.matchNumber)));
       const matchNumbers = [...matchNumSet].sort((a, b) => a - b);
@@ -3746,7 +3760,6 @@ p31,Sample Player,MI,bat,9.0,false
       const myUserId   = state.currentUser?.id;
       const mySquadIds = new Set(squads.filter(s => s.userId === myUserId).map(s => s.squadId));
 
-      // Color assignment: gold for "you", palette for others
       const PALETTE = ['#2563EB','#7C3AED','#059669','#DC2626','#D97706','#0891B2','#BE185D','#064E3B'];
       const colorMap = {};
       let pi = 0;
@@ -3754,29 +3767,42 @@ p31,Sample Player,MI,bat,9.0,false
         colorMap[sq.squadId] = mySquadIds.has(sq.squadId) ? '#C9A84C' : PALETTE[pi++ % PALETTE.length];
       });
 
-      // Sort: others first, "you" on top (renders last = highest z)
-      const sortedSquads = [...squads].sort((a, b) =>
-        mySquadIds.has(a.squadId) ? 1 : mySquadIds.has(b.squadId) ? -1 : 0
-      );
-
-      // Cumulative lookup: squadId -> matchNumber -> cumulative
       const cumulMap = {};
       squads.forEach(sq => {
         cumulMap[sq.squadId] = {};
         (series[sq.squadId] || []).forEach(e => { cumulMap[sq.squadId][e.matchNumber] = e.cumulative; });
       });
 
-      const allCumuls = Object.values(cumulMap).flatMap(m => Object.values(m).map(Number));
-      const maxPts = allCumuls.length ? Math.max(...allCumuls) * 1.12 : 100;
+      // Squads ordered by final pts — used for Top-N selection and legend
+      const squadsByRank = [...squads].sort((a, b) =>
+        ((series[b.squadId] || []).slice(-1)[0]?.cumulative ?? 0) -
+        ((series[a.squadId] || []).slice(-1)[0]?.cumulative ?? 0)
+      );
 
-      // SVG dimensions
+      // ── Vis state (cap + manual overrides) ────────────────────────────────
+      let cap = 5;
+      const manualHidden = new Set();
+      const manualShown  = new Set();
+
+      function getVisible() {
+        const topN = new Set(squadsByRank.slice(0, cap).map(s => s.squadId));
+        const result = new Set();
+        squads.forEach(sq => {
+          if (manualHidden.has(sq.squadId)) return;
+          if (mySquadIds.has(sq.squadId) || topN.has(sq.squadId) || manualShown.has(sq.squadId))
+            result.add(sq.squadId);
+        });
+        return result;
+      }
+
+      // ── SVG setup ─────────────────────────────────────────────────────────
       const W = 560, H = 260, ML = 38, MR = 118, MT = 14, MB = 28;
       const PW = W - ML - MR, PH = H - MT - MB;
-
+      const allCumuls = Object.values(cumulMap).flatMap(m => Object.values(m).map(Number));
+      const maxPts = allCumuls.length ? Math.max(...allCumuls) * 1.12 : 100;
       const pxOf = i  => ML + (N > 1 ? i * PW / (N - 1) : PW / 2);
       const pyOf = v  => MT + PH - (v / maxPts) * PH;
       const mxi  = mn => matchNumbers.indexOf(mn);
-
       const ns = 'http://www.w3.org/2000/svg';
       const mk = (tag, attrs = {}) => {
         const el = document.createElementNS(ns, tag);
@@ -3784,9 +3810,43 @@ p31,Sample Player,MI,bat,9.0,false
         return el;
       };
 
+      // ── DOM skeleton ──────────────────────────────────────────────────────
+      container.innerHTML = '';
+
+      // Header row: title + booster key
+      const hdr = document.createElement('div');
+      hdr.className = 'lb-chart-hdr';
+      const uniqueBoosterIcons = [...new Set(boosters.map(b => b.booster))].join(' ');
+      const boosterLegendStr = uniqueBoosterIcons ? `${uniqueBoosterIcons} = Booster used` : '';
+      hdr.innerHTML = `<span class="lb-chart-hdr-l">Cumulative points over season</span><span class="lb-chart-hdr-r">${boosterLegendStr}</span>`;
+      container.appendChild(hdr);
+
+      // Cap selector bar
+      const capBar = document.createElement('div');
+      capBar.className = 'lb-cap-bar';
+      capBar.innerHTML = `<span class="lb-cap-bar-l">Show</span>
+        <div class="lb-cap-pills">
+          <button class="lb-cap-pill" data-n="3">Top 3</button>
+          <button class="lb-cap-pill lb-cap-active" data-n="5">Top 5</button>
+          <button class="lb-cap-pill" data-n="10">Top 10</button>
+          <button class="lb-cap-pill" data-n="999">All</button>
+        </div>`;
+      container.appendChild(capBar);
+
+      capBar.querySelectorAll('.lb-cap-pill').forEach(btn => {
+        btn.addEventListener('click', function() {
+          capBar.querySelectorAll('.lb-cap-pill').forEach(b => b.classList.remove('lb-cap-active'));
+          this.classList.add('lb-cap-active');
+          cap = parseInt(this.dataset.n);
+          manualHidden.clear(); manualShown.clear();
+          applyVisibility(getVisible());
+        });
+      });
+
+      // SVG
       const svg = mk('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%', style: 'overflow:visible;display:block' });
 
-      // Grid lines + Y labels — target ~5 clean lines regardless of scale
+      // Grid
       const _rawStep = maxPts / 5;
       const _mag = Math.pow(10, Math.floor(Math.log10(_rawStep)));
       const _norm = _rawStep / _mag;
@@ -3797,9 +3857,7 @@ p31,Sample Player,MI,bat,9.0,false
         const t = mk('text', { x: ML - 5, y: y + 3.5, 'font-size': '7.5', fill: '#bbb', 'text-anchor': 'end', 'font-family': 'inherit' });
         t.textContent = v; svg.appendChild(t);
       }
-      // X axis baseline
       svg.appendChild(mk('line', { x1: ML, x2: W - MR, y1: MT + PH, y2: MT + PH, stroke: '#d6cfa8', 'stroke-width': '1' }));
-      // X labels — skip some if too many matches
       const xSkip = N <= 10 ? 1 : N <= 20 ? 2 : 5;
       matchNumbers.forEach((mn, i) => {
         if (i % xSkip !== 0 && i !== N - 1) return;
@@ -3807,71 +3865,30 @@ p31,Sample Player,MI,bat,9.0,false
         t.textContent = `M${mn}`; svg.appendChild(t);
       });
 
-      // Per-squad paths (no per-match dots — they made lines look thick/dotted)
-      const pathEls  = {};
-      const glowEls  = {};
-
+      // All paths built upfront — visibility toggled via opacity
+      const pathEls = {}, glowEls = {};
+      const sortedSquads = [...squads].sort((a, b) =>
+        mySquadIds.has(a.squadId) ? 1 : mySquadIds.has(b.squadId) ? -1 : 0
+      );
       sortedSquads.forEach(sq => {
-        const me    = mySquadIds.has(sq.squadId);
+        const me = mySquadIds.has(sq.squadId);
         const color = colorMap[sq.squadId];
-        const pts   = series[sq.squadId] || [];
-        if (!pts.length) return;
-
+        if (!(series[sq.squadId] || []).length) return;
         if (me) {
-          const glow = mk('path', { fill: 'none', stroke: 'rgba(201,168,76,0.10)', 'stroke-width': '4', 'stroke-linejoin': 'round', 'stroke-linecap': 'round', d: '' });
-          svg.appendChild(glow);
-          glowEls[sq.squadId] = glow;
+          const glow = mk('path', { fill: 'none', stroke: 'rgba(201,168,76,0.10)', 'stroke-width': '4', 'stroke-linejoin': 'round', 'stroke-linecap': 'round', d: '', opacity: '0' });
+          svg.appendChild(glow); glowEls[sq.squadId] = glow;
         }
-        const path = mk('path', { fill: 'none', stroke: color, 'stroke-width': me ? '1.8' : '1.4', 'stroke-linejoin': 'round', 'stroke-linecap': 'round', d: '', opacity: me ? '1' : '0.85' });
-        svg.appendChild(path);
-        pathEls[sq.squadId] = path;
+        const path = mk('path', { fill: 'none', stroke: color, 'stroke-width': me ? '1.8' : '1.4', 'stroke-linejoin': 'round', 'stroke-linecap': 'round', d: '', opacity: '0' });
+        svg.appendChild(path); pathEls[sq.squadId] = path;
       });
 
-      // Right-side labels with Y de-collision
-      const finalData = squads
-        .map(sq => {
-          const pts  = series[sq.squadId] || [];
-          const last = pts[pts.length - 1];
-          return last ? { sq, last, color: colorMap[sq.squadId], me: mySquadIds.has(sq.squadId), rawY: pyOf(last.cumulative) } : null;
-        })
-        .filter(Boolean)
-        .sort((a, b) => a.rawY - b.rawY);
-
-      const MIN_GAP = 13;  // single-line labels need less vertical space
-      for (let i = 1; i < finalData.length; i++) {
-        if (finalData[i].rawY - finalData[i-1].rawY < MIN_GAP)
-          finalData[i].rawY = finalData[i-1].rawY + MIN_GAP;
-      }
-
-      const labelGroup = [];
-      finalData.forEach(({ sq, last, color, me, rawY }) => {
-        const lx = W - MR + 8;
-        const actualY = pyOf(last.cumulative);
-
-        const tick = mk('line', { x1: W - MR + 2, x2: lx - 3, y1: actualY, y2: rawY + 2, stroke: color, 'stroke-width': '0.7', opacity: '0' });
-        svg.appendChild(tick);
-
-        // Single line: "Name · Xpts"
-        const shortName = sq.squadName.length > 11 ? sq.squadName.slice(0, 10) + '…' : sq.squadName;
-        const nm = mk('text', { x: lx, y: rawY + 4, 'font-size': '9', fill: color, 'font-weight': me ? '700' : '500', 'font-family': 'inherit', opacity: '0' });
-        nm.textContent = `${shortName} · ${last.cumulative}`;
-        svg.appendChild(nm);
-
-        labelGroup.push({ tick, nm, lastMn: last.matchNumber });
-      });
-
-      // Booster markers (rendered on top of lines)
+      // Booster markers
       const boosterItems = boosters.map(b => {
-        const ci  = mxi(b.matchNumber);
-        if (ci < 0) return null;
-        const cum = cumulMap[b.squadId]?.[b.matchNumber];
-        if (cum == null) return null;
-        const cx = pxOf(ci), cy = pyOf(cum);
-        const color = colorMap[b.squadId] || '#888';
-
+        const ci = mxi(b.matchNumber); if (ci < 0) return null;
+        const cum = cumulMap[b.squadId]?.[b.matchNumber]; if (cum == null) return null;
+        const cx = pxOf(ci), cy = pyOf(cum), color = colorMap[b.squadId] || '#888';
         const ring = mk('circle', { cx, cy, r: '5', fill: 'white', stroke: color, 'stroke-width': '1.2', opacity: '0' });
         svg.appendChild(ring);
-
         const fo = document.createElementNS(ns, 'foreignObject');
         fo.setAttribute('x', cx - 5); fo.setAttribute('y', cy - 6);
         fo.setAttribute('width', '10'); fo.setAttribute('height', '10');
@@ -3880,47 +3897,117 @@ p31,Sample Player,MI,bat,9.0,false
         sp.style.cssText = 'font-size:7px;line-height:10px;display:block;text-align:center;';
         sp.textContent = b.booster;
         fo.appendChild(sp); svg.appendChild(fo);
-
-        return { ring, fo, matchNumber: b.matchNumber };
+        return { ring, fo, matchNumber: b.matchNumber, squadId: b.squadId };
       }).filter(Boolean);
 
-      // Build DOM structure
-      container.innerHTML = '';
-      const hdr = document.createElement('div');
-      hdr.className = 'lb-chart-hdr';
-      // Build dynamic booster icon legend from actual boosters in this data
-      const uniqueBoosterIcons = [...new Set(boosters.map(b => b.booster))].join(' ');
-      const boosterLegendStr = uniqueBoosterIcons ? `${uniqueBoosterIcons} = Booster used` : '';
-      hdr.innerHTML = `<span class="lb-chart-hdr-l">Cumulative points over season</span><span class="lb-chart-hdr-r">${boosterLegendStr}</span>`;
-      container.appendChild(hdr);
       container.appendChild(svg);
 
-      const legend = document.createElement('div');
-      legend.id = 'lbChartLegend';
-      [...squads]
-        .sort((a, b) => ((series[b.squadId] || []).slice(-1)[0]?.cumulative ?? 0) - ((series[a.squadId] || []).slice(-1)[0]?.cumulative ?? 0))
-        .forEach(sq => {
-          const me    = mySquadIds.has(sq.squadId);
-          const color = colorMap[sq.squadId];
-          const item  = document.createElement('div'); item.className = 'lb-leg-item';
-          const sw    = document.createElement('div'); sw.className = 'lb-leg-swatch'; sw.style.background = color;
-          if (me) sw.style.boxShadow = `0 0 0 1px white, 0 0 0 2.5px ${color}`;
-          const nm = document.createElement('span');
-          nm.textContent = me ? sq.squadName + ' (you)' : sq.squadName;
-          if (me) { nm.style.fontWeight = '700'; nm.style.color = 'var(--text)'; }
-          item.appendChild(sw); item.appendChild(nm); legend.appendChild(item);
+      // Legend container
+      const legendEl = document.createElement('div');
+      legendEl.id = 'lbChartLegend';
+      container.appendChild(legendEl);
+
+      // ── Labels (rebuilt on vis change) ────────────────────────────────────
+      const labelsBySquad = {}; // squadId -> { tick, nm }
+      let animDone = false;
+
+      function rebuildLabels(vis) {
+        Object.values(labelsBySquad).forEach(({ tick, nm }) => {
+          tick.parentNode?.removeChild(tick);
+          nm.parentNode?.removeChild(nm);
         });
-      container.appendChild(legend);
+        Object.keys(labelsBySquad).forEach(k => delete labelsBySquad[k]);
 
-      // ── Animation: draw lines match-by-match simultaneously ──
-      // `frac` is a float from 0 to N-1 (index into matchNumbers).
-      // Each integer step = one match revealed; fraction = mid-segment interpolation.
-      const STEP_MS  = 350;   // ms to draw each match segment
-      const PAUSE_MS = 70;    // ms pause at each match vertex
-      const CYCLE    = STEP_MS + PAUSE_MS;
-      const TOTAL_MS = N * CYCLE;
-      const t0       = performance.now();
+        const finalData = squads
+          .filter(sq => vis.has(sq.squadId) && (series[sq.squadId] || []).length)
+          .map(sq => {
+            const pts = series[sq.squadId] || [], last = pts[pts.length - 1];
+            return last ? { sq, last, color: colorMap[sq.squadId], me: mySquadIds.has(sq.squadId), rawY: pyOf(last.cumulative) } : null;
+          })
+          .filter(Boolean)
+          .sort((a, b) => a.rawY - b.rawY);
 
+        const MIN_GAP = 13;
+        for (let i = 1; i < finalData.length; i++) {
+          if (finalData[i].rawY - finalData[i-1].rawY < MIN_GAP)
+            finalData[i].rawY = finalData[i-1].rawY + MIN_GAP;
+        }
+
+        finalData.forEach(({ sq, last, color, me, rawY }) => {
+          const lx = W - MR + 8, actualY = pyOf(last.cumulative);
+          const op = animDone ? '0.5' : '0';
+          const tick = mk('line', { x1: W - MR + 2, x2: lx - 3, y1: actualY, y2: rawY + 2, stroke: color, 'stroke-width': '0.7', opacity: op });
+          svg.appendChild(tick);
+          const shortName = sq.squadName.length > 11 ? sq.squadName.slice(0, 10) + '…' : sq.squadName;
+          const nm = mk('text', { x: lx, y: rawY + 4, 'font-size': '9', fill: color, 'font-weight': me ? '700' : '500', 'font-family': 'inherit', opacity: animDone ? '1' : '0' });
+          nm.textContent = `${shortName} · ${last.cumulative}`;
+          svg.appendChild(nm);
+          labelsBySquad[sq.squadId] = { tick, nm };
+        });
+      }
+
+      function rebuildLegend(vis) {
+        legendEl.innerHTML = '';
+        squadsByRank.forEach(sq => {
+          const me = mySquadIds.has(sq.squadId);
+          const color = colorMap[sq.squadId];
+          const finalPts = (series[sq.squadId] || []).slice(-1)[0]?.cumulative ?? 0;
+          const hidden = !vis.has(sq.squadId);
+
+          const item = document.createElement('div');
+          item.className = 'lb-leg-item' + (hidden ? ' lb-leg-hidden' : '') + (me ? ' lb-leg-you' : '');
+
+          const sw = document.createElement('div');
+          sw.className = 'lb-leg-swatch'; sw.style.background = color;
+          if (me) sw.style.boxShadow = `0 0 0 1px white, 0 0 0 2.5px ${color}`;
+
+          const nm = document.createElement('span');
+          nm.className = 'lb-leg-nm';
+          nm.innerHTML = sq.squadName + (me ? ' <span class="lb-you-badge">YOU</span>' : '');
+          if (me) nm.style.fontWeight = '700';
+
+          const pts = document.createElement('span');
+          pts.className = 'lb-leg-pts';
+          pts.textContent = finalPts + ' pts';
+
+          item.appendChild(sw); item.appendChild(nm); item.appendChild(pts);
+
+          if (!me) {
+            const eye = document.createElement('i');
+            eye.className = `ti ${hidden ? 'ti-eye-off' : 'ti-eye'} lb-leg-eye`;
+            item.appendChild(eye);
+            item.addEventListener('click', () => {
+              if (!hidden) { manualHidden.add(sq.squadId); manualShown.delete(sq.squadId); }
+              else         { manualShown.add(sq.squadId);  manualHidden.delete(sq.squadId); }
+              applyVisibility(getVisible());
+            });
+          }
+          legendEl.appendChild(item);
+        });
+      }
+
+      // ── Apply visibility to all elements ──────────────────────────────────
+      function applyVisibility(vis) {
+        squads.forEach(sq => {
+          const show = vis.has(sq.squadId);
+          const me   = mySquadIds.has(sq.squadId);
+          if (pathEls[sq.squadId]) pathEls[sq.squadId].setAttribute('opacity', show ? (me ? '1' : '0.85') : '0');
+          if (glowEls[sq.squadId]) glowEls[sq.squadId].setAttribute('opacity', show ? '1' : '0');
+        });
+        boosterItems.forEach(bi => {
+          const show = vis.has(bi.squadId) ? '1' : '0';
+          bi.ring.setAttribute('opacity', show); bi.fo.style.opacity = show;
+        });
+        rebuildLabels(vis);
+        rebuildLegend(vis);
+      }
+
+      // Initial render
+      const initVis = getVisible();
+      rebuildLabels(initVis);
+      rebuildLegend(initVis);
+
+      // ── Animation ─────────────────────────────────────────────────────────
       function pathDUpTo(squadId, frac) {
         const pts = series[squadId] || [];
         const segs = [];
@@ -3943,44 +4030,43 @@ p31,Sample Player,MI,bat,9.0,false
         return segs.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
       }
 
+      const STEP_MS = 350, PAUSE_MS = 70, CYCLE = STEP_MS + PAUSE_MS, TOTAL_MS = N * CYCLE;
+      const t0 = performance.now();
+
       function frame(now) {
         const elapsed = now - t0;
-        const done    = elapsed >= TOTAL_MS + 300;
-
         let frac;
         if (elapsed >= TOTAL_MS) {
           frac = N - 1;
         } else {
-          const cycleN   = Math.floor(elapsed / CYCLE);
-          const inCycle  = elapsed % CYCLE;
-          const drawFrac = Math.min(inCycle / STEP_MS, 1);
-          // ease-out quad within each segment
-          frac = cycleN + (1 - Math.pow(1 - drawFrac, 2));
+          const cycleN  = Math.floor(elapsed / CYCLE);
+          const inCycle = elapsed % CYCLE;
+          frac = cycleN + (1 - Math.pow(1 - Math.min(inCycle / STEP_MS, 1), 2));
         }
 
-        // Update each squad's path
+        const curVis = getVisible();
         sortedSquads.forEach(sq => {
+          if (!curVis.has(sq.squadId)) return;
+          const me = mySquadIds.has(sq.squadId);
           const d = pathDUpTo(sq.squadId, frac);
-          if (pathEls[sq.squadId])  pathEls[sq.squadId].setAttribute('d', d);
-          if (glowEls[sq.squadId])  glowEls[sq.squadId].setAttribute('d', d);
+          if (pathEls[sq.squadId]) { pathEls[sq.squadId].setAttribute('d', d); pathEls[sq.squadId].setAttribute('opacity', me ? '1' : '0.85'); }
+          if (glowEls[sq.squadId]) { glowEls[sq.squadId].setAttribute('d', d); glowEls[sq.squadId].setAttribute('opacity', '1'); }
         });
-
-        // Show booster markers at their match
         boosterItems.forEach(bi => {
+          if (!curVis.has(bi.squadId)) return;
           const v = mxi(bi.matchNumber) <= frac ? '1' : '0';
-          bi.ring.setAttribute('opacity', v);
-          bi.fo.style.opacity = v;
+          bi.ring.setAttribute('opacity', v); bi.fo.style.opacity = v;
         });
 
-        // Reveal right-side labels once animation is done
-        if (elapsed >= TOTAL_MS) {
-          labelGroup.forEach(({ tick, nm }) => {
+        if (elapsed >= TOTAL_MS && !animDone) {
+          animDone = true;
+          Object.values(labelsBySquad).forEach(({ tick, nm }) => {
             tick.setAttribute('opacity', '0.5');
             nm.setAttribute('opacity', '1');
           });
         }
 
-        if (!done) requestAnimationFrame(frame);
+        if (elapsed < TOTAL_MS + 300) requestAnimationFrame(frame);
       }
 
       requestAnimationFrame(frame);
