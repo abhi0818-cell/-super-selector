@@ -873,6 +873,8 @@
     .lb-cap-pills { display:flex; gap:3px; }
     .lb-cap-pill { padding:3px 9px; border-radius:5px; font-size:10px; font-weight:600; cursor:pointer; color:var(--muted); border:1px solid var(--border); background:transparent; font-family:inherit; transition:all 0.15s; }
     .lb-cap-pill.lb-cap-active { background:rgba(201,168,76,0.12); color:#C9A84C; border-color:rgba(201,168,76,0.35); }
+    .lb-trace-btn { padding:3px 10px; border-radius:5px; font-size:10px; font-weight:600; cursor:pointer; color:#C9A84C; border:1px solid rgba(201,168,76,0.35); background:rgba(201,168,76,0.08); font-family:inherit; transition:all 0.15s; }
+    .lb-trace-btn:hover { background:rgba(201,168,76,0.18); }
 
     /* ── Auth ─────────────────────────────────────────────── */
     #loginScreen {
@@ -3824,13 +3826,16 @@ p31,Sample Player,MI,bat,9.0,false
       // Cap selector bar
       const capBar = document.createElement('div');
       capBar.className = 'lb-cap-bar';
-      capBar.innerHTML = `<span class="lb-cap-bar-l">Show</span>
-        <div class="lb-cap-pills">
-          <button class="lb-cap-pill" data-n="3">Top 3</button>
-          <button class="lb-cap-pill lb-cap-active" data-n="5">Top 5</button>
-          <button class="lb-cap-pill" data-n="10">Top 10</button>
-          <button class="lb-cap-pill" data-n="999">All</button>
-        </div>`;
+      capBar.innerHTML = `<div style="display:flex;align-items:center;gap:6px">
+          <span class="lb-cap-bar-l">Show</span>
+          <div class="lb-cap-pills">
+            <button class="lb-cap-pill" data-n="3">Top 3</button>
+            <button class="lb-cap-pill lb-cap-active" data-n="5">Top 5</button>
+            <button class="lb-cap-pill" data-n="10">Top 10</button>
+            <button class="lb-cap-pill" data-n="999">All</button>
+          </div>
+        </div>
+        <button class="lb-trace-btn" id="lbTraceBtn">▶ Trace</button>`;
       container.appendChild(capBar);
 
       capBar.querySelectorAll('.lb-cap-pill').forEach(btn => {
@@ -3839,6 +3844,12 @@ p31,Sample Player,MI,bat,9.0,false
           this.classList.add('lb-cap-active');
           cap = parseInt(this.dataset.n);
           manualHidden.clear(); manualShown.clear();
+          // Stop any running trace animation
+          if (typeof traceRafId !== 'undefined' && traceRafId) {
+            cancelAnimationFrame(traceRafId); traceRafId = null;
+            animDone = true;
+            const tb = capBar.querySelector('#lbTraceBtn'); if (tb) tb.textContent = '▶ Trace';
+          }
           applyVisibility(getVisible());
         });
       });
@@ -3991,12 +4002,20 @@ p31,Sample Player,MI,bat,9.0,false
         squads.forEach(sq => {
           const show = vis.has(sq.squadId);
           const me   = mySquadIds.has(sq.squadId);
+          if (show && animDone) {
+            const d = pathDUpTo(sq.squadId, N - 1);
+            if (pathEls[sq.squadId]) pathEls[sq.squadId].setAttribute('d', d);
+            if (glowEls[sq.squadId]) glowEls[sq.squadId].setAttribute('d', d);
+          } else if (!show) {
+            if (pathEls[sq.squadId]) pathEls[sq.squadId].setAttribute('d', '');
+            if (glowEls[sq.squadId]) glowEls[sq.squadId].setAttribute('d', '');
+          }
           if (pathEls[sq.squadId]) pathEls[sq.squadId].setAttribute('opacity', show ? (me ? '1' : '0.85') : '0');
           if (glowEls[sq.squadId]) glowEls[sq.squadId].setAttribute('opacity', show ? '1' : '0');
         });
         boosterItems.forEach(bi => {
-          const show = vis.has(bi.squadId) ? '1' : '0';
-          bi.ring.setAttribute('opacity', show); bi.fo.style.opacity = show;
+          const v = (vis.has(bi.squadId) && animDone) ? '1' : '0';
+          bi.ring.setAttribute('opacity', v); bi.fo.style.opacity = v;
         });
         rebuildLabels(vis);
         rebuildLegend(vis);
@@ -4030,46 +4049,78 @@ p31,Sample Player,MI,bat,9.0,false
         return segs.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
       }
 
-      const STEP_MS = 350, PAUSE_MS = 70, CYCLE = STEP_MS + PAUSE_MS, TOTAL_MS = N * CYCLE;
-      const t0 = performance.now();
+      // ── Static render + trace ─────────────────────────────────────────────
+      let traceRafId = null;
 
-      function frame(now) {
-        const elapsed = now - t0;
-        let frac;
-        if (elapsed >= TOTAL_MS) {
-          frac = N - 1;
-        } else {
-          const cycleN  = Math.floor(elapsed / CYCLE);
-          const inCycle = elapsed % CYCLE;
-          frac = cycleN + (1 - Math.pow(1 - Math.min(inCycle / STEP_MS, 1), 2));
-        }
-
-        const curVis = getVisible();
-        sortedSquads.forEach(sq => {
-          if (!curVis.has(sq.squadId)) return;
-          const me = mySquadIds.has(sq.squadId);
-          const d = pathDUpTo(sq.squadId, frac);
-          if (pathEls[sq.squadId]) { pathEls[sq.squadId].setAttribute('d', d); pathEls[sq.squadId].setAttribute('opacity', me ? '1' : '0.85'); }
-          if (glowEls[sq.squadId]) { glowEls[sq.squadId].setAttribute('d', d); glowEls[sq.squadId].setAttribute('opacity', '1'); }
-        });
-        boosterItems.forEach(bi => {
-          if (!curVis.has(bi.squadId)) return;
-          const v = mxi(bi.matchNumber) <= frac ? '1' : '0';
-          bi.ring.setAttribute('opacity', v); bi.fo.style.opacity = v;
-        });
-
-        if (elapsed >= TOTAL_MS && !animDone) {
-          animDone = true;
-          Object.values(labelsBySquad).forEach(({ tick, nm }) => {
-            tick.setAttribute('opacity', '0.5');
-            nm.setAttribute('opacity', '1');
-          });
-        }
-
-        if (elapsed < TOTAL_MS + 300) requestAnimationFrame(frame);
+      function showAllFinal() {
+        animDone = true;
+        applyVisibility(getVisible());
       }
 
-      requestAnimationFrame(frame);
+      function startTrace(btn) {
+        if (traceRafId) { cancelAnimationFrame(traceRafId); traceRafId = null; }
+        animDone = false;
+        const curVis = getVisible();
+        sortedSquads.forEach(sq => {
+          if (pathEls[sq.squadId]) pathEls[sq.squadId].setAttribute('d', '');
+          if (glowEls[sq.squadId]) glowEls[sq.squadId].setAttribute('d', '');
+        });
+        boosterItems.forEach(bi => { bi.ring.setAttribute('opacity', '0'); bi.fo.style.opacity = '0'; });
+        rebuildLabels(curVis); // animDone=false → labels at opacity 0
+        if (btn) btn.textContent = '◼ Stop';
+
+        const STEP_MS = 350, PAUSE_MS = 70, CYCLE = STEP_MS + PAUSE_MS, TOTAL_MS = N * CYCLE;
+        const t0 = performance.now();
+
+        function frame(now) {
+          const elapsed = now - t0;
+          let frac;
+          if (elapsed >= TOTAL_MS) { frac = N - 1; }
+          else {
+            const cycleN  = Math.floor(elapsed / CYCLE);
+            const inCycle = elapsed % CYCLE;
+            frac = cycleN + (1 - Math.pow(1 - Math.min(inCycle / STEP_MS, 1), 2));
+          }
+          const vis = getVisible();
+          sortedSquads.forEach(sq => {
+            if (!vis.has(sq.squadId)) return;
+            const me = mySquadIds.has(sq.squadId);
+            const d = pathDUpTo(sq.squadId, frac);
+            if (pathEls[sq.squadId]) { pathEls[sq.squadId].setAttribute('d', d); pathEls[sq.squadId].setAttribute('opacity', me ? '1' : '0.85'); }
+            if (glowEls[sq.squadId]) { glowEls[sq.squadId].setAttribute('d', d); glowEls[sq.squadId].setAttribute('opacity', '1'); }
+          });
+          boosterItems.forEach(bi => {
+            if (!vis.has(bi.squadId)) return;
+            const v = mxi(bi.matchNumber) <= frac ? '1' : '0';
+            bi.ring.setAttribute('opacity', v); bi.fo.style.opacity = v;
+          });
+          if (elapsed >= TOTAL_MS && !animDone) {
+            animDone = true;
+            Object.values(labelsBySquad).forEach(({ tick, nm }) => {
+              tick.setAttribute('opacity', '0.5'); nm.setAttribute('opacity', '1');
+            });
+            traceRafId = null;
+            if (btn) btn.textContent = '▶ Trace';
+          }
+          if (elapsed < TOTAL_MS + 300) traceRafId = requestAnimationFrame(frame);
+        }
+        traceRafId = requestAnimationFrame(frame);
+      }
+
+      // Wire trace button
+      const traceBtn = capBar.querySelector('#lbTraceBtn');
+      if (traceBtn) {
+        traceBtn.addEventListener('click', () => {
+          if (traceRafId) {
+            cancelAnimationFrame(traceRafId); traceRafId = null;
+            animDone = true; showAllFinal(); traceBtn.textContent = '▶ Trace';
+          } else {
+            startTrace(traceBtn);
+          }
+        });
+      }
+
+      showAllFinal(); // default: static final state
     }
 
     // ─── AUTH SETUP ──────────────────────────────────────────────────────────

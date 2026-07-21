@@ -8,9 +8,10 @@
  *   - Tappable legend rows — show/hide individual team lines
  *   - Booster markers on the line at the match they were used
  *   - Right-side labels with Y de-collision
+ *   - ▶ Trace button to animate the chart path on demand
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Pressable,
   ScrollView,
@@ -40,6 +41,10 @@ const CAP_OPTIONS = [
   { n: 999, label: 'All'    },
 ];
 
+const STEP_MS  = 350;
+const PAUSE_MS = 70;
+const CYCLE    = STEP_MS + PAUSE_MS;
+
 const C = {
   text:   '#1C1F26',
   muted:  '#7A7060',
@@ -61,6 +66,11 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
   const [cap,          setCap]          = useState(5);
   const [manualHidden, setManualHidden] = useState<Set<string>>(new Set());
   const [manualShown,  setManualShown]  = useState<Set<string>>(new Set());
+
+  // Animation state: null = static final view, number = current fractional match index
+  const [animFrac, setAnimFrac] = useState<number | null>(null);
+  const timerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
+  const animStartRef = useRef<number>(0);
 
   // ── Derived from props ─────────────────────────────────────────────────────
 
@@ -98,9 +108,11 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
     return vals.length ? Math.max(...vals) * 1.12 : 100;
   }, [series]);
 
+  const N = matchNumbers.length;
+
   // ── Vis state ──────────────────────────────────────────────────────────────
 
-  const getVisible = (): Set<string> => {
+  const getVisible = useCallback((): Set<string> => {
     const topN = new Set(squadsByRank.slice(0, cap).map(s => s.squadId));
     const result = new Set<string>();
     squads.forEach(sq => {
@@ -109,11 +121,12 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
         result.add(sq.squadId);
     });
     return result;
-  };
+  }, [squads, squadsByRank, cap, manualHidden, manualShown, mySquadIds]);
 
   const visible = getVisible();
 
   const switchCap = (n: number) => {
+    stopTrace();
     setCap(n);
     setManualHidden(new Set());
     setManualShown(new Set());
@@ -131,7 +144,6 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
 
   // ── Chart geometry ─────────────────────────────────────────────────────────
 
-  const N  = matchNumbers.length;
   const W  = width;
   const H  = 200;
   const ML = 36, MR = 96, MT = 10, MB = 22;
@@ -151,7 +163,7 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
 
   const xSkip = N <= 10 ? 1 : N <= 20 ? 2 : 5;
 
-  // Build SVG path d for a squad's visible cumulative line
+  // Build full SVG path d for a squad
   const buildPath = (squadId: string): string => {
     const pts = series[squadId] || [];
     return pts.map((e, i) => {
@@ -161,8 +173,32 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
     }).join(' ');
   };
 
-  // Right-side labels with Y de-collision
-  const labelData = (() => {
+  // Build partial path up to fractional match index `frac`
+  const buildPathUpTo = (squadId: string, frac: number): string => {
+    const pts = series[squadId] || [];
+    const segs: [number, number][] = [];
+    for (let j = 0; j < pts.length; j++) {
+      const xi = mxi(pts[j].matchNumber);
+      if (xi <= frac) {
+        segs.push([pxOf(xi), pyOf(pts[j].cumulative)]);
+      } else {
+        const prevXi = j > 0 ? mxi(pts[j - 1].matchNumber) : xi;
+        const range  = xi - prevXi;
+        if (range > 0 && frac > prevXi) {
+          const f  = (frac - prevXi) / range;
+          const x0 = j > 0 ? pxOf(prevXi) : pxOf(xi);
+          const y0 = j > 0 ? pyOf(pts[j - 1].cumulative) : pyOf(0);
+          segs.push([x0 + (pxOf(xi) - x0) * f, y0 + (pyOf(pts[j].cumulative) - y0) * f]);
+        }
+        break;
+      }
+    }
+    return segs.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
+  };
+
+  // Right-side labels with Y de-collision (only shown in static mode)
+  const labelData = useMemo(() => {
+    if (animFrac !== null) return [];
     const data = squads
       .filter(sq => visible.has(sq.squadId) && (series[sq.squadId] || []).length)
       .map(sq => {
@@ -186,7 +222,8 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
         data[i].rawY = data[i - 1].rawY + MIN_GAP;
     }
     return data;
-  })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [animFrac, squads, series, colorMap, mySquadIds, visible, maxPts, matchNumbers, N]);
 
   // Render order: others first, "you" on top
   const sortedSquads = useMemo(() =>
@@ -196,28 +233,69 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
     [squads, mySquadIds],
   );
 
+  // ── Trace animation ────────────────────────────────────────────────────────
+
+  const stopTrace = useCallback(() => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    setAnimFrac(null);
+  }, []);
+
+  const startTrace = useCallback(() => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    const TOTAL_MS = N * CYCLE;
+    animStartRef.current = Date.now();
+    setAnimFrac(0);
+
+    timerRef.current = setInterval(() => {
+      const elapsed = Date.now() - animStartRef.current;
+      if (elapsed >= TOTAL_MS) {
+        clearInterval(timerRef.current!);
+        timerRef.current = null;
+        setAnimFrac(null); // back to static
+        return;
+      }
+      const cycleN  = Math.floor(elapsed / CYCLE);
+      const inCycle = elapsed % CYCLE;
+      const frac    = cycleN + (1 - Math.pow(1 - Math.min(inCycle / STEP_MS, 1), 2));
+      setAnimFrac(frac);
+    }, 33);
+  }, [N]);
+
+  // Cleanup on unmount
+  useEffect(() => () => { if (timerRef.current) clearInterval(timerRef.current); }, []);
+
+  const isAnimating = animFrac !== null;
+
   if (!N || !squads.length) return null;
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <View>
-      {/* Cap selector */}
+      {/* Cap selector + trace button */}
       <View style={s.capBar}>
-        <Text style={s.capBarLabel}>Show</Text>
-        <View style={s.capPills}>
-          {CAP_OPTIONS.map(opt => (
-            <Pressable
-              key={opt.n}
-              onPress={() => switchCap(opt.n)}
-              style={[s.capPill, cap === opt.n && s.capPillActive]}
-            >
-              <Text style={[s.capPillText, cap === opt.n && s.capPillTextActive]}>
-                {opt.label}
-              </Text>
-            </Pressable>
-          ))}
+        <View style={s.capBarLeft}>
+          <Text style={s.capBarLabel}>Show</Text>
+          <View style={s.capPills}>
+            {CAP_OPTIONS.map(opt => (
+              <Pressable
+                key={opt.n}
+                onPress={() => switchCap(opt.n)}
+                style={[s.capPill, cap === opt.n && s.capPillActive]}
+              >
+                <Text style={[s.capPillText, cap === opt.n && s.capPillTextActive]}>
+                  {opt.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
         </View>
+        <Pressable
+          onPress={isAnimating ? stopTrace : startTrace}
+          style={s.traceBtn}
+        >
+          <Text style={s.traceBtnText}>{isAnimating ? '◼ Stop' : '▶ Trace'}</Text>
+        </Pressable>
       </View>
 
       {/* SVG chart */}
@@ -251,7 +329,9 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
           if (!visible.has(sq.squadId)) return null;
           const me    = mySquadIds.has(sq.squadId);
           const color = colorMap[sq.squadId];
-          const d     = buildPath(sq.squadId);
+          const d     = isAnimating
+            ? buildPathUpTo(sq.squadId, animFrac!)
+            : buildPath(sq.squadId);
           if (!d) return null;
           return (
             <G key={sq.squadId}>
@@ -278,11 +358,13 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
           );
         })}
 
-        {/* Booster markers */}
+        {/* Booster markers — show when reached (animating) or always (static) */}
         {boosters.map((b, idx) => {
           if (!visible.has(b.squadId)) return null;
           const ci  = mxi(b.matchNumber);
           if (ci < 0) return null;
+          // During animation, only show if we've reached that match
+          if (isAnimating && ci > animFrac!) return null;
           const cum = (series[b.squadId] || []).find(e => e.matchNumber === b.matchNumber)?.cumulative;
           if (cum == null) return null;
           const cx    = pxOf(ci);
@@ -296,7 +378,7 @@ export function LeaderboardProgressChart({ history, myUserId, width }: Props) {
           );
         })}
 
-        {/* Right-side labels */}
+        {/* Right-side labels — static mode only */}
         {labelData.map(({ sq, last, color, me, rawY }) => {
           const lx        = W - MR + 6;
           const actualY   = pyOf(last.cumulative);
@@ -363,6 +445,11 @@ const s = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom:   spacing.sm,
   },
+  capBarLeft: {
+    flexDirection: 'row',
+    alignItems:    'center',
+    gap:           6,
+  },
   capBarLabel: {
     color:    C.muted,
     fontSize: fontSize.xs,
@@ -391,6 +478,19 @@ const s = StyleSheet.create({
   },
   capPillTextActive: {
     color: C.accent,
+  },
+  traceBtn: {
+    paddingHorizontal: 10,
+    paddingVertical:   3,
+    borderRadius:      radius.sm,
+    borderWidth:       1,
+    borderColor:       'rgba(201,168,76,0.35)',
+    backgroundColor:   'rgba(201,168,76,0.08)',
+  },
+  traceBtnText: {
+    color:      C.accent,
+    fontSize:   10,
+    fontWeight: '600',
   },
 
   // Legend
