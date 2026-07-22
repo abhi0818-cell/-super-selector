@@ -4304,6 +4304,183 @@
       toast(`${fmt} rules reset to defaults.`);
     }
 
+    /**
+     * Snapshot the currently-effective rules (built-in defaults merged with
+     * whatever this tournament has saved) into the tournament's own locked
+     * scoring_rules, for every format. After this, changing the app's
+     * DEFAULT_SCORING_RULES (e.g. adding a new bonus tier) can no longer
+     * retroactively change this tournament's scoring — every key the engine
+     * knows about is now explicitly pinned on the tournament itself.
+     *
+     * Use this on any tournament that's already in progress or completed,
+     * right before shipping a scoring-rule change, so the change only
+     * applies going forward. (This is exactly what the manual SQL patch for
+     * Major League Cricket did by hand — this is the one-click version.)
+     */
+    async function freezeTournamentRules() {
+      if (!state.db) { toast('Connect a database first.'); return; }
+      if (!state.activeTournamentId) { toast('No active tournament — select one first.'); return; }
+      const t = (state.tournaments || []).find(x => x.id === state.activeTournamentId);
+      const name = t?.name || 'this tournament';
+      if (!confirm(
+        `Freeze scoring rules for "${name}"?\n\n`
+        + `This writes the currently-effective rules (built-in defaults + any saved overrides) `
+        + `into this tournament's locked rules for every format. Future changes to the app's `
+        + `default scoring rules will no longer affect "${name}" unless you edit its rules again.`
+      )) return;
+
+      const btn = $('#tournamentFreezeRulesBtn');
+      if (btn) { btn.disabled = true; btn.textContent = 'Freezing…'; }
+      try {
+        for (const fmt of ['T20', 'ODI', 'TEST']) {
+          const frozen = { ...DEFAULT_SCORING_RULES[fmt], ...(SCORING_RULES[fmt] || {}) };
+          await state.db.saveScoringRules(state.activeTournamentId, fmt, frozen);
+        }
+        toast(`Froze scoring rules for "${name}" — future default changes won't retroactively affect it.`);
+      } catch (e) {
+        toast('Freeze failed: ' + e.message, 5000);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🧊 Freeze rules'; }
+      }
+    }
+
+    // ─── Score Audit ─────────────────────────────────────────────────────────
+
+    let lastAuditResults = null; // cache so Recalc/Finalize buttons can re-render without a full re-fetch of stale data
+
+    /**
+     * Recomputes every player_match_stats row in the active tournament from
+     * its saved batting/bowling/fielding stats + the tournament's locked
+     * scoring_rules (same merge as buildRulesGrid/saveRules use), and flags
+     * any row whose stored raw_points doesn't match. Also flags completed
+     * matches with zero player_match_stats rows at all.
+     *
+     * Uses the exact same calculateScore() the rest of the app scores
+     * matches with — not a reimplementation — so a flagged mismatch always
+     * means real drift between stored data and current rules/stats, never a
+     * difference in scoring logic itself.
+     */
+    async function runScoreAudit() {
+      if (!state.db) { toast('Connect a database first.'); return; }
+      if (!state.activeTournamentId) { toast('No active tournament — select one first.'); return; }
+
+      const btn = $('#scoreAuditBtn');
+      const statusEl = $('#scoreAuditStatus');
+      const resultsEl = $('#scoreAuditResults');
+      if (btn) { btn.disabled = true; btn.textContent = 'Auditing…'; }
+      if (resultsEl) resultsEl.style.display = 'none';
+
+      try {
+        const t = (state.tournaments || []).find(x => x.id === state.activeTournamentId);
+        const tFmt = (t?.format || 'T20').toUpperCase();
+        const { matches, stats, players } = await state.db.getAuditDataForTournament(state.activeTournamentId);
+
+        if (!matches.length) {
+          statusEl.textContent = 'No matches in this tournament yet.';
+          lastAuditResults = null;
+          return;
+        }
+
+        const matchById  = new Map(matches.map(m => [m.id, m]));
+        const playerById2 = new Map(players.map(p => [p.id, p]));
+
+        const missingScorecard = matches.filter(m =>
+          m.status === 'completed' && !stats.some(s => s.match_id === m.id));
+
+        const TOLERANCE = 0.05;
+        const mismatches = [];
+        for (const row of stats) {
+          const match = matchById.get(row.match_id);
+          const fmt = (match?.format || tFmt || 'T20').toUpperCase();
+          const player = playerById2.get(row.player_id);
+          const role = player?.role ?? 'bat';
+          const rules = { ...DEFAULT_SCORING_RULES[fmt], ...((t?.scoring_rules || {})[fmt] || {}) };
+
+          const scored = calculateScore(
+            { name: player?.name ?? row.player_id, role, captaincy: 'normal',
+              batting: row.batting, bowling: row.bowling, fielding: row.fielding },
+            fmt, rules,
+          );
+          const recomputed = scored.rawPoints;
+          const stored = Number(row.raw_points ?? 0);
+
+          if (Math.abs(recomputed - stored) > TOLERANCE) {
+            mismatches.push({
+              matchId: row.match_id, matchNumber: match?.match_number ?? '?',
+              playerId: row.player_id, playerName: player?.name ?? row.player_id,
+              stored, recomputed, diff: Math.round((recomputed - stored) * 10) / 10,
+            });
+          }
+        }
+
+        lastAuditResults = { missingScorecard, mismatches, rowsChecked: stats.length, matchCount: matches.length };
+        renderScoreAuditResults();
+
+        statusEl.textContent = `Checked ${stats.length} player-match row(s) across ${matches.length} match(es) — `
+          + `${mismatches.length} mismatch(es), ${missingScorecard.length} match(es) missing stats.`;
+      } catch (e) {
+        statusEl.textContent = 'Audit failed: ' + e.message;
+        toast('Audit failed: ' + e.message, 5000);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Run Score Audit'; }
+      }
+    }
+
+    function renderScoreAuditResults() {
+      const resultsEl = $('#scoreAuditResults');
+      if (!resultsEl) return;
+      if (!lastAuditResults) { resultsEl.style.display = 'none'; return; }
+      const { missingScorecard, mismatches } = lastAuditResults;
+
+      if (!missingScorecard.length && !mismatches.length) {
+        resultsEl.style.display = 'block';
+        resultsEl.innerHTML = `<div style="color:var(--good); font-size:12px;">✓ Every player-match row matches its recomputed points.</div>`;
+        return;
+      }
+
+      const rows = [];
+      for (const m of missingScorecard) {
+        rows.push(`
+          <tr>
+            <td>M${m.match_number}</td>
+            <td colspan="3" style="color:var(--bad);">Completed match — no player_match_stats at all</td>
+            <td><button class="row-audit-finalize" data-match-id="${m.id}" style="font-size:11px; padding:3px 8px;">Finalize</button></td>
+          </tr>`);
+      }
+      for (const m of mismatches) {
+        rows.push(`
+          <tr>
+            <td>M${m.matchNumber}</td>
+            <td>${escapeHtml(m.playerName)}</td>
+            <td>${m.stored}</td>
+            <td>${m.recomputed} <span style="color:${m.diff > 0 ? 'var(--accent-2)' : 'var(--bad)'};">(${m.diff > 0 ? '+' : ''}${m.diff})</span></td>
+            <td><button class="row-audit-recalc" data-match-id="${m.matchId}" style="font-size:11px; padding:3px 8px;">Recalc</button></td>
+          </tr>`);
+      }
+
+      resultsEl.style.display = 'block';
+      resultsEl.innerHTML = `
+        <table class="admin-table" style="width:100%; font-size:12px;">
+          <thead><tr><th>Match</th><th>Player</th><th>Stored</th><th>Recomputed</th><th></th></tr></thead>
+          <tbody>${rows.join('')}</tbody>
+        </table>`;
+
+      resultsEl.querySelectorAll('.row-audit-recalc').forEach(b => {
+        b.addEventListener('click', async () => {
+          b.disabled = true; b.textContent = '…';
+          await forceRefinalizeMatch(b.dataset.matchId);
+          await runScoreAudit(); // re-check so fixed rows drop off the list
+        });
+      });
+      resultsEl.querySelectorAll('.row-audit-finalize').forEach(b => {
+        b.addEventListener('click', async () => {
+          b.disabled = true; b.textContent = '…';
+          await finalizeMatchById(b.dataset.matchId);
+          await runScoreAudit();
+        });
+      });
+    }
+
 
   // ─── REGISTER ADMIN API ──────────────────────────────────────────────────
   /**
@@ -4346,6 +4523,8 @@
     finalizeCompletedMatches,
     saveRules,
     resetRules,
+    freezeTournamentRules,
+    runScoreAudit,
     openCsvView,
     closeCsvView,
     csvPreviewHandler,

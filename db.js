@@ -2196,6 +2196,52 @@ export function createDb(cfg = {}) {
       return pending.map(m => ({ ...m, cachedScorecard: haveCached.has(m.id) }));
     },
 
+    // ─── Score audit ─────────────────────────────────────────────────────────
+
+    /**
+     * Bulk data for the admin "Score Audit" panel: every match in the
+     * tournament, every player_match_stats row for those matches, and the
+     * name/role for every player those rows reference. Three round trips
+     * total regardless of tournament size (matches → stats → players),
+     * instead of one query per match.
+     *
+     * The caller (admin.js runScoreAudit) recomputes each row's points from
+     * `batting`/`bowling`/`fielding` using the tournament's locked
+     * scoring_rules and flags anything that doesn't match `raw_points`.
+     */
+    async getAuditDataForTournament(tournamentId) {
+      if (!tournamentId) return { matches: [], stats: [], players: [] };
+      const sb = await getClient();
+
+      const { data: matches, error: e1 } = await sb
+        .from('matches')
+        .select('id, match_number, format, status')
+        .eq('tournament_id', tournamentId)
+        .order('match_number', { ascending: true });
+      if (e1) throw e1;
+      if (!matches?.length) return { matches: [], stats: [], players: [] };
+
+      const matchIds = matches.map(m => m.id);
+      const { data: stats, error: e2 } = await sb
+        .from('player_match_stats')
+        .select('match_id, player_id, batting, bowling, fielding, raw_points')
+        .in('match_id', matchIds);
+      if (e2) throw e2;
+
+      const playerIds = [...new Set((stats || []).map(s => s.player_id))];
+      let players = [];
+      if (playerIds.length) {
+        const { data: pData, error: e3 } = await sb
+          .from('players')
+          .select('id, name, role')
+          .in('id', playerIds);
+        if (e3) throw e3;
+        players = pData || [];
+      }
+
+      return { matches, stats: stats || [], players };
+    },
+
     // ─── Match scorecard cache ─────────────────────────────────────────────
 
     /**

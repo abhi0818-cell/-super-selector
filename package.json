@@ -1,5 +1,8 @@
 {
   "scripts": {
     "test": "cd app && npm test"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.110.8"
   }
 }

@@ -1930,9 +1930,12 @@
               <div id="tournamentScoringName" style="font-size:11px; color:var(--accent-2); font-weight:600; margin-top:1px;"></div>
               <div id="tournamentScoringStatus" style="font-size:11px; color:var(--muted); margin-top:2px;"></div>
             </div>
-            <div id="tournamentScoringActions" style="display:flex; gap:6px; flex-shrink:0;">
-              <button id="tournamentRulesSaveBtn" class="primary" style="font-size:12px; padding:5px 12px;">Save rules</button>
-              <button id="tournamentRulesResetBtn" class="danger" style="font-size:12px; padding:5px 12px;">Reset to defaults</button>
+            <div style="display:flex; gap:6px; flex-shrink:0; flex-wrap:wrap; justify-content:flex-end;">
+              <div id="tournamentScoringActions" style="display:flex; gap:6px;">
+                <button id="tournamentRulesSaveBtn" class="primary" style="font-size:12px; padding:5px 12px;">Save rules</button>
+                <button id="tournamentRulesResetBtn" class="danger" style="font-size:12px; padding:5px 12px;">Reset to defaults</button>
+              </div>
+              <button id="tournamentFreezeRulesBtn" style="font-size:12px; padding:5px 12px;" title="Snapshot the currently-effective rules (built-in defaults + any saved overrides) into this tournament's locked rules. Do this before shipping a new default scoring rule, so the change doesn't retroactively apply to this tournament's already-scored matches.">🧊 Freeze rules</button>
             </div>
           </div>
           <div class="rules-tabs" style="margin-bottom:12px;" id="tournamentRulesTabs">
@@ -2034,6 +2037,18 @@
           </thead>
           <tbody id="adminMatchesBody"></tbody>
         </table>
+        </div>
+
+        <!-- Score Audit — recomputes stored fantasy points from saved
+             batting/bowling/fielding stats + this tournament's locked rules,
+             flags anything that doesn't match, and offers one-click
+             Recalc/Finalize for each flagged row. -->
+        <div id="scoreAuditSection" style="margin-top:14px; padding:10px; border:1px solid var(--border); border-radius:8px; background:rgba(201,168,76,0.04);">
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <button id="scoreAuditBtn">Run Score Audit</button>
+            <span id="scoreAuditStatus" style="font-size:11px; color:var(--muted);">Recomputes every player's points from saved stats + this tournament's locked rules and flags anything that doesn't match what's stored.</span>
+          </div>
+          <div id="scoreAuditResults" style="margin-top:10px; display:none;"></div>
         </div>
       </div>
       <div class="modal-body csv-panel" id="matchesCsvView" style="display:none;">
@@ -12389,6 +12404,8 @@ p31,Sample Player,MI,bat,9.0,false
     // Tournament tab scoring section
     $('#tournamentRulesSaveBtn').addEventListener('click', () => window.__admin?.saveRules?.());
     $('#tournamentRulesResetBtn').addEventListener('click', () => window.__admin?.resetRules?.());
+    $('#tournamentFreezeRulesBtn').addEventListener('click', () => window.__admin?.freezeTournamentRules?.());
+    $('#scoreAuditBtn').addEventListener('click', () => window.__admin?.runScoreAudit?.());
     document.querySelectorAll('#tournamentRulesTabs .tab').forEach(t => t.addEventListener('click', () => {
       if (isTournamentStarted()) return; // locked — ignore clicks
       state.rulesEditing = t.dataset.tfmt;
