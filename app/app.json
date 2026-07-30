@@ -23,7 +23,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0f172a"
       },
-      "package": "com.superselector.app",
+      "package": "com.maestroapp.cricket",
       "googleServicesFile": "./google-services.json"
     },
     "newArchEnabled": false,
