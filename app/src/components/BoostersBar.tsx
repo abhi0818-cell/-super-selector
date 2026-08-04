@@ -19,8 +19,18 @@ import {
   View,
 } from 'react-native';
 import { useBoosterStore } from '../store/boosterStore';
+import BoosterIcon from './BoosterIcon';
 import { fontSize, radius, spacing } from '../theme';
 import { SelectedPlayer } from '../types';
+
+// Alert.alert is native-OS text only — it can't render an <Image>. When a
+// booster's icon is a data-URI (e.g. CPL's West Indies crest), fall back to
+// a plain emoji for alert copy specifically, so it doesn't dump raw base64
+// text into a system dialog.
+const ALERT_ICON_FALLBACK = '🎯';
+function alertIcon(icon: string): string {
+  return icon.indexOf('data:') === 0 ? ALERT_ICON_FALLBACK : icon;
+}
 
 const C = {
   text:   '#1C1F26',
@@ -56,7 +66,7 @@ export default function BoostersBar({ contestType, squadId, matchId, onStaged, p
       const reason = b.usedInOther >= b.totalUses
         ? 'This booster has already been used this season.'
         : 'Another booster is already selected for this match, or this one has no effect here.';
-      Alert.alert(`${b.icon}  ${b.name}`, reason);
+      Alert.alert(`${alertIcon(b.icon)}  ${b.name}`, reason);
       return;
     }
 
@@ -78,13 +88,13 @@ export default function BoostersBar({ contestType, squadId, matchId, onStaged, p
     }
 
     onStaged?.(becomingStaged
-      ? `${b.icon} ${b.name} staged — Save XI to confirm.${resetNote}`
-      : `${b.icon} ${b.name} removed — Save XI to confirm.`);
+      ? `${alertIcon(b.icon)} ${b.name} staged — Save XI to confirm.${resetNote}`
+      : `${alertIcon(b.icon)} ${b.name} removed — Save XI to confirm.`);
   };
 
   const handleInfo = (id: string) => {
     const b = boosters.find(x => x.id === id)!;
-    Alert.alert(`${b.icon}  ${b.name}`, b.desc);
+    Alert.alert(`${alertIcon(b.icon)}  ${b.name}`, b.desc);
   };
 
   return (
@@ -108,7 +118,7 @@ export default function BoostersBar({ contestType, squadId, matchId, onStaged, p
               onPress={() => handlePress(b.id)}
               onLongPress={() => handleInfo(b.id)}
             >
-              <Text style={styles.cardIcon}>{b.icon}</Text>
+              <BoosterIcon icon={b.icon} size={20} style={styles.cardIcon} />
               <Text
                 style={[styles.cardName, isUsed && styles.cardNameUsed]}
                 numberOfLines={1}
