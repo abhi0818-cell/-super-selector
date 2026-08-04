@@ -92,7 +92,7 @@ export const BOOSTER_META: Record<string, BoosterMeta> = {
   },
   team_double: {
     icon:  '🚀',
-    name:  'Team Double',
+    name:  'Team 2x',
     desc:  "All 11 players score double points this matchweek. Use once per season.",
     scope: 'all',
     slot:  'squad',
@@ -113,14 +113,14 @@ export const BOOSTER_META: Record<string, BoosterMeta> = {
   },
   indian_double: {
     icon:  '🇺🇸',
-    name:  'US Double',
+    name:  'US 2x',
     desc:  "All US domestic (non-overseas) players in your XI score 2× their base points. Use once per season.",
     scope: 'all',
     slot:  'squad',
   },
   os_double: {
     icon:  '✈️',
-    name:  'OS Double',
+    name:  'OS 2x',
     desc:  "All overseas players in your XI score 2× their base points. Use once per season.",
     scope: 'all',
     slot:  'squad',
@@ -159,7 +159,7 @@ function getDomesticBoosterMeta(): BoosterMeta {
   const label = getDomesticLabel();
   return {
     icon:  getDomesticIcon() || DOMESTIC_ICON_FALLBACK,
-    name:  `${label} Double`,
+    name:  `${label} 2x`,
     desc:  `All ${label} (non-overseas) players in your XI score 2× their base points.`,
     scope: 'all',
     slot:  'squad',

@@ -188,7 +188,7 @@ const styles = StyleSheet.create({
   },
   cardName: {
     color:      C.text,
-    fontSize:   11,
+    fontSize:   9.5,
     fontWeight: '600',
     textAlign:  'center',
   },
