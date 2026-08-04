@@ -20,7 +20,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CaptaincyRole, PlayerRole, SelectedPlayer } from '../types';
 import CricketPitch from './CricketPitch';
 import Jersey from './Jersey';
-import { BOOSTER_META, TRANSFER_BOOSTERS } from '../store/boosterStore';
+import { getBoosterMeta, TRANSFER_BOOSTERS } from '../store/boosterStore';
+import BoosterIcon from './BoosterIcon';
 import { fontSize, radius, spacing, shadow } from '../theme';
 
 // ─── Role colours (fallback when no teamColor set) ────────────────────────────
@@ -198,7 +199,7 @@ function SummaryStep({ current, previous, activeBoosterId, onBack, onSave, onCan
   const removed    = previous.filter(b => !current.find(p => p.id === b.id));
   const hasChanges = added.length > 0 || removed.length > 0;
 
-  const boosterMeta = activeBoosterId ? BOOSTER_META[activeBoosterId] : null;
+  const boosterMeta = activeBoosterId ? getBoosterMeta(activeBoosterId) : null;
   // Wildcard/Free Hit make transfers unlimited-and-uncapped, so the IN/OUT
   // list below can run to a full 11-for-11 swap — this note explains why,
   // rather than leaving a long list unexplained.
@@ -224,7 +225,7 @@ function SummaryStep({ current, previous, activeBoosterId, onBack, onSave, onCan
               single-source-of-truth booster lookup (see MyXIScreen). */}
           {boosterMeta && (
             <View style={styles.boosterBanner}>
-              <Text style={styles.boosterBannerIcon}>{boosterMeta.icon}</Text>
+              <BoosterIcon icon={boosterMeta.icon} size={20} style={styles.boosterBannerIcon} />
               <View style={{ flex: 1 }}>
                 <Text style={styles.boosterBannerName}>{boosterMeta.name} active</Text>
                 {isTransferBooster && (

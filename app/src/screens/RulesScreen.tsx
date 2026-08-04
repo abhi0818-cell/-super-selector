@@ -21,6 +21,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { supabase } from '../lib/supabase';
 import { useTournamentStore } from '../store/tournamentStore';
 import { useContestStore }    from '../store/contestStore';
+import { getBoosterMeta }     from '../store/boosterStore';
+import BoosterIcon            from '../components/BoosterIcon';
 import { colors, fontSize, radius, spacing } from '../theme';
 
 // ─── Gradient palette (matches rest of app) ───────────────────────────────────
@@ -30,46 +32,6 @@ const G = {
   header: ['rgba(245,240,224,0.98)', 'rgba(237,232,213,0.95)'] as const,
   card:   ['#FFFFFF', '#FAF8F2'] as const,
   accent: ['#C9A84C', '#B8912A'] as const,
-};
-
-// ─── Booster metadata ─────────────────────────────────────────────────────────
-
-const BOOSTER_META: Record<string, { icon: string; name: string; desc: string }> = {
-  triple_captain: {
-    icon: '⚡',
-    name: 'Triple Captain',
-    desc: 'Your Captain scores 3× their base points for one match. Use once per season.',
-  },
-  dual_captain: {
-    icon: '👥',
-    name: 'Dual Captain',
-    desc: 'Both Captain and Vice-Captain score 2× their base points for one match. Use once per season.',
-  },
-  team_double: {
-    icon: '🚀',
-    name: 'Team Double',
-    desc: 'All 11 players score double points this matchweek. Use once per season.',
-  },
-  free_hit: {
-    icon: '🔄',
-    name: 'Free Hit',
-    desc: 'One extra free transfer this matchweek at no points cost. Use once per season.',
-  },
-  wildcard: {
-    icon: '♾️',
-    name: 'Wildcard',
-    desc: 'Unlimited transfers this matchweek, no points deduction. Use once per season.',
-  },
-  indian_double: {
-    icon: '🇺🇸',
-    name: 'US Double',
-    desc: 'All US domestic (non-overseas) players in your XI score 2× this matchweek. Use once per season.',
-  },
-  os_double: {
-    icon: '✈️',
-    name: 'OS Double',
-    desc: 'All overseas players in your XI score 2× their base points. Use once per season.',
-  },
 };
 
 // ─── Scoring rule display config ──────────────────────────────────────────────
@@ -156,10 +118,10 @@ function RuleTable({
 }
 
 function BoosterCard({ id }: { id: string }) {
-  const meta = BOOSTER_META[id] ?? { icon: '🎯', name: id, desc: 'Special booster — use once per season.' };
+  const meta = getBoosterMeta(id) ?? { icon: '🎯', name: id, desc: 'Special booster — use once per season.' };
   return (
     <LinearGradient colors={G.card} style={styles.boosterCard}>
-      <Text style={styles.boosterIcon}>{meta.icon}</Text>
+      <BoosterIcon icon={meta.icon} size={26} style={styles.boosterIcon} />
       <View style={styles.boosterBody}>
         <Text style={styles.boosterName}>{meta.name}</Text>
         <Text style={styles.boosterDesc}>{meta.desc}</Text>

@@ -31,7 +31,7 @@ import {
   SCORING_RULES,
 } from '../engine/cricketScoringEngine';
 import { MatchFormat, PlayerRole, CaptaincyRole } from '../types';
-import { BOOSTER_META } from '../store/boosterStore';
+import { getBoosterMeta } from '../store/boosterStore';
 import { isMatchPlayed } from './matchLock';
 import { bowlingRulesFor } from './scoringUtils';
 
@@ -211,7 +211,7 @@ export async function getSquadSeasonHistory(squadId: string): Promise<{
     });
 
     const boosters = (boosterByMatch[g.match_id] || []).map(id => {
-      const meta = BOOSTER_META[id];
+      const meta = getBoosterMeta(id);
       return meta ? { icon: meta.icon, name: meta.name } : { icon: '🎯', name: id };
     });
 

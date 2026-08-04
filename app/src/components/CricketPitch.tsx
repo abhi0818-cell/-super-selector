@@ -7,6 +7,7 @@
  */
 
 import React, { useState } from 'react';
+import BoosterIcon from './BoosterIcon';
 import {
   Image,
   LayoutChangeEvent,
@@ -159,10 +160,12 @@ function PlayerTile({ player, onSetCaptaincy, onRemove, onTilePress, readOnly, b
           </View>
         )}
 
-        {/* US Double badge — bottom-left, mirrors web's .pitch-usd-badge */}
+        {/* Domestic-double badge — bottom-left, mirrors web's .pitch-usd-badge.
+            Icon comes from the tournament (emoji or a crest image), not a
+            hardcoded flag — see getDomesticBoosterMeta() in boosterStore.ts. */}
         {decor.bottomLeftIcon && (
           <View style={[styles.bottomLeftBadge, { width: badgeSize, height: badgeSize, left: sideOffset }]}>
-            <Text style={{ fontSize: sideFontSize }}>{decor.bottomLeftIcon}</Text>
+            <BoosterIcon icon={decor.bottomLeftIcon} size={sideFontSize} />
           </View>
         )}
 

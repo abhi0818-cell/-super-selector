@@ -144,6 +144,34 @@ export const BOOSTER_META: Record<string, BoosterMeta> = {
 
 export const TRANSFER_BOOSTERS = new Set(['wildcard', 'free_hit']);
 
+// ─── Dynamic domestic-double metadata (mirrors index.html) ────────────────────
+// 'indian_double' in BOOSTER_META above is a static legacy fallback only —
+// the real label/icon come from the active tournament's domesticLabel/
+// domesticIcon (teamStore.RULES), since "domestic" means something different
+// per tournament (US for MLC, Caribbean for CPL, Indian for IPL, ...) and
+// there isn't always a single accurate flag (no Unicode flag exists for
+// "West Indies"/"Caribbean" — it's a multi-nation team, not a country).
+const DOMESTIC_ICON_FALLBACK = '🏏';
+
+function getDomesticBoosterMeta(): BoosterMeta {
+  // Lazy require avoids a circular import (teamStore imports this file).
+  const { getDomesticLabel, getDomesticIcon } = require('./teamStore');
+  const label = getDomesticLabel();
+  return {
+    icon:  getDomesticIcon() || DOMESTIC_ICON_FALLBACK,
+    name:  `${label} Double`,
+    desc:  `All ${label} (non-overseas) players in your XI score 2× their base points.`,
+    scope: 'all',
+    slot:  'squad',
+  };
+}
+
+/** Looks up booster metadata by id, resolving 'indian_double' dynamically per tournament. */
+export function getBoosterMeta(id: string): BoosterMeta | undefined {
+  if (id === 'indian_double') return getDomesticBoosterMeta();
+  return BOOSTER_META[id];
+}
+
 // ─── Tile-boost decor ─────────────────────────────────────────────────────────
 
 export interface TileBoosterDecor {
@@ -199,7 +227,7 @@ export function getTileBoosterDecor(
   // now (see CricketPitch.tsx), so it shows here on every tile like web does.
   const bottomLeftIcon =
     boosterKey === 'team_double' ? '🚀'
-    : (boosterKey === 'indian_double' && !overseas) ? '🇺🇸'
+    : (boosterKey === 'indian_double' && !overseas) ? getDomesticBoosterMeta().icon
     : null;
 
   return { badgeIcon, boosted, bottomLeftIcon };
@@ -320,7 +348,7 @@ function buildBoosterList(
   transfersUnlimited: boolean,
 ): Booster[] {
   return Object.keys(availableMap).map(id => {
-    const meta = BOOSTER_META[id] ?? {
+    const meta = getBoosterMeta(id) ?? {
       icon: '🎯', name: id, desc: '', scope: 'all' as BoosterScope, slot: 'squad' as BoosterSlot,
     };
 
@@ -591,8 +619,8 @@ export const useBoosterStore = create<BoosterState>((set, get) => ({
       }));
 
       const message = pending
-        ? `${BOOSTER_META[pending]?.name ?? pending} activated.`
-        : `${BOOSTER_META[committed!]?.name ?? committed} removed.`;
+        ? `${getBoosterMeta(pending)?.name ?? pending} activated.`
+        : `${getBoosterMeta(committed!)?.name ?? committed} removed.`;
       return { changed: true, message };
     } catch (err: any) {
       console.warn('[boosterStore] commitPending failed:', err);

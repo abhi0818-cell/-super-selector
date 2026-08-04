@@ -8,6 +8,7 @@
  */
 
 import React from 'react';
+import BoosterIcon from './BoosterIcon';
 import { View, Text, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { PlayerRole } from '../types';
@@ -54,7 +55,7 @@ export default function TeamPointsBreakdown({ team, footerLabel }: { team: Match
         {team.boosters.length > 0
           ? team.boosters.map((b, i) => (
               <View key={i} style={styles.boosterPill}>
-                <Text style={styles.boosterPillIcon}>{b.icon}</Text>
+                <BoosterIcon icon={b.icon} size={12} style={styles.boosterPillIcon} />
                 <Text style={styles.boosterPillName}>{b.name}</Text>
               </View>
             ))

@@ -40,11 +40,17 @@ const RULES: SelectionRules = {
   maxPerTeam: 7,
   maxOverseas: { T20: 4, ODI: 11, TEST: 11 },
   domesticLabel: null,
+  domesticIcon: null,
 };
 
 /** Display label for the active tournament's "non-overseas" bucket (e.g. 'US', 'Indian'). */
 function getDomesticLabel(): string {
   return RULES.domesticLabel ?? 'Domestic';
+}
+
+/** Icon for the active tournament's domestic-double booster — emoji or data:image/... URI. */
+function getDomesticIcon(): string | null {
+  return RULES.domesticIcon ?? null;
 }
 
 // ─── Validation ───────────────────────────────────────────────────────────────
@@ -376,7 +382,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       // Load tournament config: format + overseas cap + non-overseas label
       const { data: tData } = await supabase
         .from('tournaments')
-        .select('format, max_overseas_in_xi, domestic_label')
+        .select('format, max_overseas_in_xi, domestic_label, domestic_icon')
         .eq('id', tournamentId)
         .single();
 
@@ -388,6 +394,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
           RULES.maxOverseas[fmt] = cap;
         }
         RULES.domesticLabel = tData.domestic_label ?? null;
+        RULES.domesticIcon  = (tData as { domestic_icon?: string | null }).domestic_icon ?? null;
       }
 
       // Next upcoming match — i.e. the next one to actually pick/edit an XI for.
@@ -966,4 +973,4 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   },
 }));
 
-export { RULES, getDomesticLabel };
+export { RULES, getDomesticLabel, getDomesticIcon };

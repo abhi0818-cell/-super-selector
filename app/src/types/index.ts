@@ -83,6 +83,9 @@ export interface SelectionRules {
   // Per-tournament display label for the "non-overseas" bucket (e.g. 'US' for
   // MLC, 'Indian' for IPL) — cosmetic only, doesn't affect maxOverseas/is_overseas.
   domesticLabel: string | null;
+  // Icon for the domestic-double booster — emoji or data:image/... URI (see
+  // BoosterIcon.tsx). Cosmetic only, same as domesticLabel.
+  domesticIcon: string | null;
 }
 
 export interface ValidationResult {

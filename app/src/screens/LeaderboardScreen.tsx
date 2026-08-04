@@ -7,6 +7,7 @@
  */
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import BoosterIcon from '../components/BoosterIcon';
 import {
   ActivityIndicator,
   FlatList,
@@ -261,7 +262,7 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
                 {team.boosters.length > 0
                   ? team.boosters.map((b, i) => (
                       <View key={i} style={styles.boosterPill}>
-                        <Text style={styles.boosterPillIcon}>{b.icon}</Text>
+                        <BoosterIcon icon={b.icon} size={12} style={styles.boosterPillIcon} />
                         <Text style={styles.boosterPillName}>{b.name}</Text>
                       </View>
                     ))
