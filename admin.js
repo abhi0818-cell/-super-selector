@@ -28,6 +28,8 @@
   const SCORING_RULES        = A.SCORING_RULES;
   const DEFAULT_SCORING_RULES = A.DEFAULT_SCORING_RULES;
   const BOOSTER_META         = A.BOOSTER_META;
+  const getBoosterMeta       = A.getBoosterMeta;
+  const iconHtml             = A.iconHtml;
   const ADMIN_EMAIL          = A.ADMIN_EMAIL;
   const escapeHtml           = A.escapeHtml;
   const playerById           = A.playerById;
@@ -136,14 +138,15 @@
     function buildBoosterConfigHtml(contestId, available, opts = {}) {
       const { showSaveButton = true, disabled = false } = opts;
       const av = available || {};
-      const rows = Object.entries(BOOSTER_META).map(([key, meta]) => {
+      const rows = Object.entries(BOOSTER_META).map(([key, rawMeta]) => {
+        const meta    = getBoosterMeta ? (getBoosterMeta(key) ?? rawMeta) : rawMeta;
         const enabled = key in av;
         const count   = av[key] ?? 1;
         const uid     = `boost_${key}_${contestId.replace(/-/g,'')}`;
         return `<div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);">
           <input type="checkbox" id="${uid}_chk" data-booster="${key}" class="boost-chk" ${enabled ? 'checked' : ''} ${disabled ? 'disabled' : ''} style="flex-shrink:0;" />
           <label for="${uid}_chk" style="font-size:12px;flex:1;cursor:pointer;">
-            ${meta.icon} <strong>${meta.label}</strong>
+            ${iconHtml ? iconHtml(meta.icon, meta.label) : meta.icon} <strong>${meta.label}</strong>
             <span style="color:var(--muted);font-size:11px;margin-left:4px;">${meta.desc}</span>
           </label>
           <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
@@ -437,11 +440,13 @@
     function renderNewContestForm(isEmpty) {
       const activeTournament = state.tournaments.find(t => t.id === state.activeTournamentId);
       const tName = activeTournament ? escapeHtml(activeTournament.name) : 'the active tournament';
-      const boosterRows = Object.entries(BOOSTER_META).map(([key, meta]) => `
+      const boosterRows = Object.entries(BOOSTER_META).map(([key, rawMeta]) => {
+        const meta = getBoosterMeta ? (getBoosterMeta(key) ?? rawMeta) : rawMeta;
+        return `
         <div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);">
           <input type="checkbox" id="ncBoost_${key}" data-booster="${key}" class="nc-boost-chk" style="flex-shrink:0;" />
           <label for="ncBoost_${key}" style="font-size:12px;flex:1;cursor:pointer;">
-            ${meta.icon} <strong>${meta.label}</strong>
+            ${iconHtml ? iconHtml(meta.icon, meta.label) : meta.icon} <strong>${meta.label}</strong>
             <span style="color:var(--muted);font-size:11px;margin-left:4px;">${meta.desc}</span>
           </label>
           <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
@@ -449,7 +454,8 @@
             <input type="number" min="1" max="10" value="1" id="ncBoost_${key}_count"
               style="width:50px;font-size:12px;padding:3px 6px;" disabled />
           </div>
-        </div>`).join('');
+        </div>`;
+      }).join('');
 
       return `
         <div id="newContestForm" style="border:1px solid var(--border); border-radius:8px;
@@ -821,11 +827,11 @@
               <div style="border:1px solid var(--border); border-radius:6px; padding:10px; margin-top:2px;">
                 <div style="font-size:12px; font-weight:600; margin-bottom:8px; color:var(--muted);">⚡ Boosters <span style="font-weight:400;">(check to enable, set how many uses each member gets)</span></div>
                 <div id="plBoostersGrid">
-                  ${Object.entries(BOOSTER_META).map(([key, meta]) => `
+                  ${Object.entries(BOOSTER_META).map(([key, rawMeta]) => { const meta = getBoosterMeta ? (getBoosterMeta(key) ?? rawMeta) : rawMeta; return `
                     <div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);">
                       <input type="checkbox" id="plBoost_${key}" data-booster="${key}" class="pl-new-boost-chk" style="flex-shrink:0;" />
                       <label for="plBoost_${key}" style="font-size:12px;flex:1;cursor:pointer;">
-                        ${meta.icon} <strong>${meta.label}</strong>
+                        ${iconHtml ? iconHtml(meta.icon, meta.label) : meta.icon} <strong>${meta.label}</strong>
                         <span style="color:var(--muted);font-size:11px;margin-left:4px;">${meta.desc}</span>
                       </label>
                       <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
@@ -833,7 +839,7 @@
                         <input type="number" min="1" max="10" value="1" id="plBoost_${key}_count"
                           style="width:50px;font-size:12px;padding:3px 6px;" disabled />
                       </div>
-                    </div>`).join('')}
+                    </div>`; }).join('')}
                 </div>
               </div>
               <label style="font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; cursor:pointer;">

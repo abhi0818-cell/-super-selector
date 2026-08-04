@@ -1462,6 +1462,24 @@ export function createDb(cfg = {}) {
       if (!data || data.length === 0) throw new Error('No rows updated — check RLS policies.');
     },
 
+    /**
+     * Sets the icon shown on the domestic-double booster for a tournament.
+     * Accepts an emoji string or a data-URI image (for groups with no single
+     * accurate Unicode flag, e.g. "West Indies"/"Caribbean" for CPL — see
+     * DOMESTIC_ICON_FALLBACK in index.html). Pass null to reset to the
+     * generic cricket-bat fallback.
+     */
+    async updateTournamentDomesticIcon(id, icon) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('tournaments')
+        .update({ domestic_icon: icon || null })
+        .eq('id', id)
+        .select('id');
+      if (error) throw error;
+      if (!data || data.length === 0) throw new Error('No rows updated — check RLS policies.');
+    },
+
     /** Toggle the scraper on/off for a tournament. */
     async updateTournamentScraper(id, enabled) {
       const sb = await getClient();

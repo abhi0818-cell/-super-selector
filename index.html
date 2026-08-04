@@ -2940,6 +2940,7 @@ p31,Sample Player,MI,bat,9.0,false
       // for MLC, 'Indian' for IPL) — set via applyTournamentFormat(). Cosmetic
       // only; is_overseas/getOverseasCap() are unaffected by this.
       domesticLabel: { _tournament: null },
+      domesticIcon: { _tournament: null },
     };
 
     /** Returns the effective overseas cap for the current tournament+format. */
@@ -2953,6 +2954,50 @@ p31,Sample Player,MI,bat,9.0,false
     /** Returns the display label for non-overseas players in the active tournament. */
     function getDomesticLabel() {
       return RULES.domesticLabel._tournament || 'Domestic';
+    }
+
+    // Fallback icon for the domestic-double booster when a tournament hasn't
+    // set tournaments.domestic_icon — a neutral cricket glyph rather than any
+    // one country's flag, since "domestic" means something different per
+    // tournament (US for MLC, Caribbean for CPL, India for IPL, etc.) and
+    // there isn't always a single accurate flag for the group (e.g. no
+    // Unicode flag exists for "West Indies" or "Caribbean" — it's a
+    // multi-nation team, not a country).
+    const DOMESTIC_ICON_FALLBACK = '🏏';
+
+    /**
+     * Returns the { label, icon, desc } for the domestic-double booster,
+     * built from the active tournament's domestic_label/domestic_icon
+     * instead of a hardcoded country. See getBoosterMeta('indian_double') for
+     * the legacy static fallback (used only if no tournament is loaded yet).
+     */
+    function getDomesticBoosterMeta() {
+      const label = getDomesticLabel();
+      const icon  = RULES.domesticIcon._tournament || DOMESTIC_ICON_FALLBACK;
+      return {
+        label: `${label} Double`,
+        icon,
+        desc: `All ${label} (non-overseas) players in your XI score 2× their base points.`,
+      };
+    }
+
+    /** Looks up booster metadata by key, resolving 'indian_double' dynamically per tournament. */
+    function getBoosterMeta(key) {
+      if (key === 'indian_double') return getDomesticBoosterMeta();
+      return BOOSTER_META[key];
+    }
+
+    // A booster icon is normally a single emoji, but a tournament's
+    // domestic_icon can be a data-URI image (e.g. a flag/crest with no
+    // Unicode emoji equivalent — see DOMESTIC_ICON_FALLBACK above). This
+    // renders either kind inline, sized to the surrounding text via `em`
+    // units so it drops into any of the existing emoji-sized spots.
+    function iconHtml(icon, alt) {
+      if (!icon) return '';
+      if (icon.indexOf('data:') === 0) {
+        return '<img src="' + icon + '" alt="' + escapeHtml(alt || '') + '" style="height:1em;width:1em;object-fit:cover;border-radius:2px;vertical-align:-0.15em;"/>';
+      }
+      return icon;
     }
 
     // True only when this tournament/format actually enforces an overseas cap —
@@ -3525,7 +3570,7 @@ p31,Sample Player,MI,bat,9.0,false
             const vcCell      = vc      ? `<span title="${escapeHtml(vc.player_name || '')}">${escapeHtml(shortName(vc.player_name))}</span>`           : '—';
 
             const boostCell   = boosters.length
-              ? boosters.map(b => `<span title="${escapeHtml(BOOSTER_META[b]?.label || b)}">${BOOSTER_META[b]?.icon || '★'}</span>`).join('')
+              ? boosters.map(b => `<span title="${escapeHtml(getBoosterMeta(b)?.label || b)}">${iconHtml(getBoosterMeta(b)?.icon, getBoosterMeta(b)?.label) || '★'}</span>`).join('')
               : '<span style="color:var(--muted);">—</span>';
             const xferCount   = xferCountByMatch[m.match_id] || 0;
             // Show '-' for matches where every transfer is free/unlimited (whole
@@ -4778,6 +4823,7 @@ p31,Sample Player,MI,bat,9.0,false
       // can have different caps, so this must run even when the format hasn't changed.
       RULES.maxOverseas._tournament = tournament.max_overseas_in_xi ?? null;
       RULES.domesticLabel._tournament = tournament.domestic_label ?? null;
+      RULES.domesticIcon._tournament  = tournament.domestic_icon  ?? null;
       if (state.format === fmt && state.rulesEditing === fmt) return; // no-op for format-only changes
       state.format       = fmt;
       state.rulesEditing = fmt;
@@ -4914,6 +4960,21 @@ p31,Sample Player,MI,bat,9.0,false
                       style="font-size:11px; padding:4px 10px; white-space:nowrap;">Save</button>
               <span class="domestic-label-status" data-tid="${t.id}" style="font-size:11px; color:var(--muted);"></span>
             </div>
+            <!-- Domestic icon row — icon for the domestic-double booster.
+                 Paste an emoji, or a data:image/... URI for groups with no
+                 single accurate flag emoji (e.g. West Indies/Caribbean for
+                 CPL). Falls back to a generic cricket icon if blank. -->
+            <div style="display:flex; align-items:center; gap:6px; margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
+              <span style="font-size:11px; color:var(--muted); white-space:nowrap;">Domestic icon</span>
+              <input type="text" class="domestic-icon-input" data-tid="${t.id}"
+                     value="${escapeHtml(t.domestic_icon || '')}"
+                     placeholder="emoji or data:image/... URI — blank = 🏏"
+                     style="width:220px; font-size:12px; padding:4px 8px;"
+                     title="Shown on the domestic-double booster badge; falls back to 🏏 if blank" />
+              <button class="domestic-icon-save" data-tid="${t.id}"
+                      style="font-size:11px; padding:4px 10px; white-space:nowrap;">Save</button>
+              <span class="domestic-icon-status" data-tid="${t.id}" style="font-size:11px; color:var(--muted);"></span>
+            </div>
             <!-- Scraper toggle row -->
             <div style="display:flex; align-items:center; gap:8px; margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
               <span style="font-size:11px; color:var(--muted); white-space:nowrap;">🕷 Scraper</span>
@@ -5031,7 +5092,34 @@ p31,Sample Player,MI,bat,9.0,false
           } finally { btn.disabled = false; }
         });
       });
-      // Wire series ID save buttons
+      // Wire domestic-icon save buttons
+      list.querySelectorAll('.domestic-icon-save').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const tid      = btn.dataset.tid;
+          const input    = list.querySelector(`.domestic-icon-input[data-tid="${tid}"]`);
+          const statusEl = list.querySelector(`.domestic-icon-status[data-tid="${tid}"]`);
+          const icon     = input?.value.trim() || null;
+          btn.disabled = true;
+          if (statusEl) { statusEl.textContent = 'Saving…'; statusEl.style.color = 'var(--muted)'; }
+          try {
+            await state.db.updateTournamentDomesticIcon(tid, icon);
+            const t = state.tournaments.find(x => x.id === tid);
+            if (t) t.domestic_icon = icon;
+            // If active tournament, update live RULES so booster badges reflect it immediately.
+            if (tid === state.activeTournamentId) {
+              RULES.domesticIcon._tournament = icon;
+              render();
+            }
+            if (statusEl) {
+              statusEl.textContent = icon ? '✓ Icon updated' : '✓ Reset to 🏏';
+              statusEl.style.color = 'var(--good)';
+            }
+          } catch (err) {
+            if (statusEl) { statusEl.textContent = 'Failed: ' + err.message; statusEl.style.color = 'var(--bad)'; }
+          } finally { btn.disabled = false; }
+        });
+      });
+  // Wire series ID save buttons
       list.querySelectorAll('.series-id-save').forEach(btn => {
         btn.addEventListener('click', async e => {
           const tid      = e.target.dataset.tid;
@@ -6874,9 +6962,9 @@ p31,Sample Player,MI,bat,9.0,false
         const unsavedNote  = boosterChanged ? ' Save XI to confirm the booster.' : '';
         infoBar.innerHTML = `<span style="color:var(--accent);">⚡ ${boosterLabel} ${boosterChanged ? 'selected' : 'active'} — ${pendingChanges} free change${pendingChanges !== 1 ? 's' : ''} this match.${revertNote}${unsavedNote}</span>`;
       } else if (pendingChanges === 0 && boosterChanged) {
-        const pendingMeta = state.sl.pendingBooster ? BOOSTER_META[state.sl.pendingBooster] : null;
+        const pendingMeta = state.sl.pendingBooster ? getBoosterMeta(state.sl.pendingBooster) : null;
         infoBar.innerHTML = pendingMeta
-          ? `<span style="color:var(--accent);">${pendingMeta.icon} ${escapeHtml(pendingMeta.label)} selected — Save XI to confirm.</span>`
+          ? `<span style="color:var(--accent);">${iconHtml(pendingMeta.icon, pendingMeta.label)} ${escapeHtml(pendingMeta.label)} selected — Save XI to confirm.</span>`
           : `<span style="color:var(--accent);">Booster removed — Save XI to confirm.</span>`;
       } else if (pendingChanges === 0) {
         const lockNote = nextLock
@@ -7189,8 +7277,8 @@ p31,Sample Player,MI,bat,9.0,false
       // once Save XI is pressed); the pitch badge shows the actual
       // DB-committed booster (what's really active right now, regardless of
       // any unsaved selection in the panel).
-      const committedMeta = ctx.activeForNext  ? BOOSTER_META[ctx.activeForNext]  : null;
-      const pendingMeta    = ctx.pendingForNext ? BOOSTER_META[ctx.pendingForNext] : null;
+      const committedMeta = ctx.activeForNext  ? getBoosterMeta(ctx.activeForNext)  : null;
+      const pendingMeta    = ctx.pendingForNext ? getBoosterMeta(ctx.pendingForNext) : null;
       const isUnsaved      = ctx.pendingForNext !== ctx.activeForNext;
       // Total allowed = sum of per-type counts (e.g. 3 triple captains + 2 wildcards + 2 free hits = 7)
       const boosterTotal   = Object.values(ctx.available).reduce((s, n) => s + Number(n || 0), 0);
@@ -7200,7 +7288,7 @@ p31,Sample Player,MI,bat,9.0,false
       if (tile) {
         tile.style.display = '';
         const valueLabel = pendingMeta
-          ? escapeHtml(pendingMeta.icon + ' ' + pendingMeta.label) + (isUnsaved ? ' <span style="color:var(--accent);font-weight:700;">*</span>' : '')
+          ? iconHtml(pendingMeta.icon, pendingMeta.label) + ' ' + escapeHtml(pendingMeta.label) + (isUnsaved ? ' <span style="color:var(--accent);font-weight:700;">*</span>' : '')
           : `${boostersUsed}/${boosterTotal}`;
         tile.querySelector('.value').innerHTML = `${valueLabel} <i class="cap-vc-chev">▾</i>`;
         tile.className = 'stat stat-pick' + (pendingMeta ? ' ok' : '');
@@ -7260,7 +7348,7 @@ p31,Sample Player,MI,bat,9.0,false
           border-radius:99px; font-size:10px; font-weight:700;
           background:rgba(255,255,255,0.94); color:#1C1F26;
           box-shadow:0 1px 4px rgba(0,0,0,.35); white-space:nowrap;
-        ">${activeMeta.icon} ${escapeHtml(activeMeta.label)}</span>`;
+        ">${iconHtml(activeMeta.icon, activeMeta.label)} ${escapeHtml(activeMeta.label)}</span>`;
     }
 
     function openSlBoosterModal() {
@@ -7319,7 +7407,7 @@ p31,Sample Player,MI,bat,9.0,false
       // ✗ unavailable, ×N uses left); the full explanation moves to the title
       // tooltip and to the one shared caption line under the header.
       const pills = Object.entries(available).map(([key, totalUses]) => {
-        const meta       = BOOSTER_META[key]; if (!meta) return '';
+        const meta       = getBoosterMeta(key); if (!meta) return '';
         // "Active" here means staged/pending-selected, not necessarily
         // committed to the DB yet — that only happens on Save XI.
         const isActive   = pendingForNext === key;
@@ -7340,7 +7428,7 @@ p31,Sample Player,MI,bat,9.0,false
         const isBlocked = anotherActive || (TRANSFER_BOOSTERS.has(key) && transfersUnlimited);
 
         const blockedReason = anotherActive
-          ? `${BOOSTER_META[pendingForNext]?.label ?? 'A booster'} is already selected for this match`
+          ? `${getBoosterMeta(pendingForNext)?.label ?? 'A booster'} is already selected for this match`
           : (TRANSFER_BOOSTERS.has(key) && transfersUnlimited)
             ? 'Transfers are already unlimited on the first match — this booster has no effect'
             : null;
@@ -7376,7 +7464,7 @@ p31,Sample Player,MI,bat,9.0,false
           style="${pillStyle}"
         >
           ${badge}
-          <span style="font-size:16px;line-height:1;">${meta.icon}</span>
+          <span style="font-size:16px;line-height:1;">${iconHtml(meta.icon, meta.label)}</span>
           <span style="font-size:10px;line-height:1.1;">${meta.label}</span>
         </button>`;
       }).filter(Boolean).join('');
@@ -7385,7 +7473,7 @@ p31,Sample Player,MI,bat,9.0,false
         ? `M${nextMatch.match_number ?? '?'} · ${nextMatch.home_team_id ?? '?'} vs ${nextMatch.away_team_id ?? '?'}`
         : 'No upcoming match to activate for';
 
-      const pendingMeta = pendingForNext ? BOOSTER_META[pendingForNext] : null;
+      const pendingMeta = pendingForNext ? getBoosterMeta(pendingForNext) : null;
       const isUnsaved   = pendingForNext !== activeForNext;
       const caption = pendingMeta
         ? (isUnsaved
@@ -7433,8 +7521,8 @@ p31,Sample Player,MI,bat,9.0,false
           }
 
           toast(isActive
-            ? `${BOOSTER_META[booster].label} deselected — Save XI to confirm.`
-            : `${BOOSTER_META[booster].label} selected for M${nextMatch.match_number ?? '?'} — Save XI to confirm.${resetNote}`, 3500);
+            ? `${getBoosterMeta(booster).label} deselected — Save XI to confirm.`
+            : `${getBoosterMeta(booster).label} selected for M${nextMatch.match_number ?? '?'} — Save XI to confirm.${resetNote}`, 3500);
 
           renderSlBoosterGrid(body);
           renderSlBoosterBar();
@@ -7627,8 +7715,8 @@ p31,Sample Player,MI,bat,9.0,false
               }
               state.sl.boosterActivations = null; // invalidate cache — resynced on next getSlBoosterContext()
               boosterNote = pending
-                ? ` ${BOOSTER_META[pending]?.label ?? pending} activated.`
-                : ` ${BOOSTER_META[committed]?.label ?? committed} removed.`;
+                ? ` ${getBoosterMeta(pending)?.label ?? pending} activated.`
+                : ` ${getBoosterMeta(committed)?.label ?? committed} removed.`;
             } catch (e) {
               boosterNote = ` (Booster will apply automatically when the match locks.)`;
               console.warn('[SL save] immediate booster commit failed verification, relying on lock-time reconciliation:', e.message);
@@ -7993,7 +8081,7 @@ p31,Sample Player,MI,bat,9.0,false
         const captainCell = captain ? `<span title="${escapeHtml(captain.player_name || '')}">${escapeHtml(shortName(captain.player_name))}</span>` : '—';
         const vcCell      = vc      ? `<span title="${escapeHtml(vc.player_name || '')}">${escapeHtml(shortName(vc.player_name))}</span>`           : '—';
         const boostCell    = matchBooster
-          ? `<span title="${escapeHtml(BOOSTER_META[matchBooster]?.label || matchBooster)}">${BOOSTER_META[matchBooster]?.icon || '★'}</span>`
+          ? `<span title="${escapeHtml(getBoosterMeta(matchBooster)?.label || matchBooster)}">${iconHtml(getBoosterMeta(matchBooster)?.icon, getBoosterMeta(matchBooster)?.label) || '★'}</span>`
           : '<span style="color:var(--muted);">—</span>';
 
         const matchRow =
@@ -8068,7 +8156,7 @@ p31,Sample Player,MI,bat,9.0,false
         const liveCapCell  = liveCapName ? `<span title="${escapeHtml(liveCapName)}">${escapeHtml(shortName(liveCapName))}</span>` : '—';
         const liveVcCell   = liveVcName  ? `<span title="${escapeHtml(liveVcName)}">${escapeHtml(shortName(liveVcName))}</span>`   : '—';
         const liveBoostCell = liveBooster
-          ? `<span title="${escapeHtml(BOOSTER_META[liveBooster]?.label || liveBooster)}">${BOOSTER_META[liveBooster]?.icon || '★'}</span>`
+          ? `<span title="${escapeHtml(getBoosterMeta(liveBooster)?.label || liveBooster)}">${iconHtml(getBoosterMeta(liveBooster)?.icon, getBoosterMeta(liveBooster)?.label) || '★'}</span>`
           : '<span style="color:var(--muted);">—</span>';
 
         const liveMatchRow =
@@ -10945,6 +11033,7 @@ p31,Sample Player,MI,bat,9.0,false
     // data-load (setPlayers/initPlayers), so a one-time copy would go stale.
     window.__app = {
       get PLAYERS()    { return PLAYERS;    },
+      set PLAYERS(v)   { PLAYERS = v;       },
       get state()      { return state;      },
       get TEAMS_DATA() { return TEAMS_DATA; },
       set TEAMS_DATA(v){ TEAMS_DATA = v;    },
@@ -10963,6 +11052,9 @@ p31,Sample Player,MI,bat,9.0,false
       BOOSTER_META,
       ADMIN_EMAIL,
       escapeHtml,
+      getBoosterMeta,
+      getDomesticBoosterMeta,
+      iconHtml,
       playerById,
       findLocalByName,
       teamCodes,
@@ -11364,11 +11456,13 @@ p31,Sample Player,MI,bat,9.0,false
             Once used it cannot be reapplied.
           </div>
           ${data.boosters.map(id => {
-            const m = BOOSTER_META_WEB[id] ?? { icon:'🎯', name:id, desc:'Special booster — use once per season.' };
+            const dm = id === 'indian_double' ? getDomesticBoosterMeta() : null;
+            const m = dm ? { icon: dm.icon, name: dm.label, desc: dm.desc }
+                          : (BOOSTER_META_WEB[id] ?? { icon:'🎯', name:id, desc:'Special booster — use once per season.' });
             return `
               <div style="display:flex; gap:12px; padding:12px; margin-bottom:8px;
                           border:1px solid var(--border); border-radius:8px; background:var(--panel);">
-                <span style="font-size:26px; flex-shrink:0;">${m.icon}</span>
+                <span style="font-size:26px; flex-shrink:0;">${iconHtml(m.icon, m.name)}</span>
                 <div>
                   <div style="font-size:13px; font-weight:700; color:var(--text); margin-bottom:3px;">${m.name}</div>
                   <div style="font-size:12px; color:var(--muted); line-height:1.5;">${m.desc}</div>
@@ -12477,7 +12571,7 @@ p31,Sample Player,MI,bat,9.0,false
       let boosterCtx = null;
       try { boosterCtx = await getSlBoosterContext(); } catch (_) {}
       const activeBoosterLabel = boosterCtx?.activeForNext
-        ? (BOOSTER_META[boosterCtx.activeForNext]?.label ?? boosterCtx.activeForNext)
+        ? (getBoosterMeta(boosterCtx.activeForNext)?.label ?? boosterCtx.activeForNext)
         : null;
 
       const boosterNote = activeBoosterLabel
@@ -12541,7 +12635,7 @@ p31,Sample Player,MI,bat,9.0,false
       let boosterCtx = null;
       try { boosterCtx = await getSlBoosterContext(); } catch (_) {}
       const activeBoosterLabel = boosterCtx?.activeForNext
-        ? (BOOSTER_META[boosterCtx.activeForNext]?.label ?? boosterCtx.activeForNext)
+        ? (getBoosterMeta(boosterCtx.activeForNext)?.label ?? boosterCtx.activeForNext)
         : null;
 
       const boosterNote = activeBoosterLabel
@@ -12763,9 +12857,11 @@ p31,Sample Player,MI,bat,9.0,false
         isCap ? '<span class="pitch-cbadge c">' + (capIcon || 'C') + '</span>'
         : isVc ? '<span class="pitch-cbadge vc">' + ((boosterKey === 'dual_captain' ? capIcon : null) || 'V') + '</span>'
         : '';
+      var domMeta = boosterKey === 'indian_double' ? getDomesticBoosterMeta() : null;
+      var domIconHtml = domMeta ? iconHtml(domMeta.icon, domMeta.label) : '';
       var bottomLeftBadge =
         boosterKey === 'team_double' ? '<span class="pitch-usd-badge" title="Team Double">🚀</span>'
-        : (boosterKey === 'indian_double' && !overseas) ? '<span class="pitch-usd-badge" title="US Double">🇺🇸</span>'
+        : (boosterKey === 'indian_double' && !overseas) ? '<span class="pitch-usd-badge" title="' + escapeHtml(domMeta.label) + '">' + domIconHtml + '</span>'
         : '';
       var boosted =
         (boosterKey === 'triple_captain' && isCap) ||
@@ -12955,13 +13051,13 @@ p31,Sample Player,MI,bat,9.0,false
     // rather than leaving a long list unexplained (mirrors mobile's banner).
     const REVIEW_TRANSFER_BOOSTERS = new Set(['wildcard', 'free_hit']);
     function reviewBoosterBannerHtml(boosterKey) {
-      const meta = boosterKey ? BOOSTER_META[boosterKey] : null;
+      const meta = boosterKey ? getBoosterMeta(boosterKey) : null;
       if (!meta) return '';
       const note = REVIEW_TRANSFER_BOOSTERS.has(boosterKey)
         ? '<div class="review-booster-note">Unlimited transfers this match — no cap or deduction</div>'
         : '';
       return '<div class="review-booster-banner">'
-        + '<span class="review-booster-icon">' + meta.icon + '</span>'
+        + '<span class="review-booster-icon">' + iconHtml(meta.icon, meta.label) + '</span>'
         + '<div><div class="review-booster-name">' + escapeHtml(meta.label) + ' active</div>' + note + '</div>'
         + '</div>';
     }
