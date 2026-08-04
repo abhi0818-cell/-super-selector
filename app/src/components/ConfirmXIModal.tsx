@@ -163,7 +163,7 @@ function CaptainStep({ players, onAssign }: CaptainStepProps) {
               )}
 
               <View style={styles.capTileAvatar}>
-                <Jersey code={p.team} color1={p.teamColor} color2={p.teamColor2} size={32} variant="pool" />
+                <Jersey code={p.team} color1={p.teamColor} color2={p.teamColor2} jerseySvg={p.teamJerseySvg} size={32} variant="pool" />
               </View>
 
               <Text style={styles.capTileName} numberOfLines={2}>{shortenName(p.name)}</Text>

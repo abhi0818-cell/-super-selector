@@ -13,6 +13,7 @@ export interface Player {
   overseas: boolean;
   teamColor: string | null;   // hex color from admin teams table, e.g. '#fbbf24'
   teamColor2: string | null;  // secondary/sleeve hex color from admin teams table (teams.color2)
+  teamJerseySvg?: string | null; // optional custom jersey SVG markup (teams.jersey_svg) — takes over from teamColor/teamColor2 when set
 }
 
 export interface SelectedPlayer extends Player {

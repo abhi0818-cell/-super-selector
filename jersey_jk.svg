@@ -1,0 +1,41 @@
+<svg viewBox="0 0 141 179" width="141" height="179" xmlns="http://www.w3.org/2000/svg">
+  <title>Jamaica Kingsman (JK) home jersey</title>
+  <defs>
+    <clipPath id="bodyClipJK">
+      <path d="M 48.0,8.0 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 L 82.0,8.0 L 90.0,18.0 L 115.0,32.0 L 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 105.0,165.0 L 65.5,166.3 L 25.0,166.0 L 31.5,59.8 L 21.5,78.3 L 3.0,65.0 L 14.0,32.0 L 42.0,16.0 Z"/>
+    </clipPath>
+    <clipPath id="upperVClip">
+      <path d="M -10,5 L 151,5 L 151,55 L 112,55 L 65,88 L 20,55 L -10,55 Z"/>
+    </clipPath>
+  </defs>
+  <path d="M 48.0,8.0 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 L 82.0,8.0 L 90.0,18.0 L 115.0,32.0 L 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 105.0,165.0 L 65.5,166.3 L 25.0,166.0 L 31.5,59.8 L 21.5,78.3 L 3.0,65.0 L 14.0,32.0 L 42.0,16.0 Z" fill="#F5C518" stroke="#111" stroke-width="1.5" stroke-linejoin="round"/>
+  <g clip-path="url(#bodyClipJK)">
+    <g clip-path="url(#upperVClip)">
+      <path d="M -10,5 L 151,5 L 151,100 L -10,100 Z" fill="#1B5E20"/>
+      <ellipse cx="52" cy="20" rx="16" ry="12" fill="#2E7D32" opacity="0.9"/>
+      <ellipse cx="78" cy="18" rx="15" ry="10" fill="#388E3C" opacity="0.9"/>
+      <ellipse cx="63" cy="30" rx="20" ry="14" fill="#4CAF50" opacity="0.85"/>
+      <ellipse cx="40" cy="40" rx="13" ry="11" fill="#2E7D32" opacity="0.8"/>
+      <ellipse cx="88" cy="38" rx="13" ry="11" fill="#388E3C" opacity="0.8"/>
+      <ellipse cx="63" cy="50" rx="20" ry="13" fill="#66BB6A" opacity="0.75"/>
+      <ellipse cx="45" cy="58" rx="12" ry="9" fill="#2E7D32" opacity="0.7"/>
+      <ellipse cx="82" cy="58" rx="12" ry="9" fill="#43A047" opacity="0.7"/>
+      <ellipse cx="63" cy="65" rx="16" ry="10" fill="#81C784" opacity="0.6"/>
+      <ellipse cx="30" cy="25" rx="10" ry="9" fill="#4CAF50" opacity="0.6"/>
+      <ellipse cx="98" cy="25" rx="10" ry="9" fill="#388E3C" opacity="0.6"/>
+      <ellipse cx="63" cy="15" rx="12" ry="8" fill="#66BB6A" opacity="0.85"/>
+      <ellipse cx="58" cy="25" rx="10" ry="9" fill="#81C784" opacity="0.7"/>
+      <ellipse cx="70" cy="28" rx="11" ry="9" fill="#A5D6A7" opacity="0.6"/>
+      <ellipse cx="63" cy="38" rx="14" ry="10" fill="#43A047" opacity="0.8"/>
+      <ellipse cx="55" cy="45" rx="9" ry="7" fill="#66BB6A" opacity="0.7"/>
+      <ellipse cx="72" cy="45" rx="9" ry="7" fill="#2E7D32" opacity="0.75"/>
+      <ellipse cx="63" cy="55" rx="12" ry="8" fill="#81C784" opacity="0.65"/>
+      <ellipse cx="50" cy="12" rx="8" ry="6" fill="#4CAF50" opacity="0.6"/>
+      <ellipse cx="76" cy="12" rx="8" ry="6" fill="#66BB6A" opacity="0.6"/>
+    </g>
+    <path d="M 20,55 L 65,88 L 112,55 L 100,68 L 65,100 L 30,68 Z" fill="#101812"/>
+  </g>
+  <path d="M 3.0,65.0 L 21.5,78.3 L 31.5,59.8 L 42.0,16.0 L 14.0,32.0 Z" fill="#0B2E10"/>
+  <path d="M 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 90.0,18.0 L 115.0,32.0 Z" fill="#0B2E10"/>
+  <path d="M 48.0,8.0 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 Z" fill="#101812"/>
+</svg>

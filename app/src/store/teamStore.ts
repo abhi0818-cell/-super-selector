@@ -480,7 +480,8 @@ export const useTeamStore = create<TeamState>((set, get) => ({
           teams (
             id,
             color,
-            color2
+            color2,
+            jersey_svg
           )
         `)
         .eq('tournament_id', tournamentId)
@@ -499,6 +500,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
           overseas:  Boolean(tp.players.is_overseas),
           teamColor:  tp.teams?.color ?? null,
           teamColor2: tp.teams?.color2 ?? null,
+          teamJerseySvg: tp.teams?.jersey_svg ?? null,
         }));
         set({ players });
       }

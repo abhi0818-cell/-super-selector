@@ -53,6 +53,7 @@ export default function PlayerCard({ player, selected, disabled, onPress, recent
         code={player.team}
         color1={player.teamColor}
         color2={player.teamColor2}
+        jerseySvg={player.teamJerseySvg}
         size={34}
         variant="pool"
       />

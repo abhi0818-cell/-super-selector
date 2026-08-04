@@ -2715,7 +2715,7 @@
             teamsUpserted = await state.db.bulkUpsertTeams(teamRows);
             // Refresh local teams cache
             const freshTeams = await state.db.getTeams();
-            A.TEAMS_DATA = freshTeams.map(t => ({ id: t.id, name: t.name, color: t.color, color2: t.color2 ?? null }));
+            A.TEAMS_DATA = freshTeams.map(t => ({ id: t.id, name: t.name, color: t.color, color2: t.color2 ?? null, jersey_svg: t.jersey_svg ?? null }));
           } catch (e) {
             console.warn('Team upsert failed (non-fatal):', e);
           }
@@ -3396,6 +3396,7 @@
           <td><input data-f="name" type="text" placeholder="Team name" /></td>
           <td class="col-color"><input data-f="color" type="color" value="#22d3ee" /></td>
           <td class="col-color2"><input data-f="color2" type="color" value="#ffffff" /></td>
+          <td class="col-jersey" style="color:var(--muted); font-size:11px;">— (save team first)</td>
           <td class="col-actions"><button class="row-add" id="addTeamBtn" title="Add">+</button></td>
         </tr>
       `;
@@ -3405,7 +3406,22 @@
           <td><input data-f="name" type="text" value="${escapeHtml(t.name)}" /></td>
           <td class="col-color"><input data-f="color" type="color" value="${t.color || '#666666'}" /></td>
           <td class="col-color2"><input data-f="color2" type="color" value="${t.color2 || '#ffffff'}" title="Secondary color (sleeves/collar)" /></td>
+          <td class="col-jersey"><button class="jersey-svg-btn${t.jersey_svg ? ' has-asset' : ''}" data-act="jersey-toggle" title="Custom jersey SVG">${t.jersey_svg ? '🎨 custom' : '🎨 add'}</button></td>
           <td class="col-actions"><button class="row-del" data-act="del" title="Delete">×</button><span style="font-size:10px; color:var(--muted); margin-left:6px;">${playerCounts[t.id] || 0} pl</span></td>
+        </tr>
+        <tr class="jersey-svg-row" data-jersey-id="${t.id}" style="display:none;">
+          <td colspan="6">
+            <div style="display:flex; gap:10px; align-items:flex-start; padding:8px 0;">
+              <div class="jersey-svg-preview" data-jersey-preview></div>
+              <div style="flex:1;">
+                <textarea data-jersey-input placeholder="Paste full custom jersey SVG markup here (viewBox 0 0 141 179). Leave blank and Save to clear — falls back to Color 1/2 fill.">${escapeHtml(t.jersey_svg || '')}</textarea>
+                <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+                  <button class="ctrl-btn ctrl-btn-admin jersey-svg-save" style="font-size:12px;">Save</button>
+                  <span class="jersey-svg-status" style="font-size:11px; color:var(--muted);"></span>
+                </div>
+              </div>
+            </div>
+          </td>
         </tr>
       `).join('');
 
@@ -3428,6 +3444,13 @@
           el.addEventListener('input', () => el.classList.add('dirty'));
         });
         tr.querySelector('[data-act="del"]').addEventListener('click', () => deleteTeamHandler(id));
+        tr.querySelector('[data-act="jersey-toggle"]').addEventListener('click', () => toggleJerseySvgRow(id));
+      });
+      $('#adminTeamsBody').querySelectorAll('tr.jersey-svg-row').forEach(tr => {
+        const id = tr.dataset.jerseyId;
+        renderJerseySvgPreview(tr);
+        tr.querySelector('[data-jersey-input]').addEventListener('input', () => renderJerseySvgPreview(tr));
+        tr.querySelector('.jersey-svg-save').addEventListener('click', () => saveJerseySvg(id, tr));
       });
       $('#adminCount').textContent = `${teams.length} team${teams.length !== 1 ? 's' : ''} · ${activeTournament?.name ?? 'all'}`;
 
@@ -3620,9 +3643,9 @@
       try {
         if (state.db) {
           const inserted = await state.db.addTeam({ id, name, color, color2 });
-          A.TEAMS_DATA.push({ id: inserted.id, name: inserted.name, color: inserted.color, color2: inserted.color2 });
+          A.TEAMS_DATA.push({ id: inserted.id, name: inserted.name, color: inserted.color, color2: inserted.color2, jersey_svg: inserted.jersey_svg ?? null });
         } else {
-          A.TEAMS_DATA.push({ id, name, color, color2 });
+          A.TEAMS_DATA.push({ id, name, color, color2, jersey_svg: null });
         }
         toast(`Added ${id}.`);
         renderTeamsAdmin(); renderPool(); renderTeamFilter();
@@ -3640,7 +3663,7 @@
         if (state.db) {
           const upd = await state.db.updateTeam(id, patch);
           const idx = A.TEAMS_DATA.findIndex(t => t.id === id);
-          if (idx >= 0) A.TEAMS_DATA[idx] = { id: upd.id, name: upd.name, color: upd.color, color2: upd.color2 };
+          if (idx >= 0) A.TEAMS_DATA[idx] = { id: upd.id, name: upd.name, color: upd.color, color2: upd.color2, jersey_svg: upd.jersey_svg ?? null };
         } else {
           const idx = A.TEAMS_DATA.findIndex(t => t.id === id);
           if (idx >= 0) A.TEAMS_DATA[idx] = { ...A.TEAMS_DATA[idx], ...patch };
@@ -3661,6 +3684,47 @@
         toast('Deleted.');
         renderTeamsAdmin(); renderPool(); renderTeamFilter();
       } catch (e) { toast('Delete failed: ' + e.message, 5000); }
+    }
+
+    function toggleJerseySvgRow(id) {
+      const tr = $(`#adminTeamsBody`).querySelector(`tr.jersey-svg-row[data-jersey-id="${CSS.escape(id)}"]`);
+      if (!tr) return;
+      tr.style.display = tr.style.display === 'none' ? '' : 'none';
+    }
+
+    // Live preview of the pasted SVG markup as a data-URI <img>, same shape/
+    // viewBox as the app's jersey (141x179) — lets an admin sanity-check the
+    // markup renders before saving. Malformed SVG just shows a blank preview,
+    // no error thrown (it's a `<img>` load failure, not a JS exception).
+    function renderJerseySvgPreview(tr) {
+      const raw = tr.querySelector('[data-jersey-input]').value.trim();
+      const preview = tr.querySelector('[data-jersey-preview]');
+      if (!raw) { preview.innerHTML = '<span style="font-size:9px; color:var(--muted);">none</span>'; return; }
+      const uri = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(raw)));
+      preview.innerHTML = `<img src="${uri}" alt="jersey preview" />`;
+    }
+
+    async function saveJerseySvg(id, tr) {
+      const input = tr.querySelector('[data-jersey-input]');
+      const statusEl = tr.querySelector('.jersey-svg-status');
+      const jerseySvg = input.value.trim() || null;
+      statusEl.textContent = 'Saving…'; statusEl.style.color = 'var(--muted)';
+      try {
+        if (state.db) {
+          const upd = await state.db.updateTeam(id, { jerseySvg });
+          const idx = A.TEAMS_DATA.findIndex(t => t.id === id);
+          if (idx >= 0) A.TEAMS_DATA[idx] = { ...A.TEAMS_DATA[idx], jersey_svg: upd.jersey_svg ?? null };
+        } else {
+          const idx = A.TEAMS_DATA.findIndex(t => t.id === id);
+          if (idx >= 0) A.TEAMS_DATA[idx] = { ...A.TEAMS_DATA[idx], jersey_svg: jerseySvg };
+        }
+        statusEl.textContent = `✓ Saved ${new Date().toLocaleTimeString()}`;
+        statusEl.style.color = 'var(--good,#4ade80)';
+        renderTeamsAdmin(); renderPool(); renderTeamFilter();
+      } catch (e) {
+        statusEl.textContent = 'Save failed: ' + e.message;
+        statusEl.style.color = 'var(--bad)';
+      }
     }
 
 

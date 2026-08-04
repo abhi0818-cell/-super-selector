@@ -1,0 +1,25 @@
+<svg viewBox="0 0 141 179" width="141" height="179" xmlns="http://www.w3.org/2000/svg">
+  <title>Trinbago Knight Riders (TKR) jersey</title>
+  <defs>
+    <clipPath id="bodyClipTKR">
+      <path d="M 48.0,8.0 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 L 82.0,8.0 L 90.0,18.0 L 115.0,32.0 L 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 105.0,165.0 L 65.5,166.3 L 25.0,166.0 L 31.5,59.8 L 21.5,78.3 L 3.0,65.0 L 14.0,32.0 L 42.0,16.0 Z"/>
+    </clipPath>
+  </defs>
+  <path d="M 48.0,8.0 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 L 82.0,8.0 L 90.0,18.0 L 115.0,32.0 L 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 105.0,165.0 L 65.5,166.3 L 25.0,166.0 L 31.5,59.8 L 21.5,78.3 L 3.0,65.0 L 14.0,32.0 L 42.0,16.0 Z" fill="#151312" stroke="#111" stroke-width="1.5" stroke-linejoin="round"/>
+  <g clip-path="url(#bodyClipTKR)" stroke-linecap="butt" stroke-linejoin="miter">
+    <polyline points="-25,5 -14,17 -22,26 -10,39 -19,48 -6,62 -16,71 -2,86 -12,95 2,110 -8,120 6,135 -4,145 10,160 0,170 14,179" fill="none" stroke="#C81E1E" stroke-width="8"/>
+    <polyline points="-5,5 6,17 -2,26 10,39 1,48 14,62 4,71 18,86 8,95 22,110 12,120 26,135 16,145 30,160 20,170 34,179" fill="none" stroke="#C81E1E" stroke-width="8"/>
+    <polyline points="15,5 26,17 18,26 30,39 21,48 34,62 24,71 38,86 28,95 42,110 32,120 46,135 36,145 50,160 40,170 54,179" fill="none" stroke="#C81E1E" stroke-width="8"/>
+    <polyline points="35,5 46,17 38,26 50,39 41,48 54,62 44,71 58,86 48,95 62,110 52,120 66,135 56,145 70,160 60,170 74,179" fill="none" stroke="#C81E1E" stroke-width="8"/>
+    <polyline points="55,5 66,17 58,26 70,39 61,48 74,62 64,71 78,86 68,95 82,110 72,120 86,135 76,145 90,160 80,170 94,179" fill="none" stroke="#C81E1E" stroke-width="8"/>
+    <polyline points="75,5 86,17 78,26 90,39 81,48 94,62 84,71 98,86 88,95 102,110 92,120 106,135 96,145 110,160 100,170 114,179" fill="none" stroke="#C81E1E" stroke-width="8"/>
+    <polyline points="95,5 106,17 98,26 110,39 101,48 114,62 104,71 118,86 108,95 122,110 112,120 126,135 116,145 130,160 120,170 134,179" fill="none" stroke="#C81E1E" stroke-width="8"/>
+    <polyline points="115,5 126,17 118,26 130,39 121,48 134,62 124,71 138,86 128,95 142,110" fill="none" stroke="#C81E1E" stroke-width="8"/>
+  </g>
+  <path d="M 3.0,65.0 L 21.5,78.3 L 31.5,59.8 L 42.0,16.0 L 14.0,32.0 Z" fill="#151312"/>
+  <path d="M 3.0,65.0 L 8.0,63.5 L 20.0,29.0 L 14.0,32.0 Z" fill="#E7C468"/>
+  <path d="M 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 90.0,18.0 L 115.0,32.0 Z" fill="#151312"/>
+  <path d="M 127.5,70.3 L 122.5,68.8 L 110.0,29.0 L 115.0,32.0 Z" fill="#E7C468"/>
+  <path d="M 48.0,8.0 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 Z" fill="#151312" stroke="#E7C468" stroke-width="1.4"/>
+  <path d="M 42.0,16.0 L 48.0,8.0 M 82.5,8.3 L 89.5,16.8" stroke="#E7C468" stroke-width="1.6" fill="none"/>
+</svg>

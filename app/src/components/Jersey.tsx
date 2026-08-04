@@ -18,13 +18,15 @@
  */
 
 import React from 'react';
-import Svg, { Path, Text as SvgText } from 'react-native-svg';
+import { View, Text } from 'react-native';
+import Svg, { Path, Text as SvgText, SvgXml } from 'react-native-svg';
 
 export interface JerseyProps {
-  code:     string | null | undefined; // team short code, e.g. 'CSK' or 'AUS-W'
-  color1?:  string | null;             // primary/body color (teams.color)
-  color2?:  string | null;             // secondary/sleeve color (teams.color2)
-  size?:    number;                    // rendered width in px; height follows the 141:179 aspect ratio
+  code:      string | null | undefined; // team short code, e.g. 'CSK' or 'AUS-W'
+  color1?:   string | null;             // primary/body color (teams.color)
+  color2?:   string | null;             // secondary/sleeve color (teams.color2)
+  jerseySvg?: string | null;            // optional custom design (teams.jersey_svg) — takes over from color1/color2 when set
+  size?:     number;                    // rendered width in px; height follows the 141:179 aspect ratio
   variant?: 'pool' | 'pitch';
   boosted?: boolean;                   // 'pitch' only — active booster on this tile
 }
@@ -58,6 +60,7 @@ export default function Jersey({
   code,
   color1,
   color2,
+  jerseySvg,
   size = 44,
   variant = 'pool',
   boosted = false,
@@ -83,6 +86,50 @@ export default function Jersey({
   const strokeColor = boostActive ? '#FFD23F' : 'rgba(17,17,17,0.2)';
   const strokeWidth = boostActive ? 6 : 1.5;
   const height      = size * (VIEWBOX_H / VIEWBOX_W);
+
+  // Custom per-team design (teams.jersey_svg) takes over from the color-fill
+  // rendering below. Mirrors web's customJerseyHtml()/customPitchJerseyHtml():
+  // the raw markup is rendered via SvgXml (it can contain defs/clipPath/
+  // groups the Path-based render below can't express), and — since we don't
+  // control that markup's own contrast — the team-code label is an
+  // absolutely-positioned <Text> on top rather than baked into the SVG, same
+  // as web does for this path. The boosted gold ring is a second Svg
+  // overlay for the same reason.
+  if (jerseySvg) {
+    const labelFontSize = fontSize * (size / (isPool ? 44 : 44));
+    return (
+      <View style={{ width: size, height, position: 'relative' }}>
+        <SvgXml xml={jerseySvg} width={size} height={height} />
+        {boostActive && (
+          <Svg
+            width={size}
+            height={height}
+            viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
+            style={{ position: 'absolute', left: 0, top: 0 }}
+          >
+            <Path d={BODY_PATH} fill="none" stroke="#FFD23F" strokeWidth={6} strokeLinejoin="round" />
+          </Svg>
+        )}
+        <Text
+          style={{
+            position: 'absolute',
+            left: 0, right: 0,
+            top: height * 0.58,
+            textAlign: 'center',
+            fontFamily: 'Arial Black, Arial, sans-serif',
+            fontWeight: '900',
+            fontSize: labelFontSize,
+            color: '#fff',
+            textShadowColor: 'rgba(0,0,0,0.7)',
+            textShadowOffset: { width: 0, height: 1 },
+            textShadowRadius: 3,
+          }}
+        >
+          {label}
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <Svg width={size} height={height} viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}>

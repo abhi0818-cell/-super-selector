@@ -355,6 +355,7 @@ export function createDb(cfg = {}) {
         name: input.name,
         color: input.color ?? null,
         color2: input.color2 ?? null,
+        jersey_svg: input.jerseySvg ?? null,
       }).select().single();
       if (error) throw error;
       return data;
@@ -363,9 +364,10 @@ export function createDb(cfg = {}) {
     async updateTeam(id, patch) {
       const sb = await getClient();
       const row = {};
-      if (patch.name   !== undefined) row.name   = patch.name;
-      if (patch.color  !== undefined) row.color  = patch.color;
-      if (patch.color2 !== undefined) row.color2 = patch.color2;
+      if (patch.name       !== undefined) row.name       = patch.name;
+      if (patch.color      !== undefined) row.color      = patch.color;
+      if (patch.color2     !== undefined) row.color2     = patch.color2;
+      if (patch.jerseySvg  !== undefined) row.jersey_svg = patch.jerseySvg;
       const { data, error } = await sb.from('teams').update(row).eq('id', id).select().single();
       if (error) throw error;
       return data;

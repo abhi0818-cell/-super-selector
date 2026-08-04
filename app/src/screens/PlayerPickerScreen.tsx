@@ -322,10 +322,10 @@ export default function PlayerPickerScreen({
   // Team colors keyed by code, derived from the player pool we already have
   // in memory — same colors PlayerCard's jerseys use, no extra fetch needed.
   const teamColorMap = useMemo(() => {
-    const map = new Map<string, { color1: string | null; color2: string | null }>();
+    const map = new Map<string, { color1: string | null; color2: string | null; jerseySvg: string | null }>();
     players.forEach(p => {
       if (p.team && !map.has(p.team)) {
-        map.set(p.team, { color1: p.teamColor, color2: p.teamColor2 });
+        map.set(p.team, { color1: p.teamColor, color2: p.teamColor2, jerseySvg: p.teamJerseySvg ?? null });
       }
     });
     return map;
@@ -723,9 +723,9 @@ export default function PlayerPickerScreen({
                 <View key={m.id} style={styles.schedCard}>
                   <Text style={styles.schedNum}>M{m.matchNumber ?? '?'}</Text>
                   <View style={styles.schedVsRow}>
-                    <Jersey code={m.homeTeamId} color1={home?.color1} color2={home?.color2} size={32} variant="pool" />
+                    <Jersey code={m.homeTeamId} color1={home?.color1} color2={home?.color2} jerseySvg={home?.jerseySvg} size={32} variant="pool" />
                     <Text style={styles.schedVsLabel}>vs</Text>
-                    <Jersey code={m.awayTeamId} color1={away?.color1} color2={away?.color2} size={32} variant="pool" />
+                    <Jersey code={m.awayTeamId} color1={away?.color1} color2={away?.color2} jerseySvg={away?.jerseySvg} size={32} variant="pool" />
                   </View>
                   <Text style={styles.schedTime}>{formatMatchWhen(m.startTime)}</Text>
                 </View>

@@ -1,0 +1,26 @@
+<svg viewBox="0 0 141 179" width="141" height="179" xmlns="http://www.w3.org/2000/svg">
+  <title>St Kitts and Nevis Patriots (SKNP) jersey</title>
+  <defs>
+    <clipPath id="bodyClipSKNP">
+      <path d="M 48.0,8.0 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 L 82.0,8.0 L 90.0,18.0 L 115.0,32.0 L 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 105.0,165.0 L 65.5,166.3 L 25.0,166.0 L 31.5,59.8 L 21.5,78.3 L 3.0,65.0 L 14.0,32.0 L 42.0,16.0 Z"/>
+    </clipPath>
+  </defs>
+  <path d="M 48.0,8.0 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 L 82.0,8.0 L 90.0,18.0 L 115.0,32.0 L 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 105.0,165.0 L 65.5,166.3 L 25.0,166.0 L 31.5,59.8 L 21.5,78.3 L 3.0,65.0 L 14.0,32.0 L 42.0,16.0 Z" fill="#101112" stroke="#111" stroke-width="1.5" stroke-linejoin="round"/>
+  <g clip-path="url(#bodyClipSKNP)">
+    <line x1="18" y1="20" x2="45" y2="45" stroke="#F4C430" stroke-width="2"/>
+    <line x1="88" y1="18" x2="118" y2="42" stroke="#F4C430" stroke-width="2"/>
+    <circle cx="22" cy="17" r="2.6" fill="#F4C430"/>
+    <circle cx="34" cy="20" r="2.6" fill="#F4C430"/>
+    <path d="M 40,60 Q 34,110 36,166" stroke="#1E9E4A" stroke-width="4.5" fill="none"/>
+    <path d="M 44,60 Q 38,110 40,166" stroke="#F4C430" stroke-width="1.8" fill="none"/>
+    <path d="M 47,60 Q 41,112 44,166" stroke="#D01C1C" stroke-width="1.6" fill="none"/>
+    <path d="M 91,60 Q 97,110 95,166" stroke="#1E9E4A" stroke-width="4.5" fill="none"/>
+    <path d="M 87,60 Q 93,110 91,166" stroke="#F4C430" stroke-width="1.8" fill="none"/>
+    <path d="M 84,60 Q 90,112 88,166" stroke="#D01C1C" stroke-width="1.6" fill="none"/>
+  </g>
+  <path d="M 3.0,65.0 L 21.5,78.3 L 31.5,59.8 L 42.0,16.0 L 14.0,32.0 Z" fill="#1E9E4A"/>
+  <path d="M 3.0,65.0 L 7.5,63.8 L 19.0,29.0 L 14.0,32.0 Z" fill="#F4C430"/>
+  <path d="M 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 90.0,18.0 L 115.0,32.0 Z" fill="#1E9E4A"/>
+  <path d="M 127.5,70.3 L 123.0,69.0 L 111.0,29.0 L 115.0,32.0 Z" fill="#F4C430"/>
+  <path d="M 48.0,8.0 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 Z" fill="#101112" stroke="#1E9E4A" stroke-width="1.6"/>
+</svg>
