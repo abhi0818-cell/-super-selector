@@ -1273,7 +1273,11 @@
 
       try {
         if (state.db) {
-          const updated = await state.db.updatePlayer(id, patch);
+          // Pass the active tournament so team/credits/overseas land in
+          // tournament_players (migration_v43) instead of silently becoming
+          // the new global default for every other tournament this player
+          // is also in — this row edit had no such scoping before.
+          const updated = await state.db.updatePlayer(id, patch, state.activeTournamentId);
           const idx = A.PLAYERS.findIndex(p => p.id === id);
           if (idx >= 0) A.PLAYERS[idx] = updated;
         } else {
@@ -4125,7 +4129,7 @@
             try {
               await state.db.bulkUpsertTournamentPlayers(
                 state.activeTournamentId,
-                rows.map(r => ({ playerId: r.id, teamId: r.team, creditValue: r.credits, isActive: true }))
+                rows.map(r => ({ playerId: r.id, teamId: r.team, creditValue: r.credits, isActive: true, isOverseas: !!r.overseas }))
               );
               A.PLAYERS = await state.db.getPlayersForTournament(state.activeTournamentId);
               if (!A.PLAYERS.length) A.PLAYERS = await state.db.getPlayers();

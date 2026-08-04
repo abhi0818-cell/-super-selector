@@ -421,15 +421,21 @@ export function createDb(cfg = {}) {
 
     /**
      * Returns the player pool for a specific tournament, using tournament-specific
-     * team assignments and credit values from tournament_players.
+     * team assignments, credit values, AND overseas designation from tournament_players.
      * Falls back to the global players table if tournament_players has no entries yet.
      * Return shape is identical to getPlayers() so the UI doesn't need to branch.
+     *
+     * is_overseas reads from tournament_players (migration_v43), not the
+     * joined players row — "overseas" is relative to which tournament/country
+     * a player is playing in (e.g. an Indian player is domestic in IPL but
+     * overseas in CPL/MLC), so it can legitimately differ per tournament even
+     * for the same real person, same as team/credits already did.
      */
     async getPlayersForTournament(tournamentId) {
       const sb = await getClient();
       const { data, error } = await sb
         .from('tournament_players')
-        .select('team_id, credit_value, is_active, players(id, name, role, is_overseas)')
+        .select('team_id, credit_value, is_active, is_overseas, players(id, name, role)')
         .eq('tournament_id', tournamentId)
         .order('player_id');
       if (error) throw error;
@@ -440,7 +446,7 @@ export function createDb(cfg = {}) {
         team         : tp.team_id,                  // tournament-specific team
         role         : tp.players.role,
         credits      : Number(tp.credit_value),     // tournament-specific credits
-        overseas     : !!tp.players.is_overseas,
+        overseas     : !!tp.is_overseas,             // tournament-specific overseas designation
         active       : !!tp.is_active,
         tournamentId : tournamentId,  // firm tag: which tournament this row's stats/team/credits came from,
                                        // independent of whatever the UI's "active tournament" toggle says later.
@@ -451,9 +457,18 @@ export function createDb(cfg = {}) {
     },
 
     /**
-     * Clones the player pool (team assignments + credits) from one tournament to another.
-     * Typically called right after creating a new tournament so the auction starting
-     * point is pre-populated. Does not overwrite entries that already exist in the target.
+     * Clones the player pool (team assignments + credits + overseas) from one
+     * tournament to another. Typically called right after creating a new
+     * tournament so the auction starting point is pre-populated. Does not
+     * overwrite entries that already exist in the target.
+     *
+     * NOTE on is_overseas (migration_v43): this carries over the SOURCE
+     * tournament's overseas designation as a starting point, same as
+     * team/credits — but unlike those, overseas is relative to which
+     * country's league this is, not just "needs re-auctioning." Cloning IPL
+     * (domestic = Indian) into CPL (domestic = Caribbean) will carry over
+     * "domestic" flags that are wrong for CPL — worth a review pass after
+     * cloning, same way credits need re-checking, not a fire-and-forget copy.
      *
      * @param {string} fromTournamentId  Source tournament UUID
      * @param {string} toTournamentId    Target tournament UUID
@@ -464,7 +479,7 @@ export function createDb(cfg = {}) {
       // Fetch source rows
       const { data: source, error: fetchErr } = await sb
         .from('tournament_players')
-        .select('player_id, team_id, credit_value, is_active')
+        .select('player_id, team_id, credit_value, is_active, is_overseas')
         .eq('tournament_id', fromTournamentId);
       if (fetchErr) throw fetchErr;
       if (!source.length) return 0;
@@ -476,6 +491,7 @@ export function createDb(cfg = {}) {
         team_id     : r.team_id,
         credit_value: r.credit_value,
         is_active   : r.is_active,
+        is_overseas : r.is_overseas,
       }));
       const CHUNK = 100;
       let inserted = 0;
@@ -492,12 +508,13 @@ export function createDb(cfg = {}) {
     },
 
     /**
-     * Bulk upsert tournament-specific player attributes (team + credits).
-     * Called by the CSV import flow when a tournament is active, so imported
-     * data lands in tournament_players rather than overwriting global players.
+     * Bulk upsert tournament-specific player attributes (team + credits +
+     * overseas — migration_v43). Called by the CSV import flow when a
+     * tournament is active, so imported data lands in tournament_players
+     * rather than overwriting global players.
      *
      * @param {string} tournamentId
-     * @param {Array<{playerId, teamId, creditValue, isActive?}>} rows
+     * @param {Array<{playerId, teamId, creditValue, isActive?, isOverseas?}>} rows
      * @returns {Promise<number>} rows written
      */
     async bulkUpsertTournamentPlayers(tournamentId, rows) {
@@ -509,6 +526,7 @@ export function createDb(cfg = {}) {
         team_id     : r.teamId     ?? null,
         credit_value: r.creditValue,
         is_active   : r.isActive   ?? true,
+        is_overseas : !!r.isOverseas,
         updated_at  : new Date().toISOString(),
       }));
       const CHUNK = 100;
@@ -588,6 +606,7 @@ export function createDb(cfg = {}) {
             team_id      : player.team,
             credit_value : player.credits,
             is_active    : true,
+            is_overseas  : player.overseas,
           }, { onConflict: 'tournament_id,player_id' });
           if (te) throw te;
         }
@@ -598,29 +617,103 @@ export function createDb(cfg = {}) {
 
     /**
      * Partial update.
+     *
+     * name/role write to the global players row (genuinely global — see the
+     * CPL setup conversation: a real person's name/role don't change per
+     * tournament). team/credits/overseas are tournament-scoped
+     * (migration_v43) — if `tournamentId` is given AND that tournament
+     * already has a tournament_players row for this player, those three
+     * fields are written there instead of the global row, so editing a
+     * player while CPL is active can't silently corrupt their MLC/IPL data.
+     * Falls back to writing the global row for team/credits/overseas when no
+     * tournamentId is given, or the tournament hasn't imported this player
+     * yet — same bootstrap behavior as addPlayer().
+     *
      * @param {string} id
      * @param {{name?:string, team?:string, role?:string, credits?:number, overseas?:boolean}} patch
+     * @param {string} [tournamentId] - active tournament, so team/credits/overseas land tournament-scoped
      */
-    async updatePlayer(id, patch) {
+    async updatePlayer(id, patch, tournamentId) {
       const sb = await getClient();
-      const row = {};
-      if (patch.name     !== undefined) row.name        = patch.name;
-      if (patch.team     !== undefined) row.team_id     = patch.team;
-      if (patch.role     !== undefined) {
+
+      const globalRow = {};
+      if (patch.name !== undefined) globalRow.name = patch.name;
+      if (patch.role !== undefined) {
         if (!['wk','bat','ar','bowl'].includes(patch.role)) throw new Error('updatePlayer: invalid role');
-        row.role = patch.role;
+        globalRow.role = patch.role;
       }
-      if (patch.credits  !== undefined) row.credits     = patch.credits;
-      if (patch.overseas !== undefined) row.is_overseas = !!patch.overseas;
-      const { data, error } = await sb.from('players').update(row).eq('id', id).select().single();
-      if (error) throw error;
-      return { id: data.id, name: data.name, team: data.team_id, role: data.role, credits: Number(data.credits), overseas: !!data.is_overseas };
+
+      let wroteTournamentRow = false;
+      if (tournamentId) {
+        const { data: existingTp, error: tpErr } = await sb
+          .from('tournament_players')
+          .select('id')
+          .eq('tournament_id', tournamentId)
+          .eq('player_id', id)
+          .maybeSingle();
+        if (tpErr) throw tpErr;
+        if (existingTp) {
+          const tpRow = { updated_at: new Date().toISOString() };
+          if (patch.team     !== undefined) tpRow.team_id      = patch.team;
+          if (patch.credits  !== undefined) tpRow.credit_value = patch.credits;
+          if (patch.overseas !== undefined) tpRow.is_overseas  = !!patch.overseas;
+          if (Object.keys(tpRow).length > 1) {
+            const { error: te } = await sb.from('tournament_players').update(tpRow).eq('id', existingTp.id);
+            if (te) throw te;
+          }
+          wroteTournamentRow = true;
+        }
+      }
+
+      if (!wroteTournamentRow) {
+        if (patch.team     !== undefined) globalRow.team_id    = patch.team;
+        if (patch.credits  !== undefined) globalRow.credits    = patch.credits;
+        if (patch.overseas !== undefined) globalRow.is_overseas = !!patch.overseas;
+      }
+
+      let data;
+      if (Object.keys(globalRow).length > 0) {
+        const res = await sb.from('players').update(globalRow).eq('id', id).select().single();
+        if (res.error) throw res.error;
+        data = res.data;
+      } else {
+        const res = await sb.from('players').select('id, name, team_id, role, credits, is_overseas').eq('id', id).single();
+        if (res.error) throw res.error;
+        data = res.data;
+      }
+
+      const result = { id: data.id, name: data.name, team: data.team_id, role: data.role, credits: Number(data.credits), overseas: !!data.is_overseas };
+      // Reflect the tournament-scoped values we actually wrote, since the
+      // global row (data, above) is unchanged for team/credits/overseas
+      // when wroteTournamentRow is true.
+      if (wroteTournamentRow) {
+        if (patch.team     !== undefined) result.team     = patch.team;
+        if (patch.credits  !== undefined) result.credits  = Number(patch.credits);
+        if (patch.overseas !== undefined) result.overseas = !!patch.overseas;
+      }
+      return result;
     },
 
     /**
      * Bulk upsert players. Existing rows (by id) are updated, new rows inserted.
      * Splits the payload into 50-row chunks so we never hit PostgREST's request-size
      * cap or its default max-rows return cap on the .select() that follows.
+     *
+     * IMPORTANT (migration_v43): team_id/credits/is_overseas are tournament-
+     * scoped now (tournament_players), not global facts about a player — an
+     * Indian player is domestic in IPL but overseas in CPL, teams differ per
+     * tournament's roster, and credits are auctioned separately each season.
+     * Re-importing a CSV for tournament B used to silently overwrite these on
+     * the GLOBAL players row for anyone who'd already played tournament A,
+     * corrupting A's data the moment B's roster was uploaded. So for an id
+     * that already exists, this only updates name/role (genuinely global —
+     * see the CPL setup conversation for why role is the one field that
+     * really is stable across tournaments) and leaves team/credits/overseas
+     * alone; the caller is expected to write those into tournament_players
+     * via bulkUpsertTournamentPlayers instead (see admin.js csvImportHandler).
+     * Only a genuinely NEW id gets team/credits/overseas set here — as the
+     * bootstrap default for addPlayer/getPlayers()'s no-tournament-yet
+     * fallback, same as addPlayer() already does for a single new player.
      *
      * @param {Array<{id:string, name:string, team:string, role:string, credits:number, overseas?:boolean}>} rows
      * @returns {Promise<number>} how many rows the database accepted across all chunks
@@ -630,7 +723,7 @@ export function createDb(cfg = {}) {
       const sb = await getClient();
 
       // Validate + normalise everything up front so we fail fast on bad data.
-      const payload = rows.map(r => {
+      const normalised = rows.map(r => {
         if (!r.id || !r.name || !r.team || !r.role) throw new Error(`bulkUpsertPlayers: row missing required fields → ${JSON.stringify(r)}`);
         if (!['wk','bat','ar','bowl'].includes(r.role)) throw new Error(`bulkUpsertPlayers: bad role "${r.role}" on ${r.id}`);
         return {
@@ -643,18 +736,43 @@ export function createDb(cfg = {}) {
         };
       });
 
+      // Find which ids already exist so we know which rows to treat as
+      // "update name/role only" vs "brand new — set the bootstrap defaults too".
+      const allIds = normalised.map(r => r.id);
+      const existingIds = new Set();
+      const LOOKUP_CHUNK = 200;
+      for (let i = 0; i < allIds.length; i += LOOKUP_CHUNK) {
+        const idSlice = allIds.slice(i, i + LOOKUP_CHUNK);
+        const { data, error } = await sb.from('players').select('id').in('id', idSlice);
+        if (error) throw new Error(`bulkUpsertPlayers: id lookup failed: ${error.message}`);
+        (data ?? []).forEach(row => existingIds.add(row.id));
+      }
+
+      const newRows = normalised.filter(r => !existingIds.has(r.id));
+      const existingRows = normalised
+        .filter(r => existingIds.has(r.id))
+        .map(r => ({ id: r.id, name: r.name, role: r.role }));
+
       const CHUNK = 50;
       let written = 0;
-      for (let i = 0; i < payload.length; i += CHUNK) {
-        const slice = payload.slice(i, i + CHUNK);
+
+      for (let i = 0; i < newRows.length; i += CHUNK) {
+        const slice = newRows.slice(i, i + CHUNK);
+        const { data, error } = await sb
+          .from('players')
+          .insert(slice)
+          .select('id');
+        if (error) throw new Error(`Insert failed on new-player rows ${i+1}–${i+slice.length}: ${error.message}`);
+        written += Array.isArray(data) ? data.length : slice.length;
+      }
+
+      for (let i = 0; i < existingRows.length; i += CHUNK) {
+        const slice = existingRows.slice(i, i + CHUNK);
         const { data, error } = await sb
           .from('players')
           .upsert(slice, { onConflict: 'id' })
           .select('id');
-        if (error) {
-          // Surface which chunk failed so the caller can act on it
-          throw new Error(`Upsert failed on rows ${i+1}–${i+slice.length}: ${error.message}`);
-        }
+        if (error) throw new Error(`Update failed on existing-player rows ${i+1}–${i+slice.length}: ${error.message}`);
         written += Array.isArray(data) ? data.length : slice.length;
       }
       return written;
@@ -1683,6 +1801,7 @@ export function createDb(cfg = {}) {
         team_id      : playerData.teamId,
         credit_value : playerData.credits ?? 8,
         is_active    : true,
+        is_overseas  : !!playerData.overseas,
       });
       if (te) throw te;
       // 3. Create alias
