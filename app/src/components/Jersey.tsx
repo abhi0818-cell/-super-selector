@@ -18,7 +18,7 @@
  */
 
 import React from 'react';
-import { View, Text } from 'react-native';
+import { View } from 'react-native';
 import Svg, { Path, Text as SvgText, SvgXml } from 'react-native-svg';
 
 export interface JerseyProps {
@@ -44,6 +44,19 @@ const COLLAR_PATH   = 'M 48,8 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 Z';
 // only — the full code with '-W' is still shown elsewhere in meta text.
 function jerseyLabel(code: string | null | undefined): string {
   return (code || '??').replace(/-W$/, '').toUpperCase().slice(0, 6);
+}
+
+// Ports web's injectJerseyLabel() (index.html, jerseyHtml/pitchJerseyHtml) —
+// inserts a <text> element right before the pasted SVG's closing tag, in
+// the same viewBox units the app's own jersey paths use. White fill + a
+// dark stroke keeps it legible against whatever colors the custom design
+// happens to use, since we can't compute luminance against markup we don't
+// parse.
+function injectJerseyLabel(svgMarkup: string, label: string, fontSizeViewboxUnits: number): string {
+  const textEl = `<text x="65" y="118" text-anchor="middle" alignment-baseline="middle" font-family="Arial Black,Arial,sans-serif" font-size="${fontSizeViewboxUnits}" font-weight="900" fill="#fff" stroke="rgba(0,0,0,.65)" stroke-width="2" paint-order="stroke" opacity=".95">${label}</text>`;
+  const idx = svgMarkup.lastIndexOf('</svg>');
+  if (idx === -1) return svgMarkup;
+  return svgMarkup.slice(0, idx) + textEl + svgMarkup.slice(idx);
 }
 
 // Mirrors pitchJerseyHtml's luminance check — picks readable text against
@@ -88,18 +101,19 @@ export default function Jersey({
   const height      = size * (VIEWBOX_H / VIEWBOX_W);
 
   // Custom per-team design (teams.jersey_svg) takes over from the color-fill
-  // rendering below. Mirrors web's customJerseyHtml()/customPitchJerseyHtml():
-  // the raw markup is rendered via SvgXml (it can contain defs/clipPath/
-  // groups the Path-based render below can't express), and — since we don't
-  // control that markup's own contrast — the team-code label is an
-  // absolutely-positioned <Text> on top rather than baked into the SVG, same
-  // as web does for this path. The boosted gold ring is a second Svg
-  // overlay for the same reason.
+  // rendering below. The team-code label is injected as a real <text>
+  // element INTO the pasted SVG's own viewBox coordinate space (same trick
+  // as web's injectJerseyLabel()) rather than an overlaid RN <Text> — an
+  // overlay would need to independently duplicate the SVG's exact rendered
+  // size to line up, and a first pass that computed its font size in real
+  // pixels (instead of viewBox units) rendered wildly oversized on the
+  // player-pool tile. Living inside the SVG scales for free with whatever
+  // `size` this instance is given, exactly like the color-fill path below.
   if (jerseySvg) {
-    const labelFontSize = fontSize * (size / (isPool ? 44 : 44));
+    const withLabel = injectJerseyLabel(jerseySvg, label, fontSize);
     return (
       <View style={{ width: size, height, position: 'relative' }}>
-        <SvgXml xml={jerseySvg} width={size} height={height} />
+        <SvgXml xml={withLabel} width={size} height={height} />
         {boostActive && (
           <Svg
             width={size}
@@ -110,23 +124,6 @@ export default function Jersey({
             <Path d={BODY_PATH} fill="none" stroke="#FFD23F" strokeWidth={6} strokeLinejoin="round" />
           </Svg>
         )}
-        <Text
-          style={{
-            position: 'absolute',
-            left: 0, right: 0,
-            top: height * 0.58,
-            textAlign: 'center',
-            fontFamily: 'Arial Black, Arial, sans-serif',
-            fontWeight: '900',
-            fontSize: labelFontSize,
-            color: '#fff',
-            textShadowColor: 'rgba(0,0,0,0.7)',
-            textShadowOffset: { width: 0, height: 1 },
-            textShadowRadius: 3,
-          }}
-        >
-          {label}
-        </Text>
       </View>
     );
   }

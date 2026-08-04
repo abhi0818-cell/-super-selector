@@ -9434,19 +9434,44 @@ p31,Sample Player,MI,bat,9.0,false
         '<svg' + attrs.replace(/\s+(width|height)="[^"]*"/gi, '') + '>');
     }
 
-    // Wraps a custom per-team jersey SVG (teams.jersey_svg) with the same
-    // overlaid team-code label used by the color-fill jersey, so both look
-    // consistent wherever a jersey renders. Unlike the color-fill path, the
-    // label isn't baked into the SVG itself — it's an absolutely-positioned
-    // span on top — since the custom markup's own colors/contrast are
-    // unknown ahead of time and we don't want to parse into it.
-    function customJerseyHtml(jerseySvg, label, w, h) {
+    // Injects a team-code <text> element directly into a pasted custom
+    // jersey SVG's own coordinate space (viewBox "0 0 141 179" — same
+    // convention every jersey in this app uses), right before its closing
+    // tag. This is deliberately NOT an HTML overlay on top of the SVG: a
+    // sibling element positioned in real pixels would need to duplicate the
+    // exact display size the SVG is rendered at (44px fixed for the player
+    // pool, but CSS-driven `var(--tsz)` for the pitch view — no fixed
+    // number to compute against there), and get it wrong the moment sizes
+    // differ. Living inside the SVG's own viewBox means the label scales
+    // automatically with whatever size the SVG itself is drawn at, with no
+    // separate math — exactly how the color-fill jerseys already work.
+    // White fill + a dark stroke keeps it legible regardless of the
+    // pasted design's own colors (we don't know that background's
+    // luminance ahead of time, unlike the color-fill path).
+    function injectJerseyLabel(svgMarkup, label, fontSizeViewboxUnits) {
       const txt = (label || '??').toUpperCase().slice(0, 6);
-      const fontSize = Math.round((txt.length <= 2 ? 0.36 : txt.length <= 3 ? 0.30 : txt.length <= 4 ? 0.24 : 0.19) * w * (141/44));
-      return '<div style="position:relative; width:' + w + 'px; height:' + h + 'px; flex-shrink:0;">'
-        + stripSvgFixedSize(jerseySvg).replace('<svg', '<svg width="' + w + '" height="' + h + '" style="display:block;"')
-        + '<span style="position:absolute; left:50%; top:66%; transform:translate(-50%,-50%); font-family:Arial Black,Arial,sans-serif; font-weight:900; font-size:' + fontSize + 'px; color:#fff; text-shadow:0 1px 3px rgba(0,0,0,.7); pointer-events:none;">' + txt + '</span>'
-        + '</div>';
+      const textEl = '<text x="65" y="118" text-anchor="middle" dominant-baseline="middle"'
+        + ' font-family="Arial Black,Arial,sans-serif" font-size="' + fontSizeViewboxUnits + '" font-weight="900"'
+        + ' fill="#fff" stroke="rgba(0,0,0,.65)" stroke-width="2" paint-order="stroke" opacity=".95">' + txt + '</text>';
+      const idx = svgMarkup.lastIndexOf('</svg>');
+      if (idx === -1) return svgMarkup;
+      return svgMarkup.slice(0, idx) + textEl + svgMarkup.slice(idx);
+    }
+
+    // Same length-based breakpoints as the color-fill jerseys, in the same
+    // viewBox units — pool (44px display) uses the larger set, pitch
+    // (CSS-driven, usually ~34px) the smaller set.
+    function jerseyLabelFontSize(label, isPool) {
+      const len = (label || '??').length;
+      return isPool
+        ? (len <= 2 ? 36 : len <= 3 ? 30 : len <= 4 ? 24 : 19)
+        : (len <= 2 ? 26 : len <= 3 ? 22 : len <= 4 ? 18 : 14);
+    }
+
+    function customJerseyHtml(jerseySvg, label, w, h) {
+      const stripped = stripSvgFixedSize(jerseySvg)
+        .replace('<svg', '<svg width="' + w + '" height="' + h + '" style="display:block;flex-shrink:0;"');
+      return injectJerseyLabel(stripped, label, jerseyLabelFontSize(label, true));
     }
 
     function jerseyHtml(c1, c2, label, jerseySvg) {
@@ -12843,15 +12868,24 @@ p31,Sample Player,MI,bat,9.0,false
     // ring is drawn as its own absolutely-positioned SVG outline rather than
     // baked into the custom markup, since we don't control that markup's
     // own stroke).
+    // Unlike customJerseyHtml() (player pool), this deliberately does NOT
+    // set width/height on the returned <svg> — the pitch view sizes jerseys
+    // entirely via CSS (`.pitch-jwrap svg { width:var(--tsz,34px) }`, see
+    // pitchPlayerToken's wrapping div), exactly like the non-custom
+    // pitchJerseyHtml() below. Any fixed pixel size baked in here would be
+    // wrong the moment the tile's CSS size differs (it does — pitch tiles
+    // run ~34px vs. the pool's fixed 44px), which is what caused the
+    // player-pool fix to blow up the pitch view when reused verbatim.
     function customPitchJerseyHtml(jerseySvg, label, boosted) {
-      const w = 44, h = 56;
-      const inner = customJerseyHtml(jerseySvg, label, w, h);
-      if (!boosted) return inner;
+      const stripped = stripSvgFixedSize(jerseySvg)
+        .replace('<svg', '<svg style="display:block; filter:drop-shadow(0 3px 7px rgba(0,0,0,0.65));"');
+      const withLabel = injectJerseyLabel(stripped, label, jerseyLabelFontSize(label, false));
+      if (!boosted) return withLabel;
       const bodyPath = 'M 48.0,8.0 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 L 82.0,8.0 L 90.0,18.0 L 115.0,32.0 L 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 105.0,165.0 L 65.5,166.3 L 25.0,166.0 L 31.5,59.8 L 21.5,78.3 L 3.0,65.0 L 14.0,32.0 L 42.0,16.0 Z';
-      const ring = '<svg viewBox="0 0 141 179" width="' + w + '" height="' + h + '" style="position:absolute; left:0; top:0; pointer-events:none;">'
+      const ring = '<svg viewBox="0 0 141 179" style="position:absolute; left:0; top:0; pointer-events:none;">'
         + '<path d="' + bodyPath + '" fill="none" stroke="#FFD23F" stroke-width="6" stroke-linejoin="round"/>'
         + '</svg>';
-      return inner.replace('</div>', ring + '</div>');
+      return withLabel + ring;
     }
 
     function pitchJerseyHtml(label, c1, c2, boosted, jerseySvg) {
