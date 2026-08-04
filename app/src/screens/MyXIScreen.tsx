@@ -173,6 +173,22 @@ export default function MyXIScreen({ route }: Props) {
   };
 
   const handlePickerDone = () => {
+    // Only advance to the Captain/Vice-Captain + Save summary once the XI is
+    // actually full — previously this always advanced regardless of count,
+    // so a squad that happened to satisfy role-minimums at fewer than 11
+    // (validation.errors stays empty below 11 since role-minimum checks only
+    // run once the squad is full — see validate() in teamStore.ts) could
+    // slip through to Save with 10 players and no captain requirement ever
+    // being enforced. Gate on the actual count here, matching web's pool,
+    // which never lets you finish an XI short of RULES.total in the first
+    // place.
+    if (selected.length < RULES.total) {
+      Alert.alert(
+        'XI not complete',
+        `Pick ${RULES.total - selected.length} more player${RULES.total - selected.length === 1 ? '' : 's'} before continuing — you have ${selected.length} of ${RULES.total}.`
+      );
+      return;
+    }
     setPickerOpen(false);
     setScheduleOpen(false);
     setConfirmOpen(true);
