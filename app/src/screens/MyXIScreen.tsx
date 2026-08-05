@@ -19,7 +19,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
 import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import { RootTabParamList, SelectedPlayer, CaptaincyRole } from '../types';
+import { RootTabParamList, SelectedPlayer, CaptaincyRole, ContestContext } from '../types';
 import { useTeamStore, RULES } from '../store/teamStore';
 import { useAuthStore } from '../store/authStore';
 import { useContestStore } from '../store/contestStore';
@@ -30,6 +30,7 @@ import BudgetBar from '../components/BudgetBar';
 import BoostersBar from '../components/BoostersBar';
 import RoleStats from '../components/RoleStats';
 import ContestPicker from '../components/ContestPicker';
+import NameSquadModal from '../components/NameSquadModal';
 import PlayerPickerScreen from './PlayerPickerScreen';
 import { fontSize, radius, spacing, shadow } from '../theme';
 import {
@@ -102,6 +103,67 @@ export default function MyXIScreen({ route }: Props) {
   }, [user?.id]);
   const { activeContext, setContext }   = useContestStore();
   const { loadBoosters, commitPending, discardPending, selectBooster } = useBoosterStore();
+
+  // ── Name-your-squad prompt ──────────────────────────────────────────────
+  // Shown once, right after picking a contest that the user doesn't already
+  // have a squad in — see NameSquadModal for why this exists (squads used
+  // to be silently created as "My Squad", which is what still shows on the
+  // leaderboard for anyone who joined before this prompt existed).
+  const [pendingContest, setPendingContest] = useState<{ ctx: ContestContext; openPicker: boolean } | null>(null);
+  const [namingSubmitting, setNamingSubmitting] = useState(false);
+  const [namingError, setNamingError] = useState<string | null>(null);
+  const ensureSquad = useTeamStore(s => s.ensureSquad);
+
+  const handleContestSelect = async (ctx: ContestContext, openPickerAfter: boolean) => {
+    if (!user) { setContext(ctx); return; }
+    try {
+      const { data: existing } = await supabase
+        .from('user_squads')
+        .select('id')
+        .eq('contest_id', ctx.contestId)
+        .eq('user_id',    user.id)
+        .maybeSingle();
+
+      if (existing?.id) {
+        setContext(ctx);
+        if (openPickerAfter) openPicker();
+        return;
+      }
+    } catch (e) {
+      console.warn('[MyXIScreen] squad lookup before naming prompt failed:', e);
+      // Fall through to the naming prompt anyway — ensureSquad's own
+      // get-or-create will safely no-op if a squad turns out to exist.
+    }
+    setNamingError(null);
+    setPendingContest({ ctx, openPicker: openPickerAfter });
+  };
+
+  const handleConfirmSquadName = async (name: string) => {
+    if (!pendingContest || !user) return;
+    setNamingSubmitting(true);
+    setNamingError(null);
+    try {
+      const squadId = await ensureSquad(pendingContest.ctx.contestId, name);
+      if (!squadId) {
+        setNamingError("Couldn't save that name — please try again.");
+        return;
+      }
+      // Update the account-level default too, so the next new contest this
+      // user joins starts prefilled with whatever they last used.
+      await supabase.from('profiles').update({ team_name: name }).eq('id', user.id);
+      setTeamName(name);
+
+      setContext(pendingContest.ctx);
+      if (pendingContest.openPicker) openPicker();
+      setPendingContest(null);
+    } catch (e: any) {
+      console.warn('[MyXIScreen] failed to name squad:', e);
+      setNamingError("Couldn't save that name — please try again.");
+    } finally {
+      setNamingSubmitting(false);
+    }
+  };
+
   const {
     players,
     selected,
@@ -749,8 +811,7 @@ export default function MyXIScreen({ route }: Props) {
         {/* No contest selected */}
         {!activeContext && (
           <ContestPicker onSelect={(ctx) => {
-            setContext(ctx);
-            if (route.params?.openPicker) openPicker();
+            handleContestSelect(ctx, !!route.params?.openPicker);
           }} />
         )}
 
@@ -954,6 +1015,17 @@ export default function MyXIScreen({ route }: Props) {
         </Modal>
 
       </SafeAreaView>
+
+      {/* Name-your-squad prompt — shown right after picking a contest that
+          doesn't have a squad yet (see handleContestSelect above) */}
+      <NameSquadModal
+        visible={!!pendingContest}
+        contestName={pendingContest?.ctx.leagueName ?? ''}
+        initialName={teamName ?? ''}
+        submitting={namingSubmitting}
+        error={namingError}
+        onConfirm={handleConfirmSquadName}
+      />
     </View>
   );
 }

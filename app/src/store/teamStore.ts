@@ -41,6 +41,7 @@ const RULES: SelectionRules = {
   maxOverseas: { T20: 4, ODI: 11, TEST: 11 },
   domesticLabel: null,
   domesticIcon: null,
+  showPlayerPhotos: true,
 };
 
 /** Display label for the active tournament's "non-overseas" bucket (e.g. 'US', 'Indian'). */
@@ -51,6 +52,16 @@ function getDomesticLabel(): string {
 /** Icon for the active tournament's domestic-double booster — emoji or data:image/... URI. */
 function getDomesticIcon(): string | null {
   return RULES.domesticIcon ?? null;
+}
+
+/**
+ * Whether Jersey should render player photos for the active tournament
+ * (migration_v46 kill switch). PlayerCard/CricketPitch read this before
+ * passing photoUrl down to Jersey, rather than Jersey checking it itself —
+ * keeps Jersey a dumb renderer of whatever prop it's given.
+ */
+function getShowPlayerPhotos(): boolean {
+  return RULES.showPlayerPhotos;
 }
 
 // ─── Validation ───────────────────────────────────────────────────────────────
@@ -230,6 +241,7 @@ interface TeamState {
   restoreXI:     (players: SelectedPlayer[]) => void;
   loadSavedXI:   (matchId: string, contestId: string, contestType?: 'daily' | 'sl' | 'private') => Promise<string | null>;
   saveXI:        (opts: SaveXIOpts) => Promise<SaveXIResult>;
+  ensureSquad:   (contestId: string, name?: string | null) => Promise<string | null>;
 }
 
 interface SaveXIOpts {
@@ -382,7 +394,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       // Load tournament config: format + overseas cap + non-overseas label
       const { data: tData } = await supabase
         .from('tournaments')
-        .select('format, max_overseas_in_xi, domestic_label, domestic_icon')
+        .select('format, max_overseas_in_xi, domestic_label, domestic_icon, show_player_photos')
         .eq('id', tournamentId)
         .single();
 
@@ -395,6 +407,11 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         }
         RULES.domesticLabel = tData.domestic_label ?? null;
         RULES.domesticIcon  = (tData as { domestic_icon?: string | null }).domestic_icon ?? null;
+        // migration_v46 kill switch — defaults true if the column is somehow
+        // missing (pre-migration) or null, same "on unless explicitly off"
+        // default as the DB column itself.
+        const showPhotos = (tData as { show_player_photos?: boolean | null }).show_player_photos;
+        RULES.showPlayerPhotos = showPhotos !== false;
       }
 
       // Next upcoming match — i.e. the next one to actually pick/edit an XI for.
@@ -746,6 +763,44 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     }
   },
 
+  // Get-or-create the caller's user_squads row for a contest. `name` is only
+  // used on the INSERT path (a squad, once created, keeps whatever name it
+  // was given — this never overwrites an existing squad's name). Falls back
+  // to the literal 'My Squad' if no name is supplied, which only happens for
+  // a save that somehow bypassed the "name your squad" prompt shown right
+  // after picking a contest.
+  ensureSquad: async (contestId, name) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return null;
+
+    const { data: existing } = await supabase
+      .from('user_squads')
+      .select('id')
+      .eq('contest_id', contestId)
+      .eq('user_id',    user.id)
+      .maybeSingle();
+
+    if (existing?.id) return existing.id;
+
+    const { data: newSquad, error: insertErr } = await supabase
+      .from('user_squads')
+      .insert({
+        contest_id:               contestId,
+        user_id:                  user.id,
+        name:                     name?.trim() || 'My Squad',
+        budget_remaining:         RULES.budget,
+        free_transfers_available: 1,
+      })
+      .select('id')
+      .single();
+
+    if (insertErr) {
+      console.warn('[teamStore] ensureSquad insert failed:', insertErr);
+      return null;
+    }
+    return newSquad?.id ?? null;
+  },
+
   // ── 4. Save XI → user_squads + user_match_xi (one row per player) ─────────
   saveXI: async ({ matchId, contestId, contestType }) => {
     const { selected } = get();
@@ -820,34 +875,12 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         matchId = nextMatchId;
       }
 
-      // 3a. Get or create the user's squad for this contest
-      let squadId: string | null = null;
-
-      const { data: existing } = await supabase
-        .from('user_squads')
-        .select('id')
-        .eq('contest_id', contestId)
-        .eq('user_id',    user.id)
-        .maybeSingle();
-
-      if (existing?.id) {
-        squadId = existing.id;
-      } else {
-        const { data: newSquad, error: insertErr } = await supabase
-          .from('user_squads')
-          .insert({
-            contest_id:              contestId,
-            user_id:                 user.id,
-            name:                    'My Squad',
-            budget_remaining:        RULES.budget,
-            free_transfers_available: 1,
-          })
-          .select('id')
-          .single();
-
-        if (insertErr) throw insertErr;
-        squadId = newSquad?.id ?? null;
-      }
+      // 3a. Get or create the user's squad for this contest. Normally this
+      // is already created by the "name your squad" prompt shown right after
+      // picking a contest (see ContestPicker/NameSquadModal flow in
+      // MyXIScreen) — this is just a fallback for any path that reaches
+      // Save XI without going through that prompt (e.g. old cached context).
+      const squadId = await get().ensureSquad(contestId);
 
       if (!squadId) return { error: 'Could not create squad', squadId: null, matchId: null };
 
@@ -975,4 +1008,4 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   },
 }));
 
-export { RULES, getDomesticLabel, getDomesticIcon };
+export { RULES, getDomesticLabel, getDomesticIcon, getShowPlayerPhotos };

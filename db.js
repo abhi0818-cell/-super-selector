@@ -1090,12 +1090,24 @@ export function createDb(cfg = {}) {
               if (existingSquad?.id) {
                 squadId = existingSquad.id;
               } else {
+                // This squad row only exists as a mirror so mobile can read
+                // the daily leaderboard (see comment above) — there's no
+                // "join contest" moment on web to prompt for a name here, so
+                // fall back to whatever team name the user already set at
+                // signup/in Season Long, same field mobile's own "name your
+                // squad" prompt reads from and writes into. Only the literal
+                // default ('My Squad') is used if that's genuinely unset.
+                const { data: profileRow } = await sb
+                  .from('profiles')
+                  .select('team_name')
+                  .eq('id', uid)
+                  .maybeSingle();
                 const { data: newSquad } = await sb
                   .from('user_squads')
                   .insert({
                     contest_id: contestId,
                     user_id: uid,
-                    name: 'My Squad',
+                    name: profileRow?.team_name || 'My Squad',
                     budget_remaining: 100,
                     free_transfers_available: 1,
                   })
