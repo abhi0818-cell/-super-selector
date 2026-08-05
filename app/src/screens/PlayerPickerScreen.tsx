@@ -43,6 +43,7 @@ interface MatchOption {
   awayTeamId:  string;
   status:      string;
   startTime:   string | null;
+  matchType:   string | null;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -67,6 +68,35 @@ const C = {
 // the same set already used by playsAfterMap below, so "upcoming" means the
 // same thing everywhere in this screen.
 const UPCOMING_HIDE_STATUS = new Set(['completed', 'live', 'in_progress']);
+
+// Playoff fixtures often don't have a match number assigned yet (TBD until
+// the league stage settles), so they must sort to the END of the schedule —
+// never coerce a missing number to 0, or they'll jump to the front. Mirrors
+// the `hasNumber`/sort logic used for the web schedule chips.
+const hasMatchNumber = (m: { matchNumber: number | null }) => m.matchNumber != null;
+
+// Among unnumbered matches, fall back to the playoff stage order (set via
+// admin's match_type field) rather than an arbitrary tie — Eliminator/Q1
+// before Q2, Q2 before the Final, etc.
+const STAGE_ORDER: Record<string, number> = {
+  qualifier_1: 1,
+  eliminator:  2,
+  semi_final:  2,
+  qualifier_2: 3,
+  final:       4,
+};
+const stageRank = (m: { matchType: string | null }) => STAGE_ORDER[m.matchType ?? ''] ?? 0;
+
+const byMatchNumberAsc = (
+  a: { matchNumber: number | null; matchType?: string | null },
+  b: { matchNumber: number | null; matchType?: string | null }
+) => {
+  const aN = hasMatchNumber(a), bN = hasMatchNumber(b);
+  if (aN && bN) return (a.matchNumber as number) - (b.matchNumber as number);
+  if (aN) return -1;
+  if (bN) return 1;
+  return stageRank({ matchType: a.matchType ?? null }) - stageRank({ matchType: b.matchType ?? null });
+};
 
 const SCREEN_W  = Dimensions.get('window').width;
 const DRAWER_W  = Math.min(340, Math.round(SCREEN_W * 0.84));
@@ -146,7 +176,7 @@ export default function PlayerPickerScreen({
       try {
         const { data, error } = await supabase
           .from('matches')
-          .select('id, match_number, home_team_id, away_team_id, status, start_time')
+          .select('id, match_number, home_team_id, away_team_id, status, start_time, match_type')
           .eq('tournament_id', tournamentId)
           .neq('status', 'completed')
           .order('match_number', { ascending: true });
@@ -161,6 +191,7 @@ export default function PlayerPickerScreen({
           awayTeamId:  m.away_team_id ?? '',
           status:      m.status ?? 'scheduled',
           startTime:   m.start_time ?? null,
+          matchType:   m.match_type ?? null,
         }));
         setMatches(opts);
       } catch (e) {
@@ -274,7 +305,7 @@ export default function PlayerPickerScreen({
     const activeMN = currentMatch?.matchNumber ?? 0;
     const upcoming = matches
       .filter(m => !UPCOMING_HIDE_STATUS.has(m.status) && (m.matchNumber ?? 0) >= activeMN)
-      .sort((a, b) => (a.matchNumber ?? 0) - (b.matchNumber ?? 0));
+      .sort(byMatchNumberAsc);
     const map = new Map<string, string>();
     const allTeams = new Set(matches.flatMap(m => [m.homeTeamId, m.awayTeamId].filter(Boolean)));
     allTeams.forEach(team => {
@@ -336,7 +367,7 @@ export default function PlayerPickerScreen({
   const upcomingMatches = useMemo(() => {
     return matches
       .filter(m => !UPCOMING_HIDE_STATUS.has(m.status))
-      .sort((a, b) => (a.matchNumber ?? 0) - (b.matchNumber ?? 0));
+      .sort(byMatchNumberAsc);
   }, [matches]);
 
   const scheduleAnim = useRef(new Animated.Value(0)).current;
