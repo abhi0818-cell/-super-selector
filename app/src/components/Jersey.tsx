@@ -82,13 +82,29 @@ function readableTextColor(hex: string): string {
 }
 
 // Head placement, in the same 141x179 viewBox units as BODY_PATH/COLLAR_PATH
-// above (these numbers were tuned visually against real player photos in the
-// PIL-mockup prototyping pass before any of this was written — see the CPL
-// photo-sourcing conversation for the iteration history, e.g. why the head
-// sits slightly overlapping the collar rather than flush above it).
-const HEAD_RADIUS = 24;
+// above. The PIL-mockup prototyping pass (see the CPL photo-sourcing
+// conversation) placed the head floating mostly ABOVE the collar, with its
+// BOTTOM edge anchored near the collar (bottom = collar top + a small
+// overlap for a neck join) regardless of head size — the head grows upward,
+// not downward into the chest. That only works if the SVG has headroom
+// above y=0 to draw into; a first attempt kept the plain 0-based viewBox and
+// just clamped the head to fit inside it, which forced bottom = 2 x radius
+// (pinned to y=0 at the top), so a bigger head pushed the bottom deeper into
+// the chest instead of staying at the collar — the opposite of the intended
+// look, and the reason this got revisited.
+//
+// Headroom is only added to the viewBox when a photo is actually present
+// (see photoViewBoxMinY/photoViewBoxH below) rather than unconditionally,
+// so the far more common plain-jersey case (no photo yet) doesn't carry
+// extra blank space above it.
+const HEAD_RADIUS = 40;
+const HEAD_OVERLAP = 10; // how far the head's bottom edge dips below the collar's top (y=8), for the neck join
 const HEAD_CX = 65.25; // collar's horizontal center — matches the label's x
-const HEAD_CY = 8 - HEAD_RADIUS + 10; // collar top (y=8) minus radius, +10 overlap onto the collar for a neck join
+const HEAD_CY = 8 - HEAD_RADIUS + HEAD_OVERLAP;
+const HEAD_TOP = HEAD_CY - HEAD_RADIUS; // negative — how far above the jersey's own y=0 the head extends
+const PHOTO_HEADROOM = Math.ceil(-HEAD_TOP) + 4; // +4px margin so the circle's antialiased edge isn't flush against the viewport edge
+const PHOTO_VIEWBOX_MIN_Y = -PHOTO_HEADROOM;
+const PHOTO_VIEWBOX_H = VIEWBOX_H + PHOTO_HEADROOM;
 
 export default function Jersey({
   code,
@@ -120,7 +136,12 @@ export default function Jersey({
   const boostActive = !isPool && boosted;
   const strokeColor = boostActive ? '#FFD23F' : 'rgba(17,17,17,0.2)';
   const strokeWidth = boostActive ? 6 : 1.5;
-  const height      = size * (VIEWBOX_H / VIEWBOX_W);
+  // Extra vertical space for the floating head only when there's actually a
+  // photo to float — see PHOTO_HEADROOM above.
+  const viewBoxMinY  = photoUrl ? PHOTO_VIEWBOX_MIN_Y : 0;
+  const viewBoxH     = photoUrl ? PHOTO_VIEWBOX_H : VIEWBOX_H;
+  const viewBox      = `0 ${viewBoxMinY} ${VIEWBOX_W} ${viewBoxH}`;
+  const height       = size * (viewBoxH / VIEWBOX_W);
   const rawClipId   = useId();
   // useId() can return characters (colons) that are invalid in an SVG/CSS id
   // — strip them so url(#...) references reliably resolve on every platform
@@ -140,7 +161,7 @@ export default function Jersey({
         </ClipPath>
       </Defs>
       <SvgImage
-        href={{ uri: photoUrl }}
+        href={photoUrl}
         x={HEAD_CX - HEAD_RADIUS}
         y={HEAD_CY - HEAD_RADIUS}
         width={HEAD_RADIUS * 2}
@@ -162,14 +183,24 @@ export default function Jersey({
   // `size` this instance is given, exactly like the color-fill path below.
   if (jerseySvg) {
     const withLabel = injectJerseyLabel(jerseySvg, label, fontSize);
+    // The custom SVG (SvgXml) has its own internal viewBox we don't control
+    // and can't add headroom to directly — so instead of stretching it into
+    // a taller box (which would just letterbox/distort it), it keeps
+    // rendering at its normal tight size, pushed DOWN within the now-taller
+    // wrapper by exactly the headroom amount. The overlay Svg (photo + boost
+    // ring) spans the FULL taller wrapper using the same photo viewBox as
+    // the color-fill branch below, so y=0..179 in that overlay's coordinate
+    // space lines up with the pushed-down base SvgXml underneath it.
+    const baseHeight = size * (VIEWBOX_H / VIEWBOX_W);
+    const headroomPx = height - baseHeight;
     return (
       <View style={{ width: size, height, position: 'relative' }}>
-        <SvgXml xml={withLabel} width={size} height={height} />
+        <SvgXml xml={withLabel} width={size} height={baseHeight} style={{ position: 'absolute', left: 0, top: headroomPx }} />
         {photoUrl && (
           <Svg
             width={size}
             height={height}
-            viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
+            viewBox={viewBox}
             style={{ position: 'absolute', left: 0, top: 0 }}
           >
             {photoLayer}
@@ -179,7 +210,7 @@ export default function Jersey({
           <Svg
             width={size}
             height={height}
-            viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
+            viewBox={viewBox}
             style={{ position: 'absolute', left: 0, top: 0 }}
           >
             <Path d={BODY_PATH} fill="none" stroke="#FFD23F" strokeWidth={6} strokeLinejoin="round" />
@@ -190,7 +221,7 @@ export default function Jersey({
   }
 
   return (
-    <Svg width={size} height={height} viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}>
+    <Svg width={size} height={height} viewBox={viewBox}>
       <Path
         d={BODY_PATH}
         fill={bodyColor}

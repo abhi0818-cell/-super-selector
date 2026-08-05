@@ -391,7 +391,13 @@ const styles = StyleSheet.create({
     flex:              1,
     backgroundColor:   WRAP_BG,
     paddingHorizontal: 6,
-    paddingVertical:   4,
+    // Extra top clearance (vs. the plain paddingVertical:4 this used to be)
+    // so the WK row — the first/top RoleZone — has room for the larger
+    // player-photo head (see Jersey.tsx HEAD_RADIUS) without poking above
+    // the field's rounded/oval top edge. Bottom stays tight since BOWL's
+    // row doesn't have the same edge-of-oval clearance problem.
+    paddingTop:        28,
+    paddingBottom:     4,
     overflow:          'hidden',
   },
 
