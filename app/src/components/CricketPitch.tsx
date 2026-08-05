@@ -190,7 +190,14 @@ function PlayerTile({ player, onSetCaptaincy, onRemove, onTilePress, readOnly, b
         />
       </View>
 
-      <Text style={[styles.tileName, { fontSize: nameFontSize }]} numberOfLines={1}>{shortName}</Text>
+      <Text
+        style={[styles.tileName, { fontSize: nameFontSize }]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.6}
+      >
+        {shortName}
+      </Text>
     </Pressable>
   );
 }
