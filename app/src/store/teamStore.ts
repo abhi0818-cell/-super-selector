@@ -492,7 +492,8 @@ export const useTeamStore = create<TeamState>((set, get) => ({
             id,
             name,
             role,
-            is_overseas
+            is_overseas,
+            photo_url
           ),
           teams (
             id,
@@ -518,6 +519,13 @@ export const useTeamStore = create<TeamState>((set, get) => ({
           teamColor:  tp.teams?.color ?? null,
           teamColor2: tp.teams?.color2 ?? null,
           teamJerseySvg: tp.teams?.jersey_svg ?? null,
+          // Gated here, once, rather than in every Jersey call site — by the
+          // time loadPlayers() runs, loadTournamentContext() has already set
+          // RULES.showPlayerPhotos from the active tournament (it calls
+          // loadPlayers() as its last step, see below). So when the kill
+          // switch is off, player.photoUrl is simply null everywhere in the
+          // app, and PlayerCard/CricketPitch don't need their own check.
+          photoUrl: RULES.showPlayerPhotos ? (tp.players.photo_url ?? null) : null,
         }));
         set({ players });
       }

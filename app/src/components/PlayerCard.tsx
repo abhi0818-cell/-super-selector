@@ -54,6 +54,7 @@ export default function PlayerCard({ player, selected, disabled, onPress, recent
         color1={player.teamColor}
         color2={player.teamColor2}
         jerseySvg={player.teamJerseySvg}
+        photoUrl={player.photoUrl}
         size={34}
         variant="pool"
       />

@@ -174,6 +174,7 @@ function PlayerTile({ player, onSetCaptaincy, onRemove, onTilePress, readOnly, b
           color1={player.teamColor}
           color2={player.teamColor2}
           jerseySvg={player.teamJerseySvg}
+          photoUrl={player.photoUrl}
           size={tsz}
           variant="pitch"
           boosted={decor.boosted}

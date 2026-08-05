@@ -110,6 +110,7 @@
       $('#adminDangerZoneView').style.display = (tab === 'dangerzone') ? 'block' : 'none';
       $('#adminReferenceView').style.display  = (tab === 'reference')  ? 'block' : 'none';
       $('#adminCsvView').style.display        = 'none';
+      $('#adminPhotoCsvView').style.display   = 'none';
       $('#matchesCsvView').style.display      = 'none';
       // Toolbar (search + import) is only useful for players
       document.querySelector('.admin-toolbar').style.display = (tab === 'players') ? 'flex' : 'none';
@@ -4221,6 +4222,166 @@
       } catch (e) { toast('Import failed: ' + e.message, 5000); }
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Player photos — pastes the CSV produced by import_player_photos.py
+    // (name, cricinfo_id, team, photo_url, status) and writes photo_url
+    // onto the matching global players row. Separate flow from the roster
+    // CSV above: this never creates new players, only matches by name
+    // against the ones already imported, and classifies each row as
+    // new / update / unmatched so overwriting an existing photo is visible
+    // before you commit to it, not a silent side effect.
+    // ─────────────────────────────────────────────────────────────────────
+
+    function openPhotoCsvView() {
+      $('#adminTableView').style.display = 'none';
+      $('#adminPhotoCsvView').style.display = 'block';
+    }
+    function closePhotoCsvView() {
+      $('#adminPhotoCsvView').style.display = 'none';
+      $('#adminTableView').style.display = 'block';
+      $('#photoCsvText').value = '';
+      $('#photoCsvFile').value = '';
+      $('#photoCsvPreview').style.display = 'none';
+      $('#photoCsvPreview').innerHTML = '';
+      $('#photoCsvSummary').textContent = '';
+      $('#photoCsvImportBtn').disabled = true;
+      $('#photoCsvImportBtn').textContent = 'Import';
+      $('#photoCsvImportBtn')._rows = null;
+    }
+
+    // Same normalization buildCsvRows() uses for the roster CSV's name
+    // collision check — keyed on normalized name so "Ali Khan" vs
+    // " ali  khan " still matches.
+    const normPlayerName = s => s.trim().toLowerCase().replace(/\s+/g, ' ');
+
+    function buildPhotoCsvRows(rawRows) {
+      if (!rawRows.length) return { rows: [], errors: ['Empty CSV — paste some data first.'] };
+      const header = rawRows[0].map(s => s.toLowerCase());
+      const required = ['name', 'photo_url'];
+      const missing = required.filter(c => !header.includes(c));
+      if (missing.length) return { rows: [], errors: [`CSV header is missing: ${missing.join(', ')}`] };
+
+      const idx = {
+        name:      header.indexOf('name'),
+        photo_url: header.indexOf('photo_url'),
+        status:    header.indexOf('status'),
+      };
+
+      const byName = {};
+      A.PLAYERS.forEach(p => { byName[normPlayerName(p.name)] = p; });
+
+      const out = [];
+      for (let i = 1; i < rawRows.length; i++) {
+        const r = rawRows[i];
+        const get = k => idx[k] >= 0 ? (r[idx[k]] ?? '') : '';
+        const name = get('name').trim();
+        const photoUrl = get('photo_url').trim();
+        const pipelineStatus = get('status').trim();
+
+        const row = { line: i + 1, name, photoUrl, errors: [] };
+
+        if (!name) row.errors.push('name is required');
+        if (!photoUrl) row.errors.push('photo_url is required');
+        if (pipelineStatus && !pipelineStatus.startsWith('ok')) {
+          row.errors.push(`pipeline reported "${pipelineStatus}" for this row, not ok`);
+        }
+
+        const match = name ? byName[normPlayerName(name)] : null;
+        if (!match) {
+          row.matchState = 'unmatched';
+          if (name) row.errors.push(`no player named "${name}" found — import their roster CSV row first`);
+        } else {
+          row.playerId = match.id;
+          row.matchState = match.photoUrl ? 'update' : 'new';
+        }
+
+        out.push(row);
+      }
+      return { rows: out, errors: [] };
+    }
+
+    function renderPhotoCsvPreview(rows, errors) {
+      const preview = $('#photoCsvPreview');
+      const summary = $('#photoCsvSummary');
+      const importBtn = $('#photoCsvImportBtn');
+      if (errors.length) {
+        preview.style.display = 'block';
+        preview.innerHTML = `<table><tbody>${errors.map(e => `<tr class="row-err"><td>!</td><td class="err-msg">${escapeHtml(e)}</td></tr>`).join('')}</tbody></table>`;
+        summary.textContent = '';
+        importBtn.disabled = true; importBtn.textContent = 'Import';
+        return;
+      }
+
+      const ok  = rows.filter(r => r.errors.length === 0);
+      const bad = rows.filter(r => r.errors.length  >  0);
+      const newCount    = ok.filter(r => r.matchState === 'new').length;
+      const updateCount = ok.filter(r => r.matchState === 'update').length;
+
+      const stateLabel = { new: 'New', update: 'Update', unmatched: 'Unmatched' };
+      const rowsHtml = rows.map(r => {
+        const status = r.errors.length ? '✗' : '✓';
+        const cls    = r.errors.length ? 'row-err' : 'row-ok';
+        const errs   = r.errors.length ? `<div class="err-msg">${escapeHtml(r.errors.join('; '))}</div>` : '';
+        return `<tr class="${cls}">
+          <td>${status}</td>
+          <td>${escapeHtml(r.name)}${errs}</td>
+          <td>${stateLabel[r.matchState] || ''}</td>
+        </tr>`;
+      }).join('');
+
+      preview.style.display = 'block';
+      preview.innerHTML = `
+        <table>
+          <thead><tr><th></th><th>Name</th><th>Status</th></tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      `;
+      summary.textContent = `${newCount} new · ${updateCount} update · ${bad.length} unmatched/invalid · ${rows.length} total`;
+      importBtn.disabled = ok.length === 0;
+      importBtn.textContent = `Import ${ok.length} photo${ok.length===1?'':'s'}`;
+      importBtn._rows = ok;
+    }
+
+    async function photoCsvPreviewHandler() {
+      const text = $('#photoCsvText').value;
+      if (!text.trim()) { toast('Paste the pipeline CSV output first.'); return; }
+      const raw = parseCSV(text);
+      const { rows, errors } = buildPhotoCsvRows(raw);
+      renderPhotoCsvPreview(rows, errors);
+    }
+
+    async function photoCsvFileHandler(e) {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      $('#photoCsvText').value = text;
+      photoCsvPreviewHandler();
+    }
+
+    async function photoCsvImportHandler() {
+      const rows = $('#photoCsvImportBtn')._rows;
+      if (!rows || rows.length === 0) { toast('Nothing valid to import.'); return; }
+      try {
+        if (state.db) {
+          const n = await state.db.bulkUpsertPlayerPhotos(
+            rows.map(r => ({ id: r.playerId, photoUrl: r.photoUrl }))
+          );
+          A.PLAYERS = state.activeTournamentId
+            ? await state.db.getPlayersForTournament(state.activeTournamentId)
+            : await state.db.getPlayers();
+          toast(`Imported ${n} photo${n===1?'':'s'}.`);
+        } else {
+          rows.forEach(r => {
+            const idx = A.PLAYERS.findIndex(p => p.id === r.playerId);
+            if (idx >= 0) A.PLAYERS[idx] = { ...A.PLAYERS[idx], photoUrl: r.photoUrl };
+          });
+          toast(`Imported ${rows.length} (local mode — not persisted).`);
+        }
+        closePhotoCsvView();
+        renderAdmin(); renderPool(); render();
+      } catch (e) { toast('Photo import failed: ' + e.message, 5000); }
+    }
+
 
     // ─── RULES EDITOR ────────────────────────────────────────────────────────
 
@@ -4605,6 +4766,11 @@
     csvFileHandler,
     csvImportHandler,
     downloadCSVTemplate,
+    openPhotoCsvView,
+    closePhotoCsvView,
+    photoCsvPreviewHandler,
+    photoCsvFileHandler,
+    photoCsvImportHandler,
     openMatchesCsvView,
     closeMatchesCsvView,
     matchesCsvPreviewHandler,

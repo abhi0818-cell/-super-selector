@@ -437,7 +437,7 @@ export function createDb(cfg = {}) {
       const sb = await getClient();
       const { data, error } = await sb
         .from('tournament_players')
-        .select('team_id, credit_value, is_active, is_overseas, players(id, name, role)')
+        .select('team_id, credit_value, is_active, is_overseas, players(id, name, role, photo_url)')
         .eq('tournament_id', tournamentId)
         .order('player_id');
       if (error) throw error;
@@ -447,6 +447,7 @@ export function createDb(cfg = {}) {
         name         : tp.players.name,
         team         : tp.team_id,                  // tournament-specific team
         role         : tp.players.role,
+        photoUrl     : tp.players.photo_url ?? null,
         credits      : Number(tp.credit_value),     // tournament-specific credits
         overseas     : !!tp.is_overseas,             // tournament-specific overseas designation
         active       : !!tp.is_active,
@@ -557,6 +558,7 @@ export function createDb(cfg = {}) {
         role: p.role,
         credits: Number(p.credits),
         overseas: !!p.is_overseas,
+        photoUrl: p.photo_url ?? null,
       }));
     },
 
@@ -777,6 +779,60 @@ export function createDb(cfg = {}) {
         if (error) throw new Error(`Update failed on existing-player rows ${i+1}–${i+slice.length}: ${error.message}`);
         written += Array.isArray(data) ? data.length : slice.length;
       }
+      return written;
+    },
+
+    /**
+     * Bulk write photo_url onto existing global players, by id.
+     *
+     * photo_url is a person-level fact (like name), not tournament-scoped
+     * (see migration_v45), so this always writes to the global players
+     * table regardless of which tournament is active — unlike
+     * bulkUpsertPlayers, there's no tournament_players counterpart here.
+     *
+     * Update-only: unlike bulkUpsertPlayers this never inserts new player
+     * rows. Matching an id to a real player is the caller's job (see
+     * admin.js buildPhotoCsvRows, which matches the pipeline's output CSV
+     * against A.PLAYERS by normalised name before calling this) — a photo
+     * with no matching player is surfaced to the admin as "unmatched"
+     * rather than silently creating a placeholder player row.
+     *
+     * Splits into 50-row chunks for the same reason bulkUpsertPlayers does.
+     *
+     * @param {Array<{id:string, photoUrl:string}>} rows
+     * @returns {Promise<number>} how many rows the database accepted
+     */
+    async bulkUpsertPlayerPhotos(rows) {
+      if (!Array.isArray(rows) || rows.length === 0) return 0;
+      const sb = await getClient();
+
+      const normalised = rows.map(r => {
+        if (!r.id || !r.photoUrl) throw new Error(`bulkUpsertPlayerPhotos: row missing id/photoUrl → ${JSON.stringify(r)}`);
+        return { id: r.id, photo_url: r.photoUrl };
+      });
+
+      // Plain per-row UPDATE, not upsert -- these rows always already exist
+      // (matched by admin.js before this is called), and a real upsert()
+      // would fail on Postgres's NOT NULL validation for columns like
+      // name/role/team_id that we're deliberately not supplying here, even
+      // though the ON CONFLICT branch would never actually insert.
+      // Chunked with a small concurrency cap so we don't fire 100+ requests
+      // at once, but still faster than one-at-a-time.
+      const CONCURRENCY = 8;
+      let written = 0;
+      let firstError = null;
+      for (let i = 0; i < normalised.length; i += CONCURRENCY) {
+        const slice = normalised.slice(i, i + CONCURRENCY);
+        const results = await Promise.all(slice.map(async r => {
+          const { error } = await sb.from('players').update({ photo_url: r.photo_url }).eq('id', r.id);
+          return { id: r.id, error };
+        }));
+        for (const res of results) {
+          if (res.error && !firstError) firstError = new Error(`Photo update failed for player ${res.id}: ${res.error.message}`);
+          if (!res.error) written++;
+        }
+      }
+      if (firstError) throw firstError;
       return written;
     },
 
@@ -1634,6 +1690,23 @@ export function createDb(cfg = {}) {
       const { data, error } = await sb
         .from('tournaments')
         .update({ dot_ball_enabled: !!enabled })
+        .eq('id', id)
+        .select('id');
+      if (error) throw error;
+      if (!data || data.length === 0) throw new Error('No rows updated — check RLS policies.');
+    },
+
+    /**
+     * Toggle the player-photos kill switch for a tournament (migration_v46).
+     * OFF makes Jersey ignore photoUrl entirely and always render the plain
+     * jersey icon, regardless of whether players.photo_url has data — see
+     * migration_v46_tournament_show_player_photos.sql.
+     */
+    async updateTournamentShowPlayerPhotos(id, enabled) {
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('tournaments')
+        .update({ show_player_photos: !!enabled })
         .eq('id', id)
         .select('id');
       if (error) throw error;

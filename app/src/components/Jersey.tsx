@@ -17,9 +17,9 @@
  *               Mirrors pitchJerseyHtml().
  */
 
-import React from 'react';
+import React, { useId } from 'react';
 import { View } from 'react-native';
-import Svg, { Path, Text as SvgText, SvgXml } from 'react-native-svg';
+import Svg, { Path, Text as SvgText, SvgXml, Image as SvgImage, ClipPath, Circle, Defs } from 'react-native-svg';
 
 export interface JerseyProps {
   code:      string | null | undefined; // team short code, e.g. 'CSK' or 'AUS-W'
@@ -29,6 +29,18 @@ export interface JerseyProps {
   size?:     number;                    // rendered width in px; height follows the 141:179 aspect ratio
   variant?: 'pool' | 'pitch';
   boosted?: boolean;                   // 'pitch' only — active booster on this tile
+  // Background-removed, head-and-neck-cropped player photo (players.photo_url —
+  // see migration_v45). Jersey itself doesn't check the show_player_photos
+  // kill switch (migration_v46) — teamStore.loadPlayers() already nulls this
+  // out on every Player object when the switch is off (gated once, upstream,
+  // rather than in every Jersey call site), so callers can just pass
+  // player.photoUrl straight through.
+  // When absent, falls back to today's plain jersey (no head) rather than a
+  // generic silhouette — a real "no-photo" placeholder design was discussed
+  // but never finalized (see the CPL photo-sourcing conversation), so v1
+  // deliberately doesn't ship one to avoid reusing one real player's face as
+  // a stand-in for everyone without a photo.
+  photoUrl?: string | null;
 }
 
 const VIEWBOX_W = 141;
@@ -69,6 +81,15 @@ function readableTextColor(hex: string): string {
   return (r * 299 + g * 587 + b * 114) / 1000 > 145 ? '#111111' : '#ffffff';
 }
 
+// Head placement, in the same 141x179 viewBox units as BODY_PATH/COLLAR_PATH
+// above (these numbers were tuned visually against real player photos in the
+// PIL-mockup prototyping pass before any of this was written — see the CPL
+// photo-sourcing conversation for the iteration history, e.g. why the head
+// sits slightly overlapping the collar rather than flush above it).
+const HEAD_RADIUS = 24;
+const HEAD_CX = 65.25; // collar's horizontal center — matches the label's x
+const HEAD_CY = 8 - HEAD_RADIUS + 10; // collar top (y=8) minus radius, +10 overlap onto the collar for a neck join
+
 export default function Jersey({
   code,
   color1,
@@ -77,6 +98,7 @@ export default function Jersey({
   size = 44,
   variant = 'pool',
   boosted = false,
+  photoUrl,
 }: JerseyProps) {
   const bodyColor   = color1 || '#888888';
   const sleeveColor = color2 || '#333333';
@@ -99,6 +121,35 @@ export default function Jersey({
   const strokeColor = boostActive ? '#FFD23F' : 'rgba(17,17,17,0.2)';
   const strokeWidth = boostActive ? 6 : 1.5;
   const height      = size * (VIEWBOX_H / VIEWBOX_W);
+  const rawClipId   = useId();
+  // useId() can return characters (colons) that are invalid in an SVG/CSS id
+  // — strip them so url(#...) references reliably resolve on every platform
+  // (this bit RN Web specifically; native react-native-svg is more lenient).
+  const clipId      = `jerseyHeadClip-${rawClipId.replace(/[^a-zA-Z0-9]/g, '')}`;
+
+  // The circular-clipped photo, layered ON TOP of the collar (real photo
+  // sits fully in front of the jersey, unlike a silhouette placeholder,
+  // which would sit behind it — see the CPL photo-sourcing conversation for
+  // why photo vs. silhouette are layered in opposite orders). Shared between
+  // both render branches below since head placement is identical either way.
+  const photoLayer = photoUrl ? (
+    <>
+      <Defs>
+        <ClipPath id={clipId}>
+          <Circle cx={HEAD_CX} cy={HEAD_CY} r={HEAD_RADIUS} />
+        </ClipPath>
+      </Defs>
+      <SvgImage
+        href={{ uri: photoUrl }}
+        x={HEAD_CX - HEAD_RADIUS}
+        y={HEAD_CY - HEAD_RADIUS}
+        width={HEAD_RADIUS * 2}
+        height={HEAD_RADIUS * 2}
+        preserveAspectRatio="xMidYMid slice"
+        clipPath={`url(#${clipId})`}
+      />
+    </>
+  ) : null;
 
   // Custom per-team design (teams.jersey_svg) takes over from the color-fill
   // rendering below. The team-code label is injected as a real <text>
@@ -114,6 +165,16 @@ export default function Jersey({
     return (
       <View style={{ width: size, height, position: 'relative' }}>
         <SvgXml xml={withLabel} width={size} height={height} />
+        {photoUrl && (
+          <Svg
+            width={size}
+            height={height}
+            viewBox={`0 0 ${VIEWBOX_W} ${VIEWBOX_H}`}
+            style={{ position: 'absolute', left: 0, top: 0 }}
+          >
+            {photoLayer}
+          </Svg>
+        )}
         {boostActive && (
           <Svg
             width={size}
@@ -147,6 +208,7 @@ export default function Jersey({
         strokeWidth={strokeWidth}
         strokeLinejoin="round"
       />
+      {photoLayer}
       <SvgText
         x={65}
         y={118}

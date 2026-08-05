@@ -1870,6 +1870,7 @@
         <input id="adminSearch" class="admin-search-inp" type="text" placeholder="Search by name or team…" />
         <span style="font-size:11px; color:var(--muted); white-space:nowrap;">Populate roster:</span>
         <button id="csvOpenBtn" title="Import players from a CSV file">Import CSV</button>
+        <button id="photoCsvOpenBtn" title="Import player photo URLs from the import_player_photos.py output CSV">Import Photos</button>
         <button id="clonePlayersBtn" title="Copy player pool (team assignments + credits) from another tournament into the active tournament">Clone from another tournament…</button>
         <select id="cloneSourcePicker" style="font-size:12px; padding:4px 8px; display:none;">
           <option value="">— pick source tournament —</option>
@@ -2103,6 +2104,25 @@ p31,Sample Player,MI,bat,9.0,false
           <span class="csv-summary" id="csvSummary"></span>
         </div>
       </div>
+      <div class="modal-body csv-panel" id="adminPhotoCsvView" style="display:none;">
+        <div class="row">
+          <strong style="font-size:13px;">Paste the CSV from <code>import_player_photos.py</code></strong>
+          <span class="hint">Expected header: <code>name,cricinfo_id,team,photo_url,status</code></span>
+        </div>
+        <textarea id="photoCsvText" placeholder="name,cricinfo_id,team,photo_url,status
+Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png,ok"></textarea>
+        <div class="row">
+          <input id="photoCsvFile" type="file" accept=".csv,text/csv" style="font-size:12px;" />
+          <button id="photoCsvPreviewBtn">Parse & preview</button>
+          <span class="hint">Matches rows to existing players by name. New = player has no photo yet. Update = overwrites an existing photo. Unmatched = import their roster CSV row first.</span>
+        </div>
+        <div id="photoCsvPreview" class="csv-preview" style="display:none;"></div>
+        <div class="csv-actions">
+          <button id="photoCsvImportBtn" class="primary" disabled>Import</button>
+          <button id="photoCsvCancelBtn">Back to table</button>
+          <span class="csv-summary" id="photoCsvSummary"></span>
+        </div>
+      </div>
       <!-- Scoring tab — display only -->
       <div class="modal-body" id="adminScoringView" style="display:none; padding:16px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
@@ -2243,6 +2263,7 @@ p31,Sample Player,MI,bat,9.0,false
             <div><strong>Non-overseas label</strong><div class="ref-d">Cosmetic only — sets <code>tournaments.domestic_label</code>, shown on the pool's filter chip. Doesn't touch overseas flags or the cap itself.</div></div>
             <div><strong>Scraper toggle</strong><div class="ref-d">Sets <code>tournaments.scraper_enabled</code> — controls whether the server-side scraper cron runs for this tournament's matches.</div></div>
             <div><strong>Dot ball scoring toggle</strong><div class="ref-d">Sets <code>tournaments.dot_ball_enabled</code>. If active tournament, the scoring rules grid re-renders immediately to show/hide the dot-ball row.</div><div class="ref-g">⚠️ OFF is enforced server-side too — dot-ball scoring is forced to 0 at actual scoring time regardless of any saved weight, not just hidden in the UI.</div></div>
+            <div><strong>Player photos toggle</strong><div class="ref-d">Sets <code>tournaments.show_player_photos</code>. Kill switch for the jersey photo feature (migration_v45/v46) — OFF makes the app always render the plain jersey icon, regardless of whether players.photo_url is populated. Defaults ON.</div></div>
             <div><strong>CricAPI Series ID</strong><div class="ref-d">Sets <code>tournaments.cricapi_series_id</code>. If active tournament, also mirrors into Schedule tab's sync field.</div></div>
             <div><strong>+ New Tournament</strong><div class="ref-d">Only name is required. Creates the row and switches to it immediately as the new active tournament — no confirmation.</div><div class="ref-g">⚠️ No duplicate-name check anywhere — creating the same name twice silently succeeds as two separate rows.</div></div>
             <div><strong>Scoring Rules — Save</strong><div class="ref-d">Merges the active format tab's rules into <code>tournaments.scoring_rules</code> (JSONB) — other formats untouched. No confirmation.</div><div class="ref-g">⚠️ The "locked once started" rule is enforced client-side only (checks if any match is in_progress/completed) — there's no equivalent server-side check, so a direct API call could still change rules after a tournament has started.</div></div>
@@ -5011,6 +5032,19 @@ p31,Sample Player,MI,bat,9.0,false
                 </span>
               </label>
             </div>
+            <!-- Player photos kill switch row -->
+            <div style="display:flex; align-items:center; gap:8px; margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
+              <span style="font-size:11px; color:var(--muted); white-space:nowrap;">🖼️ Player photos</span>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer; user-select:none;">
+                <input type="checkbox" class="photos-toggle" data-tid="${t.id}"
+                       ${t.show_player_photos !== false ? 'checked' : ''}
+                       style="width:16px; height:16px; cursor:pointer;" />
+                <span class="photos-toggle-label" data-tid="${t.id}"
+                      style="font-size:11px; font-weight:600; color:${t.show_player_photos !== false ? 'var(--accent)' : 'var(--muted)'};">
+                  ${t.show_player_photos !== false ? 'ON — jersey shows player photo when available' : 'OFF — always shows the plain jersey icon'}
+                </span>
+              </label>
+            </div>
             <!-- Series ID row -->
             <div style="display:flex; align-items:center; gap:6px; margin-top:8px; padding-top:8px; border-top:1px dashed var(--border);">
               <span style="font-size:11px; color:var(--muted); white-space:nowrap;">CricAPI Series ID</span>
@@ -5197,6 +5231,29 @@ p31,Sample Player,MI,bat,9.0,false
               window.__admin?.renderRulesEditor?.();
             }
             toast(enabled ? '🎯 Dot ball scoring enabled for this tournament.' : 'Dot ball scoring disabled.');
+          } catch (err) {
+            toast('Failed: ' + err.message);
+            e.target.checked = !enabled; // revert
+          }
+        });
+      });
+      // Wire player photos kill switch toggles
+      list.querySelectorAll('.photos-toggle').forEach(cb => {
+        cb.addEventListener('change', async e => {
+          const tid     = e.target.dataset.tid;
+          const enabled = e.target.checked;
+          const label   = list.querySelector(`.photos-toggle-label[data-tid="${tid}"]`);
+          try {
+            await state.db.updateTournamentShowPlayerPhotos(tid, enabled);
+            const t = state.tournaments.find(x => x.id === tid);
+            if (t) t.show_player_photos = enabled;
+            if (label) {
+              label.textContent = enabled
+                ? 'ON — jersey shows player photo when available'
+                : 'OFF — always shows the plain jersey icon';
+              label.style.color = enabled ? 'var(--accent)' : 'var(--muted)';
+            }
+            toast(enabled ? '🖼️ Player photos enabled for this tournament.' : 'Player photos disabled — plain jersey everywhere.');
           } catch (err) {
             toast('Failed: ' + err.message);
             e.target.checked = !enabled; // revert
@@ -12494,6 +12551,11 @@ p31,Sample Player,MI,bat,9.0,false
     $('#csvFile').addEventListener('change', e => window.__admin?.csvFileHandler?.(e));
     $('#csvImportBtn').addEventListener('click', () => window.__admin?.csvImportHandler?.());
     $('#csvTemplateBtn').addEventListener('click', () => window.__admin?.downloadCSVTemplate?.());
+    $('#photoCsvOpenBtn').addEventListener('click', () => window.__admin?.openPhotoCsvView?.());
+    $('#photoCsvCancelBtn').addEventListener('click', () => window.__admin?.closePhotoCsvView?.());
+    $('#photoCsvPreviewBtn').addEventListener('click', () => window.__admin?.photoCsvPreviewHandler?.());
+    $('#photoCsvFile').addEventListener('change', e => window.__admin?.photoCsvFileHandler?.(e));
+    $('#photoCsvImportBtn').addEventListener('click', () => window.__admin?.photoCsvImportHandler?.());
     $('#matchesCsvOpenBtn').addEventListener('click', () => window.__admin?.openMatchesCsvView?.());
     $('#matchesCsvCancelBtn').addEventListener('click', () => window.__admin?.closeMatchesCsvView?.());
     $('#matchesCsvPreviewBtn').addEventListener('click', () => window.__admin?.matchesCsvPreviewHandler?.());

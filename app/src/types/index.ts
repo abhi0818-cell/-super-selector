@@ -14,6 +14,7 @@ export interface Player {
   teamColor: string | null;   // hex color from admin teams table, e.g. '#fbbf24'
   teamColor2: string | null;  // secondary/sleeve hex color from admin teams table (teams.color2)
   teamJerseySvg?: string | null; // optional custom jersey SVG markup (teams.jersey_svg) — takes over from teamColor/teamColor2 when set
+  photoUrl?: string | null; // players.photo_url (migration_v45) — background-removed, head-and-neck-cropped photo
 }
 
 export interface SelectedPlayer extends Player {
@@ -87,6 +88,11 @@ export interface SelectionRules {
   // Icon for the domestic-double booster — emoji or data:image/... URI (see
   // BoosterIcon.tsx). Cosmetic only, same as domesticLabel.
   domesticIcon: string | null;
+  // Kill switch for player photos on the jersey icon (migration_v46). false
+  // means Jersey always renders the plain icon, even when a player has a
+  // photoUrl. Defaults true so photos show once imported, unless explicitly
+  // turned off per tournament from Admin.
+  showPlayerPhotos: boolean;
 }
 
 export interface ValidationResult {
