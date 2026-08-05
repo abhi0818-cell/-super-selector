@@ -4838,6 +4838,12 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
           if (pls.length) PLAYERS = pls;
           playersSource = pls.length ? 'global' : 'none';
         }
+        // Kill switch (tournaments.show_player_photos) — gated once here so
+        // every jerseyHtml()/pitchJerseyHtml() call site downstream can just
+        // pass p.photoUrl straight through without its own check.
+        if (!showPlayerPhotosEnabled()) {
+          PLAYERS.forEach(p => { p.photoUrl = null; });
+        }
         refreshAllPlayerIds(); // player id check uses window.__admin?.nextPlayerId if needed // fire-and-forget: keeps nextPlayerId()'s global uniqueness check current
         refreshRecentForm(); // fire-and-forget: re-keys on tournament id, refetches form strips
       } catch (e) { console.warn('Player load failed, keeping current pool.', e); }
@@ -9515,6 +9521,56 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       return svgMarkup.slice(0, idx) + textEl + svgMarkup.slice(idx);
     }
 
+    // ── Player photo overlay (jersey icon) ──────────────────────────────────
+    // Mirrors app/src/components/Jersey.tsx exactly: a circular headshot
+    // clipped to a circle, positioned so its bottom overlaps the jersey's
+    // collar (y=8 in the shared 141x179 viewBox every jersey in this app
+    // uses — see injectJerseyLabel() above). Because the head is bigger than
+    // the jersey's own 0..179 vertical space allows without clipping, the
+    // viewBox gets extra negative-Y "headroom" ONLY when a photo is present
+    // (the common no-photo case keeps the tight original viewBox).
+    const JERSEY_VIEWBOX_W  = 141;
+    const JERSEY_VIEWBOX_H  = 179;
+    const HEAD_RADIUS       = 40;
+    const HEAD_OVERLAP      = 10; // how far the head's bottom edge dips below the collar's top (y=8)
+    const HEAD_CX           = 65.25;
+    const HEAD_CY           = 8 - HEAD_RADIUS + HEAD_OVERLAP; // = -22
+    const HEAD_TOP          = HEAD_CY - HEAD_RADIUS;          // = -62
+    const PHOTO_HEADROOM    = Math.ceil(-HEAD_TOP) + 4;       // = 66
+    const PHOTO_VIEWBOX_MIN_Y = -PHOTO_HEADROOM;
+    const PHOTO_VIEWBOX_H      = JERSEY_VIEWBOX_H + PHOTO_HEADROOM; // 245
+
+    // Returns { viewBox, h } for a jersey — the taller photo viewBox when
+    // photoUrl is truthy, the normal tight one otherwise.
+    function jerseyViewBox(photoUrl) {
+      const h = photoUrl ? PHOTO_VIEWBOX_H : JERSEY_VIEWBOX_H;
+      const minY = photoUrl ? PHOTO_VIEWBOX_MIN_Y : 0;
+      return { viewBox: '0 ' + minY + ' ' + JERSEY_VIEWBOX_W + ' ' + h, h };
+    }
+
+    // Kill switch (migration_v46, tournaments.show_player_photos) — gated
+    // once here at the data layer, same pattern as RULES.showPlayerPhotos in
+    // teamStore.ts, so individual jerseyHtml()/pitchJerseyHtml() call sites
+    // never need to check it themselves. Defaults ON (true) when the active
+    // tournament isn't found or the column is null, matching the DB default.
+    function showPlayerPhotosEnabled() {
+      const t = state.tournaments && state.tournaments.find(t => t.id === state.activeTournamentId);
+      return !t || t.show_player_photos !== false;
+    }
+
+    // Builds the <defs><clipPath>+<image> markup for a circular headshot.
+    // `uid` must be unique per rendered jersey instance (e.g. player id) —
+    // many jerseys render simultaneously in the pool/pitch grid, and raw
+    // string-based clipPath ids would otherwise collide across instances.
+    function jerseyPhotoLayer(photoUrl, uid) {
+      if (!photoUrl) return '';
+      const clipId = 'jerseyHeadClip-' + String(uid).replace(/[^a-zA-Z0-9]/g, '');
+      return '<defs><clipPath id="' + clipId + '"><circle cx="' + HEAD_CX + '" cy="' + HEAD_CY + '" r="' + HEAD_RADIUS + '"/></clipPath></defs>'
+        + '<image href="' + photoUrl + '" x="' + (HEAD_CX - HEAD_RADIUS) + '" y="' + (HEAD_CY - HEAD_RADIUS) + '"'
+        + ' width="' + (HEAD_RADIUS * 2) + '" height="' + (HEAD_RADIUS * 2) + '"'
+        + ' preserveAspectRatio="xMidYMid slice" clip-path="url(#' + clipId + ')"/>';
+    }
+
     // Same length-based breakpoints as the color-fill jerseys, in the same
     // viewBox units — pool (44px display) uses the larger set, pitch
     // (CSS-driven, usually ~34px) the smaller set.
@@ -9525,14 +9581,26 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
         : (len <= 2 ? 26 : len <= 3 ? 22 : len <= 4 ? 18 : 14);
     }
 
-    function customJerseyHtml(jerseySvg, label, w, h) {
+    function customJerseyHtml(jerseySvg, label, w, h, photoUrl, uid) {
+      // Widen the pasted svg's own viewBox (every custom jersey uses the
+      // same "0 0 141 179" convention — see injectJerseyLabel() above) to
+      // add photo headroom, and scale the fixed pixel height to match, so
+      // the photo circle lives in the exact same coordinate space as the
+      // color-fill jerseys' HEAD_CX/CY — no separate overlay element needed.
+      const vb = jerseyViewBox(photoUrl);
+      const dispH = photoUrl ? h * (vb.h / JERSEY_VIEWBOX_H) : h;
       const stripped = stripSvgFixedSize(jerseySvg)
-        .replace('<svg', '<svg width="' + w + '" height="' + h + '" style="display:block;flex-shrink:0;"');
-      return injectJerseyLabel(stripped, label, jerseyLabelFontSize(label, true));
+        .replace('<svg', '<svg width="' + w + '" height="' + dispH + '" style="display:block;flex-shrink:0;"')
+        .replace(/viewBox="[^"]*"/i, 'viewBox="' + vb.viewBox + '"');
+      const withLabel = injectJerseyLabel(stripped, label, jerseyLabelFontSize(label, true));
+      if (!photoUrl) return withLabel;
+      const idx = withLabel.lastIndexOf('</svg>');
+      if (idx === -1) return withLabel;
+      return withLabel.slice(0, idx) + jerseyPhotoLayer(photoUrl, uid) + withLabel.slice(idx);
     }
 
-    function jerseyHtml(c1, c2, label, jerseySvg) {
-      if (jerseySvg) return customJerseyHtml(jerseySvg, label, 44, 56);
+    function jerseyHtml(c1, c2, label, jerseySvg, photoUrl, uid) {
+      if (jerseySvg) return customJerseyHtml(jerseySvg, label, 44, 56, photoUrl, uid);
       const bodyColor   = c1 || '#888888';
       const sleeveColor = c2 || '#333333';
       // Team codes can run longer than the 2-letter player initials this used to
@@ -9553,12 +9621,15 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       const lSleeve    = 'M 3,65 L 21.5,78.3 L 31.5,59.8 L 42,16 L 14,32 Z';
       const rSleeve    = 'M 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 90,18 L 115,32 Z';
       const collarPath = 'M 48,8 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 Z';
-      return `<svg viewBox="0 0 141 179" width="44" height="56" style="display:block;flex-shrink:0;" aria-hidden="true">
+      const vb = jerseyViewBox(photoUrl);
+      const dispH = 56 * (vb.h / JERSEY_VIEWBOX_H);
+      return `<svg viewBox="${vb.viewBox}" width="44" height="${dispH}" style="display:block;flex-shrink:0;" aria-hidden="true">
         <path d="${bodyPath}"   fill="${bodyColor}"   stroke="#11111133" stroke-width="2" stroke-linejoin="round"/>
         <path d="${lSleeve}"   fill="${sleeveColor}" opacity="0.9"/>
         <path d="${rSleeve}"   fill="${sleeveColor}" opacity="0.9"/>
         <path d="${collarPath}" fill="${sleeveColor}" opacity="0.92"/>
         <path d="${bodyPath}"   fill="none" stroke="#11111133" stroke-width="2" stroke-linejoin="round"/>
+        ${jerseyPhotoLayer(photoUrl, uid)}
         <text x="65" y="118" text-anchor="middle" dominant-baseline="middle"
           font-family="Arial Black,Arial,sans-serif" font-size="${fontSize}" font-weight="900"
           fill="${textColor}" opacity="0.92">${txt}</text>
@@ -9768,7 +9839,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
         // unique from the men's code — drop it for the jersey text only, the
         // full code with -W still shows in the meta line below the name.
         const jerseyLabel = p.team.replace(/-W$/, '');
-        const jersey = jerseyHtml(tm?.color, tm?.color2, jerseyLabel, tm?.jersey_svg);
+        const jersey = jerseyHtml(tm?.color, tm?.color2, jerseyLabel, tm?.jersey_svg, p.photoUrl, p.id);
         const playsLabel = getPlaysAfterLabel(p.team);
         return `
           <div class="player-card ${sel?'selected':''} ${disabled?'disabled':''}" data-id="${p.id}">
@@ -12938,20 +13009,30 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
     // wrong the moment the tile's CSS size differs (it does — pitch tiles
     // run ~34px vs. the pool's fixed 44px), which is what caused the
     // player-pool fix to blow up the pitch view when reused verbatim.
-    function customPitchJerseyHtml(jerseySvg, label, boosted) {
+    function customPitchJerseyHtml(jerseySvg, label, boosted, photoUrl, uid) {
+      // No fixed width/height here (see comment above) — CSS's
+      // `.pitch-jwrap svg { width:var(--tsz); height:auto }` sizes every
+      // <svg> under the wrapper off its own viewBox aspect ratio, so widening
+      // the viewBox for a photo is enough to grow the rendered height too.
+      const vb = jerseyViewBox(photoUrl);
       const stripped = stripSvgFixedSize(jerseySvg)
-        .replace('<svg', '<svg style="display:block; filter:drop-shadow(0 3px 7px rgba(0,0,0,0.65));"');
-      const withLabel = injectJerseyLabel(stripped, label, jerseyLabelFontSize(label, false));
+        .replace('<svg', '<svg style="display:block; filter:drop-shadow(0 3px 7px rgba(0,0,0,0.65));"')
+        .replace(/viewBox="[^"]*"/i, 'viewBox="' + vb.viewBox + '"');
+      let withLabel = injectJerseyLabel(stripped, label, jerseyLabelFontSize(label, false));
+      if (photoUrl) {
+        const idx = withLabel.lastIndexOf('</svg>');
+        if (idx !== -1) withLabel = withLabel.slice(0, idx) + jerseyPhotoLayer(photoUrl, uid) + withLabel.slice(idx);
+      }
       if (!boosted) return withLabel;
       const bodyPath = 'M 48.0,8.0 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 L 82.0,8.0 L 90.0,18.0 L 115.0,32.0 L 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 105.0,165.0 L 65.5,166.3 L 25.0,166.0 L 31.5,59.8 L 21.5,78.3 L 3.0,65.0 L 14.0,32.0 L 42.0,16.0 Z';
-      const ring = '<svg viewBox="0 0 141 179" style="position:absolute; left:0; top:0; pointer-events:none;">'
+      const ring = '<svg viewBox="' + vb.viewBox + '" style="position:absolute; left:0; top:0; pointer-events:none;">'
         + '<path d="' + bodyPath + '" fill="none" stroke="#FFD23F" stroke-width="6" stroke-linejoin="round"/>'
         + '</svg>';
       return withLabel + ring;
     }
 
-    function pitchJerseyHtml(label, c1, c2, boosted, jerseySvg) {
-      if (jerseySvg) return customPitchJerseyHtml(jerseySvg, label, boosted);
+    function pitchJerseyHtml(label, c1, c2, boosted, jerseySvg, photoUrl, uid) {
+      if (jerseySvg) return customPitchJerseyHtml(jerseySvg, label, boosted, photoUrl, uid);
       const bc = c1 || '#888', sc = c2 || '#333';
       // Team codes run longer than the 2-letter player initials this used to
       // show (e.g. "LAKR", "AUS-W") — auto-shrink the font so longer codes
@@ -12976,12 +13057,14 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       // separate sizing logic needed for crowded pitch rows.
       const strokeColor = boosted ? '#FFD23F' : '#111';
       const strokeWidth = boosted ? 6 : 1.5;
-      return '<svg viewBox="0 0 141 179" xmlns="http://www.w3.org/2000/svg">'
+      const vb = jerseyViewBox(photoUrl);
+      return '<svg viewBox="' + vb.viewBox + '" xmlns="http://www.w3.org/2000/svg">'
         + '<path d="' + body + '" fill="' + bc + '" stroke="' + strokeColor + '" stroke-width="' + strokeWidth + '" stroke-linejoin="round"/>'
         + '<path d="' + ls  + '" fill="' + sc + '" opacity=".88"/>'
         + '<path d="' + rs  + '" fill="' + sc + '" opacity=".88"/>'
         + '<path d="' + col + '" fill="' + sc + '" opacity=".92"/>'
         + '<path d="' + body + '" fill="none" stroke="' + strokeColor + '" stroke-width="' + strokeWidth + '" stroke-linejoin="round"/>'
+        + jerseyPhotoLayer(photoUrl, uid)
         + '<text x="65" y="118" text-anchor="middle" dominant-baseline="middle"'
         + ' font-family="Arial Black,Arial" font-size="' + fontSize + '" font-weight="900"'
         + ' fill="' + tc + '" opacity=".9">' + txt + '</text>'
@@ -13040,7 +13123,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
         ? '<span class="pitch-os-badge" title="Overseas player">✈️</span>' : '';
       return '<div class="pitch-player" data-pid="' + id + '">'
         + '<div class="pitch-jwrap' + (decor.boosted ? ' boosted' : '') + '">'
-        + pitchJerseyHtml(pitchTeamLabel(p.team), c1, c2, decor.boosted, tm && tm.jersey_svg)
+        + pitchJerseyHtml(pitchTeamLabel(p.team), c1, c2, decor.boosted, tm && tm.jersey_svg, p.photoUrl, p.id)
         + decor.topRightBadge
         + osBadge
         + decor.bottomLeftBadge
@@ -13083,12 +13166,15 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       // carry is_overseas — fall back to the live player pool (same tournament)
       // for that flag, same way teamByCode() above is relied on for jersey colors.
       var isOverseas = (p.is_overseas ?? p.overseas ?? playerById(p.player_id)?.overseas) || false;
+      // player_match_stats rows don't carry photo_url either — same fallback
+      // to the live pool (already kill-switch-gated) used for isOverseas above.
+      var photoUrl = p.photoUrl ?? playerById(p.player_id)?.photoUrl ?? null;
       var decor = pitchBoosterDecor(isOverseas, isCap, isVc, boosterKey || null);
       var osBadge = (isOverseas && osCapApplies())
         ? '<span class="pitch-os-badge" title="Overseas player">✈️</span>' : '';
       return '<div class="pitch-player">'
         + '<div class="pitch-jwrap' + (decor.boosted ? ' boosted' : '') + '">'
-        + pitchJerseyHtml(pitchTeamLabel(p.team_id), c1, c2, decor.boosted, tm && tm.jersey_svg)
+        + pitchJerseyHtml(pitchTeamLabel(p.team_id), c1, c2, decor.boosted, tm && tm.jersey_svg, photoUrl, p.player_id)
         + decor.topRightBadge
         + osBadge
         + decor.bottomLeftBadge
@@ -13285,6 +13371,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       var tm = teamByCode(p.team_id);
       var c1 = (tm && tm.color)  || '#888888';
       var c2 = (tm && tm.color2) || '#333333';
+      var photoUrl = p.photoUrl ?? playerById(p.player_id)?.photoUrl ?? null;
       var badge = isCap ? '<span class="hist-bd-cbadge c">C</span>'
                 : isVc  ? '<span class="hist-bd-cbadge vc">VC</span>' : '';
       var roleKey = p.role || 'bat';
@@ -13355,7 +13442,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
 
       return '<details class="hist-bd-row"' + (isFirst ? ' open' : '') + '>'
         + '<summary>'
-        + '<div class="hist-bd-avatar">' + pitchJerseyHtml(pitchTeamLabel(p.team_id), c1, c2, false, tm && tm.jersey_svg) + '</div>'
+        + '<div class="hist-bd-avatar">' + pitchJerseyHtml(pitchTeamLabel(p.team_id), c1, c2, false, tm && tm.jersey_svg, photoUrl, p.player_id) + '</div>'
         + '<div style="flex:1;min-width:0;">'
         + '<div class="hist-bd-name">' + escapeHtml(p.name) + badge + '</div>'
         + '<div class="hist-bd-meta">' + RLBL[roleKey] + (metaParts.length ? (' · ' + metaParts.join(' · ')) : '') + '</div>'
