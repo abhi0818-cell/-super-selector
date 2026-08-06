@@ -62,19 +62,6 @@ function jerseyLabel(code: string | null | undefined): string {
   return (code || '??').replace(/-W$/, '').toUpperCase().slice(0, 6);
 }
 
-// Ports web's injectJerseyLabel() (index.html, jerseyHtml/pitchJerseyHtml) —
-// inserts a <text> element right before the pasted SVG's closing tag, in
-// the same viewBox units the app's own jersey paths use. White fill + a
-// dark stroke keeps it legible against whatever colors the custom design
-// happens to use, since we can't compute luminance against markup we don't
-// parse.
-function injectJerseyLabel(svgMarkup: string, label: string, fontSizeViewboxUnits: number): string {
-  const textEl = `<text x="65" y="118" text-anchor="middle" alignment-baseline="middle" font-family="Arial Black,Arial,sans-serif" font-size="${fontSizeViewboxUnits}" font-weight="900" fill="#fff" stroke="rgba(0,0,0,.65)" stroke-width="2" paint-order="stroke" opacity=".95">${label}</text>`;
-  const idx = svgMarkup.lastIndexOf('</svg>');
-  if (idx === -1) return svgMarkup;
-  return svgMarkup.slice(0, idx) + textEl + svgMarkup.slice(idx);
-}
-
 // Mirrors pitchJerseyHtml's luminance check — picks readable text against
 // light jersey colors instead of always assuming a dark one.
 function readableTextColor(hex: string): string {
@@ -186,7 +173,10 @@ export default function Jersey({
   // player-pool tile. Living inside the SVG scales for free with whatever
   // `size` this instance is given, exactly like the color-fill path below.
   if (jerseySvg) {
-    const withLabel = injectJerseyLabel(jerseySvg, label, fontSize);
+    // Custom uploaded designs already carry their own team identity (crest,
+    // colors, sponsor text, etc.) — the team-code label is only meaningful
+    // as a stand-in on the plain color-fill jersey below, so skip injecting
+    // it here rather than overlaying redundant/clashing text on real art.
     // The custom SVG (SvgXml) has its own internal viewBox we don't control
     // and can't add headroom to directly — so instead of stretching it into
     // a taller box (which would just letterbox/distort it), it keeps
@@ -199,7 +189,7 @@ export default function Jersey({
     const headroomPx = height - baseHeight;
     return (
       <View style={{ width: size, height, position: 'relative' }}>
-        <SvgXml xml={withLabel} width={size} height={baseHeight} style={{ position: 'absolute', left: 0, top: headroomPx }} />
+        <SvgXml xml={jerseySvg} width={size} height={baseHeight} style={{ position: 'absolute', left: 0, top: headroomPx }} />
         {photoUrl && (
           <Svg
             width={size}
