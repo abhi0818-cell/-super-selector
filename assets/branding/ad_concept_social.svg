@@ -1,0 +1,54 @@
+<svg viewBox="0 0 1080 1080" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#123054"/>
+      <stop offset="100%" stop-color="#0B1E33"/>
+    </linearGradient>
+    <linearGradient id="chip2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFD24C"/>
+      <stop offset="100%" stop-color="#F5A623"/>
+    </linearGradient>
+  </defs>
+  <rect width="1080" height="1080" fill="url(#bg2)"/>
+
+  <!-- top badge -->
+  <rect x="60" y="60" width="230" height="56" rx="28" fill="#123054" stroke="#5CC8FF" stroke-width="2"/>
+  <text x="175" y="96" font-family="Arial" font-size="24" font-weight="700" fill="#5CC8FF" text-anchor="middle">100% FREE</text>
+
+  <!-- headline -->
+  <text x="60" y="220" font-family="Arial, sans-serif" font-size="64" font-weight="800" fill="#FFFFFF">Draft your</text>
+  <text x="60" y="292" font-family="Arial, sans-serif" font-size="64" font-weight="800" fill="#FFFFFF">dream XI</text>
+  <text x="60" y="364" font-family="Arial, sans-serif" font-size="64" font-weight="800" fill="#5CC8FF">before the toss.</text>
+
+  <text x="60" y="420" font-family="Arial" font-size="28" fill="#BFE0FF">100 credits. 11 players. One captain.</text>
+
+  <!-- scoreboard mock -->
+  <g transform="translate(60,470)">
+    <rect width="960" height="420" rx="24" fill="#0B1E33" stroke="#3C7DBF" stroke-width="2"/>
+    <text x="40" y="60" font-family="Arial" font-size="26" font-weight="700" fill="#fff">Live Scoreboard</text>
+    <circle cx="900" cy="52" r="8" fill="#5CC8FF"/>
+    <text x="880" y="58" font-family="Arial" font-size="16" fill="#5CC8FF" text-anchor="end">LIVE</text>
+
+    <!-- rows -->
+    <g font-family="Arial" font-size="24" fill="#DCEEFF">
+      <rect x="40" y="90" width="880" height="70" rx="12" fill="#123054"/>
+      <text x="70" y="132">V. Kohli (C)</text>
+      <text x="850" y="132" text-anchor="end" fill="#5CC8FF" font-weight="700">96 pts</text>
+
+      <rect x="40" y="172" width="880" height="70" rx="12" fill="#0F2A4A"/>
+      <text x="70" y="214">J. Bumrah</text>
+      <text x="850" y="214" text-anchor="end" fill="#5CC8FF" font-weight="700">54 pts</text>
+
+      <rect x="40" y="254" width="880" height="70" rx="12" fill="#123054"/>
+      <text x="70" y="296">H. Pandya (VC)</text>
+      <text x="850" y="296" text-anchor="end" fill="#5CC8FF" font-weight="700">61 pts</text>
+    </g>
+
+    <text x="40" y="395" font-family="Arial" font-size="22" fill="#9FC6E8">Total</text>
+    <text x="920" y="395" font-family="Arial" font-size="34" font-weight="800" fill="#FFD24C" text-anchor="end">248 pts</text>
+  </g>
+
+  <!-- CTA -->
+  <rect x="290" y="960" width="500" height="80" rx="40" fill="url(#chip2)"/>
+  <text x="540" y="1010" font-family="Arial" font-size="30" font-weight="800" fill="#3A2400" text-anchor="middle">Build my team →</text>
+</svg>

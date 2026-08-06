@@ -69,7 +69,7 @@ import requests
 from PIL import Image
 from scipy.ndimage import uniform_filter1d
 
-INPUT_JSON = "cpl_2026_player_photos.json"
+INPUT_JSON = "data/cpl_2026_player_photos.json"
 OUTPUT_DIR = "photo_import_output"
 CSV_PATH = os.path.join(OUTPUT_DIR, "player_photos_import.csv")
 FINAL_SIZE = 320          # final square canvas size, px
