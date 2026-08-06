@@ -50,6 +50,10 @@ const BODY_PATH     = 'M 48,8 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 L 82,8 L 90,18 
 const L_SLEEVE_PATH = 'M 3,65 L 21.5,78.3 L 31.5,59.8 L 42,16 L 14,32 Z';
 const R_SLEEVE_PATH = 'M 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 90,18 L 115,32 Z';
 const COLLAR_PATH   = 'M 48,8 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 Z';
+// V-neck collar variant used only when a photo/silhouette is showing — the
+// dip on either side of center gives the head/photo more room to read
+// against the jersey. Plain jersey (no photo) keeps COLLAR_PATH unchanged.
+const COLLAR_PATH_PHOTO = 'M 79.2,16.1 L 77.7,31.4 L 89.5,16.8 L 42.5,15.8 L 54.3,31.5 L 53.3,15.7 Z';
 
 // Same rule as web's jerseyHtml/pitchJerseyHtml/pitchTeamLabel: drop a
 // trailing '-W' (women's team suffix) from the label shown ON the jersey
@@ -231,7 +235,7 @@ export default function Jersey({
       />
       <Path d={L_SLEEVE_PATH} fill={sleeveColor} opacity={0.9} />
       <Path d={R_SLEEVE_PATH} fill={sleeveColor} opacity={0.9} />
-      <Path d={COLLAR_PATH} fill={sleeveColor} opacity={0.92} />
+      <Path d={photoUrl ? COLLAR_PATH_PHOTO : COLLAR_PATH} fill={sleeveColor} opacity={0.92} />
       <Path
         d={BODY_PATH}
         fill="none"

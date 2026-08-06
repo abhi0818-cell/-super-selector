@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Collar Editor</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #F5F0E0; margin: 0; padding: 16px; }
+  h3 { text-align: center; margin: 0 0 10px; color: #333; }
+  .toolbar { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; margin-bottom:10px; }
+  button { padding:6px 14px; border-radius:6px; border:1px solid #aaa; cursor:pointer; font-size:12px; background:#fff; }
+  button.active { background:#1e3a8a; color:#fff; border-color:#1e3a8a; }
+  button:hover { background:#e8e0cc; }
+  button.danger { border-color:#c00; color:#c00; }
+  button.danger:hover { background:#fdd; }
+  button.save { background:#e8f5e9; border-color:#4caf50; color:#2e7d32; font-weight:bold; }
+  button.save:hover { background:#c8e6c9; }
+  .wrap { display:flex; gap:24px; justify-content:center; align-items:flex-start; flex-wrap:wrap; }
+  .col { text-align:center; }
+  .col p { font-size:11px; color:#888; font-weight:bold; text-transform:uppercase; letter-spacing:1px; margin:0 0 6px; }
+  .canvas-wrap { position:relative; display:inline-block; border:2px solid #ccc; border-radius:8px; background:#fff; }
+  svg { display:block; cursor:crosshair; }
+  #status { text-align:center; font-size:11px; color:#666; margin-top:8px; min-height:16px; }
+  .pt { fill:#e53935; stroke:#fff; stroke-width:1; cursor:grab; }
+  .pt:hover { fill:#ff7961; }
+  .pt.dragging { cursor:grabbing; }
+  textarea { width:320px; height:80px; font-family:monospace; font-size:11px; }
+  .ptlist { font-size:11px; text-align:left; width:320px; max-height:160px; overflow:auto; border:1px solid #ddd; padding:6px; background:#fff; }
+  .ptlist div { display:flex; gap:6px; align-items:center; margin-bottom:3px; }
+  .ptlist input { width:55px; font-size:11px; }
+</style>
+</head>
+<body>
+<h3>Collar Editor — drag the red points to reshape the collar</h3>
+<div class="toolbar">
+  <button id="btnAdd" onclick="setMode('add')">Add Point</button>
+  <button id="btnMove" class="active" onclick="setMode('move')">Move Point</button>
+  <button id="btnDel" onclick="setMode('delete')">Delete Point</button>
+  <button onclick="resetCollar()" class="danger">Reset to Original</button>
+  <button onclick="saveToFile()" class="save">Save Path (for Claude)</button>
+</div>
+<div class="wrap">
+  <div class="col">
+    <p>Live jersey preview</p>
+    <div class="canvas-wrap">
+      <svg id="prev" width="280" height="360" viewBox="0 -20 141 199">
+        <path d="M 48,8 L 82.5,8.3 L 89.5,16.8 L 42.5,15.8 L 82,8 L 90,18 L 115,32 L 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 105,165 L 65.5,166.3 L 25,166 L 31.5,59.8 L 21.5,78.3 L 3,65 L 14,32 L 42,16 Z" fill="#378ADD" stroke="#11111133" stroke-width="1" stroke-linejoin="round"/>
+        <path d="M 3,65 L 21.5,78.3 L 31.5,59.8 L 42,16 L 14,32 Z" fill="#0C447C" opacity="0.9"/>
+        <path d="M 127.5,70.3 L 107.5,78.8 L 98.5,61.8 L 90,18 L 115,32 Z" fill="#0C447C" opacity="0.9"/>
+        <path id="collarPath" fill="#0C447C" opacity="0.95" stroke="#062a4d" stroke-width="0.5"/>
+        <circle id="headRefCircle" cx="65.25" cy="-22" r="40" fill="none" stroke="#e53935" stroke-width="0.75" stroke-dasharray="2,1.5" opacity="0.5"/>
+        <g id="handles"></g>
+      </svg>
+    </div>
+    <p style="margin-top:8px;">Dashed red circle = current head/photo position, for reference only</p>
+  </div>
+  <div class="col">
+    <p>Points (viewBox units)</p>
+    <div id="ptlist" class="ptlist"></div>
+    <p style="margin-top:12px;">Export</p>
+    <textarea id="exportBox" readonly></textarea>
+  </div>
+</div>
+<div id="status">Mode: Move Point — drag any red point to reshape the collar</div>
+<script>
+const ORIGINAL = [[48,8],[82.5,8.3],[89.5,16.8],[42.5,15.8]];
+let points = ORIGINAL.map(p => p.slice());
+let mode = 'move';
+const svg = document.getElementById('prev');
+const collarPath = document.getElementById('collarPath');
+const handles = document.getElementById('handles');
+const ptlist = document.getElementById('ptlist');
+const exportBox = document.getElementById('exportBox');
+const status = document.getElementById('status');
+
+function setMode(m){
+  mode = m;
+  document.querySelectorAll('.toolbar button').forEach(b=>b.classList.remove('active'));
+  document.getElementById('btn'+m[0].toUpperCase()+m.slice(1)).classList.add('active');
+  status.textContent = m==='add' ? 'Mode: Add Point — click inside the preview to append a point'
+    : m==='delete' ? 'Mode: Delete Point — click a red point to remove it'
+    : 'Mode: Move Point — drag any red point to reshape the collar';
+}
+
+function svgPoint(evt){
+  const pt = svg.createSVGPoint();
+  pt.x = evt.clientX; pt.y = evt.clientY;
+  const ctm = svg.getScreenCTM().inverse();
+  const p = pt.matrixTransform(ctm);
+  return [Math.round(p.x*10)/10, Math.round(p.y*10)/10];
+}
+
+function render(){
+  const d = 'M ' + points.map(p => p[0]+','+p[1]).join(' L ') + ' Z';
+  collarPath.setAttribute('d', d);
+  handles.innerHTML = '';
+  points.forEach((p, i) => {
+    const c = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx', p[0]); c.setAttribute('cy', p[1]); c.setAttribute('r', 2.2);
+    c.setAttribute('class','pt'); c.dataset.idx = i;
+    c.addEventListener('pointerdown', onPointerDown);
+    handles.appendChild(c);
+  });
+  ptlist.innerHTML = points.map((p,i) =>
+    '<div>#'+i+' x=<input type="number" step="0.1" value="'+p[0]+'" onchange="setPt('+i+',0,this.value)"> y=<input type="number" step="0.1" value="'+p[1]+'" onchange="setPt('+i+',1,this.value)"></div>'
+  ).join('');
+  exportBox.value = "const collarPath = 'M " + points.map(p => p[0]+','+p[1]).join(' L ') + " Z';";
+}
+
+function setPt(i, axis, val){
+  points[i][axis] = parseFloat(val);
+  render();
+}
+
+let dragIdx = null;
+function onPointerDown(evt){
+  if (mode === 'delete'){
+    const idx = parseInt(evt.target.dataset.idx);
+    if (points.length > 3){ points.splice(idx,1); render(); }
+    else { status.textContent = 'Collar needs at least 3 points.'; }
+    return;
+  }
+  if (mode !== 'move') return;
+  dragIdx = parseInt(evt.target.dataset.idx);
+  evt.target.classList.add('dragging');
+  evt.target.setPointerCapture(evt.pointerId);
+}
+svg.addEventListener('pointermove', evt => {
+  if (dragIdx === null) return;
+  const p = svgPoint(evt);
+  points[dragIdx] = p;
+  render();
+});
+svg.addEventListener('pointerup', evt => {
+  if (dragIdx !== null){
+    document.querySelectorAll('.pt.dragging').forEach(el=>el.classList.remove('dragging'));
+    dragIdx = null;
+  }
+});
+svg.addEventListener('click', evt => {
+  if (mode !== 'add') return;
+  if (evt.target.classList.contains('pt')) return;
+  const p = svgPoint(evt);
+  points.push(p);
+  render();
+});
+
+function resetCollar(){
+  points = ORIGINAL.map(p => p.slice());
+  render();
+  status.textContent = 'Reset to original collar shape.';
+}
+
+function saveToFile(){
+  const blob = new Blob([exportBox.value], {type:'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'collar_path.txt';
+  a.click();
+  status.textContent = 'Saved collar_path.txt — move it to your Super Selector folder, then tell Claude!';
+}
+
+render();
+</script>
+</body>
+</html>
