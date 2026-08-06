@@ -94,7 +94,9 @@ export default function BoostersBar({ contestType, squadId, matchId, onStaged, p
 
   const handleInfo = (id: string) => {
     const b = boosters.find(x => x.id === id)!;
-    Alert.alert(`${alertIcon(b.icon)}  ${b.name}`, b.desc);
+    const remaining = Math.max(b.totalUses - b.usedInOther, 0);
+    const usesLine = b.totalUses > 1 ? `\n\n${remaining}/${b.totalUses} uses remaining this season.` : '';
+    Alert.alert(`${alertIcon(b.icon)}  ${b.name}`, `${b.desc}${usesLine}`);
   };
 
   return (
@@ -105,6 +107,12 @@ export default function BoostersBar({ contestType, squadId, matchId, onStaged, p
           const isOn      = b.status === 'active' || b.status === 'pending';
           const isPending = b.status === 'pending';
           const isUsed    = b.status === 'used';
+          // Uses-remaining badge — only meaningful for boosters the admin
+          // has configured for more than one use per season (e.g.
+          // totalUses: 2). Mirrors web's renderSlBoosterGrid badge so a
+          // booster set to 2 uses doesn't look identical to one set to 1.
+          const remaining  = Math.max(b.totalUses - b.usedInOther, 0);
+          const showsBadge = b.totalUses > 1;
           return (
             <Pressable
               key={b.id}
@@ -118,6 +126,11 @@ export default function BoostersBar({ contestType, squadId, matchId, onStaged, p
               onPress={() => handlePress(b.id)}
               onLongPress={() => handleInfo(b.id)}
             >
+              {showsBadge && (
+                <View style={[styles.usesBadge, isUsed && styles.usesBadgeSpent]}>
+                  <Text style={styles.usesBadgeText}>{remaining}/{b.totalUses}</Text>
+                </View>
+              )}
               <BoosterIcon icon={b.icon} size={20} style={styles.cardIcon} />
               <Text
                 style={[styles.cardName, isUsed && styles.cardNameUsed]}
@@ -185,6 +198,25 @@ const styles = StyleSheet.create({
 
   cardIcon: {
     fontSize: 20,
+  },
+  usesBadge: {
+    position:        'absolute',
+    top:             4,
+    right:           4,
+    minWidth:        22,
+    paddingHorizontal: 3,
+    paddingVertical: 1,
+    borderRadius:    8,
+    backgroundColor: C.accent,
+    alignItems:      'center',
+  },
+  usesBadgeSpent: {
+    backgroundColor: C.muted,
+  },
+  usesBadgeText: {
+    fontSize:   8.5,
+    fontWeight: '700',
+    color:      '#FFFFFF',
   },
   cardName: {
     color:      C.text,
