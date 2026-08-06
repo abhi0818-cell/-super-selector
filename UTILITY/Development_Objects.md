@@ -1,0 +1,437 @@
+# Development Objects — Super Selector
+
+Living changelog of all development work on this app (web + mobile). Update this file every time new work is completed — add new entries at the bottom of the relevant section in chronological order, dated.
+
+_Last updated: 2026-08-06_
+
+## 1) Setup
+
+- **2026-05-25** — Initial project scaffold: single-file web app (`index.html`, dark-themed UI) plus a Supabase client layer (`db.js`); core cricket scoring engine (batting/bowling/fielding points, strike-rate/economy bonuses), squad builder, admin panel (players/matches/teams CRUD, CSV import), and CricAPI live-match integration all committed in one initial drop (~7,800 lines).
+- **2026-05-25 to 2026-05-26** — Add shared/global DB client, leaderboard modal + picker, and login tab switcher (sign in / sign up).
+- **2026-05-28** — Add tournament scoring-rules editor and per-tournament active-toggle support, plus tournament-started lock gating; add Season Long "private league" contest rules editor and leagues tab.
+- **2026-05-29** — Add Season Long booster system foundation (booster bar, booster config builder, per-squad booster resolution) and shared-XI detection.
+- **2026-06-01** — Add tournament close-out panel (preview/execute season settlement).
+- **2026-06-02** — Add new-contest creation form and per-tournament active toggles in admin.
+- **2026-06-03 to 2026-06-04** — Add contests tournament context bar, sync Daily/Season mode tabs, and add overseas-player credit cap support.
+- **2026-06-08** — Rebuild the Rules modal/tab (open/close/load/render cycle) for tournament scoring rules.
+- **2026-06-10** — Add team-code remap/alias tooling for admin to reconcile CricAPI team codes; add tabbed page navigation (Home/My Team/Season/Contest) with inline leaderboard on the Contest tab.
+- **2026-06-11** — Add Season Long info bar, forgot-password flow on the login screen, and player-initials avatar fallback.
+- **2026-06-13** — Add jersey-colored avatar rendering (team primary/secondary colors, light/dark text detection) to player cards; large-scale rewrite of the Pick XI screen from a plain squad list into a visual cricket-pitch map view, along with rules/booster/team-management code supporting the new pitch UI (two major rewrites touching several thousand lines each).
+- **2026-06-15** — Add the React Native/Expo mobile app scaffold (`app/`): App entry point, navigation, screens (Auth, Home, MyXI, PlayerPicker, Leaderboard, TournamentLobby, Rules), Zustand stores, a ported cricket scoring engine, and Supabase client — landed alongside a batch of core SQL migrations (tournament scoring rules, private leagues, boosters, shared squad, tournament active flag, series id, match lock time/revert, RLS + admin-write RLS, overseas cap, scraper + scraper cron, unmatched-player handling) and supporting web tooling (jersey preview/trace tools, CricAPI adapter, cricsheet/ESPN scorecard parsers).
+- **2026-07-08** — Stop tracking `node_modules` in git (repo hygiene cleanup for the mobile app).
+
+## 2) Web Developments
+
+- **2026-06-14** — Add jersey SVG (primary/secondary colors) to player pool cards
+- **2026-06-14** — Jersey: traced shape + player initials, bigger size
+- **2026-06-14** — Replace squadList with pitch map view in Daily XI Pick XI tab
+- **2026-06-14** — Fix pitch view JS: rewrite without template literals
+- **2026-06-14** — Cap pitch width at 360px and center it
+- **2026-06-14** — Fix finalize: scope to active tournament + deduplicate player rows
+- **2026-06-14** — Fix finalize: tournament scope, dedup rows, bowler duck penalty
+- **2026-06-14** — Fix: hide My Team panel on initial load; finalize tournament scope + duck penalty
+- **2026-06-14** — Fix pitch layout after hiding My Team tab on initial load
+- **2026-06-15** — History tab: expand arrow shows pitch map with jerseys, icons, C/VC badges, net points
+- **2026-06-15** — History pitch: constrain to 360px centered, taller oval so bowler pts aren't clipped
+- **2026-06-15** — Fix history pitch black background: add pitch-outer buffer between overflow:hidden and clip-path
+- **2026-06-15** — Fix history pitch oval black background — force green gradient with important flag
+- **2026-06-15** — Fix history pitch black in Safari table context — force compositor layer
+- **2026-06-15** — Fix history pitch black: replace clip-path with border-radius+overflow:hidden
+- **2026-06-15** — Fix history pitch: new pitch-oval-hist class, no clip-path, no inheritance
+- **2026-06-15** — Force pitch background via JS inline style on open
+- **2026-06-15** — Fix black pitch: move pitch panels outside table into plain divs
+- **2026-06-15** — Test: hide SVG overlay in history pitch
+- **2026-06-15** — Fix history pitch black: SVG overflow:hidden + background:transparent stops Safari compositing bug
+- **2026-06-15** — History pitch: clip-path+gradient now works since pitch is outside table
+- **2026-06-15** — Fix history pitch: remove SVG overlay that renders black in Safari
+- **2026-06-15** — Add .nojekyll + fix history pitch via CSS background SVG
+- **2026-06-16** — Add live Daily XI scoring + expandable full-11 leaderboard view
+- **2026-06-16** — Add leaderboard player breakdown expand; fix daily save to close editor
+- **2026-06-16** — Live tab: use scraper data when scraper_enabled, count all CricAPI poller calls
+- **2026-06-16** — Scrape-scorecard: add CORS headers so the browser admin button can call it
+- **2026-06-16** — Fix scorecard URL discovery + caching for ICC women's tournaments
+- **2026-06-16** — Add deeper parse-failure diagnostics to scrape-scorecard
+- **2026-06-16** — Diagnose h2 heading structure on parse_failed
+- **2026-06-16** — Fix Live scorecard panel showing stale data for scraper-enabled matches
+- **2026-06-16** — Fix delayed-match lock gate: honor lock_time/delayed status everywhere, not just start_time
+- **2026-06-16** — Fix delayed-match lock gate: honor lock_time/delayed status everywhere, not just start_time
+- **2026-06-16** — Add diagnostic toasts when scrape succeeds but scorecard can't be built
+- **2026-06-16** — Show actual team_id values when scrape can't match rosters to match teams
+- **2026-06-16** — Diagnose whether scraped player_ids exist in the loaded pool at all
+- **2026-06-16** — Fix buildLiveScorecardFromStats/Fantasy scorecard reading p.team_id instead of p.team
+- **2026-06-16** — Add server-side CricAPI polling (poll-cricapi Edge Function + cron)
+- **2026-06-16** — Add points breakdown panel to History tab
+- **2026-06-16** — History tab: nest match detail under its own row (accordion), widen pitch/panel layout
+- **2026-06-16** — Schedule tab: widen Home/Away team columns for readability
+- **2026-06-16** — Schedule tab: wider Home/Away columns, scrollable matches table
+- **2026-06-16** — Schedule tab: show full team name in Home/Away dropdowns, widen columns
+- **2026-06-16** — Schedule tab: revert to short team codes, right-size column width
+- **2026-06-17** — Poll-cricapi: rotate CricAPI keys on connection-reset errors, not just clean quota errors
+- **2026-06-17** — Poll-cricapi: send browser-like headers to CricAPI to rule out WAF blocking bare server requests
+- **2026-06-17** — ConnectLive: fall back to direct browser CricAPI polling for CricAPI-driven tournaments when a key is entered, since the server-side cron is being blocked at the network level
+- **2026-06-17** — Add per-match data_source override (auto/scraper/cricapi)
+- **2026-06-17** — Add 5min/30min start-time gates + cross-source staleness guard
+- **2026-06-17** — Switch CricAPI-driven live polling to direct 20-min browser fetch; pause server-side poll-cricapi cron
+- **2026-06-17** — Add persistLiveDailyScores: live-write Daily/user_team_match_scores from the browser poller, mirroring persistLiveSlScores
+- **2026-06-17** — Live-write player_match_stats from browser poller so History/Leaderboard breakdown panels populate during live play
+- **2026-06-17** — Fix Live Score tab showing wrong match's team after saving for next match
+- **2026-06-17** — Decouple live poller from Pick XI editing state
+- **2026-06-17** — Expose getLockedDailyXI/resolveSquadForMatch/findNextMatch/connectLive/maybeAutoConnect on window.__SS for debugging
+- **2026-06-17** — Fix run-out fielding credit parsing + ReferenceError in rescoreCurrentMatch
+- **2026-06-17** — Live scorecard: show resolved/aliased player name instead of raw CricAPI text
+- **2026-06-17** — Render daily contest leaderboard inline on Contest tab instead of popup-only
+- **2026-06-17** — Make inline Contest-tab leaderboard rows expandable (SL + Daily), matching full popup view
+- **2026-06-17** — Add player stats by match: form strip + history modal on XI picker
+- **2026-06-17** — Scope player match history/form to active tournament
+- **2026-06-17** — Navigate to Contest tab after saving XI
+- **2026-06-17** — Refresh Home tab after matches load so next match shows on first load
+- **2026-06-17** — Show next schedulable match countdown on Pick XI screen instead of Live pill
+- **2026-06-17** — Hide Dot Ball scoring rule — CricAPI doesn't populate per-bowler dot-ball counts
+- **2026-06-17** — Distinguish saved-squad message from valid-but-unsaved message
+- **2026-06-17** — Clear irrelevant status strip (placeholder text + points) on Pick XI screen
+- **2026-06-17** — Merge squad status message into the live-status bar
+- **2026-06-18** — Replace header leaderboard button with inline contest-tab full view; rename Contest tab to Leaderboard
+- **2026-06-18** — Fix Reset XI killing live poller/stats; preserve live stats when deselecting a live-locked player; rename Contest tab to Leaderboard; remove redundant header leaderboard button
+- **2026-06-18** — Fix leaderboard match dropdown team names; move Team chips to their own row below Role
+- **2026-06-18** — Add red urgency tier to countdown chip under 30 min before lock; align Match filter row with Role/Team rows
+- **2026-06-18** — Move match-page prev arrow next to next arrow at end of row for alignment
+- **2026-06-18** — Give pf-label fixed min-width so All chips line up across Role/Team/Match rows
+- **2026-06-18** — Reorder page tabs: Home, My Team, Season, Leaderboard
+- **2026-06-18** — Fix CricAPI midnight-truncated dateTimeGMT by parsing real kickoff time from status string (MLC series)
+- **2026-06-18** — Remove unnecessary 'Squad is valid' message from Pick XI panel
+- **2026-06-18** — Fix history pitch/breakdown proportions; redesign Live Score tab to match
+- **2026-06-18** — Fix silent fielding-credit overwrite bug; surface unmatched/unparsed fielding events in UI
+- **2026-06-18** — Match breakdown panel height to pitch, widen breakdown panel to fix squished layout
+- **2026-06-18** — Fix ambiguous same-surname fielding matches; populate Fantasy Scorecard panel after finalize/recalc
+- **2026-06-18** — Fix fielding credit misattribution: check full squad for name collisions before accepting a unique players-array match; add Credit-to/Link controls for fielding issues in Fantasy Scorecard panel
+- **2026-06-18** — Fix premature match-completed flag: check scorecard status before marking completed, and stop Recalculate from reusing stale mid-match cache
+- **2026-06-18** — Fix inline Daily XI match picker showing blank team codes — was reading nonexistent m.home_team/m.away_team instead of m.home_team_id/m.away_team_id
+- **2026-06-18** — Daily XI leaderboard: show pitch + points breakdown view on team expand (same component as History/Live Score)
+- **2026-06-19** — Fix: preserve custom display_name on profile upsert
+- **2026-06-19** — Fix: delay CricAPI auto-connect 10min past scheduled lock time
+- **2026-06-19** — Feat: add Daily-style pitch graphic to Season Long Pick XI tab
+- **2026-06-19** — SL Pick XI: drop breakdown list, move boosters to vertical column
+- **2026-06-19** — Match SL Live Score/Season/Leaderboard to Daily's pitch+breakdown template
+- **2026-06-19** — Fix SL Pick XI pitch sizing and compress booster pill bar
+- **2026-06-19** — Fix XI role always saved as 'bat', breaking pitch role grouping in SL leaderboard/season
+- **2026-06-19** — Fix countdown badge showing Live before match actually starts
+- **2026-06-19** — Redesign SL boosters as a popup with a pitch badge (was an inline icon grid)
+- **2026-06-19** — Surface unmatched-player counts eagerly; guard scraper against per-player stat regression
+- **2026-06-19** — Surface unmatched-player counts eagerly; fix scraper CDN cache-staleness and per-player regression
+- **2026-06-19** — Add manual fielding credit UI, fielding issues panel, completion-on-scrape support
+- **2026-06-19** — Show fielding-only credit (catches/stumpings/run-outs) in Live Score scorecard
+- **2026-06-20** — Add match-lock cron: schedule lock-matches for SL squads, RLS-based lock for daily teams
+- **2026-06-20** — Widen lock-matches to also match status='in_progress' (avoid poll-cricapi race starving a match's lock)
+- **2026-06-20** — Cache raw scraper scorecard in match_scorecards for the Live scorecard panel
+- **2026-06-20** — Sort player dropdowns by team/name; fix empty ambiguous-candidate dropdown in Fielding Issues panel
+- **2026-06-20** — Add migration_v29: allow scraper_manual in player_match_stats.source check constraint
+- **2026-06-20** — Season tab: show running transfer-budget countdown in Xfers Left column instead of points penalty
+- **2026-06-20** — Fix: don't drop transfer baseline just because previous match is completed
+- **2026-06-20** — Fix transfer-baseline bug in lock-matches, fix server-lock auth, make player adds tournament-aware
+- **2026-06-20** — Fix transfer-count display bugs: don't treat completed prev match as first-lock
+- **2026-06-20** — Season tab: remove fixed 420px height cap on match details so it matches Live Score sizing
+- **2026-06-20** — Player pool: strip -W suffix from women's team code on jersey
+- **2026-06-20** — Status chip: recognize 'live' status (set by lock-matches cron), not just 'in_progress'
+- **2026-06-20** — Add placeholder-stat capture + credit-recovery UI for 'Player Not Found' rows
+- **2026-06-20** — Fix Schedule tab: stop width:100% from crushing Home/Away select columns
+- **2026-06-20** — Fix fatal syntax error in unmatched-players panel (missing closing brace) breaking entire app load
+- **2026-06-21** — Force fixed table-layout with explicit per-column widths on Matches admin table
+- **2026-06-21** — Fix lock-matches: use actual previous match id, not heuristic re-derivation, for transfer baseline
+- **2026-06-21** — Show team code on pitch-view jerseys instead of player initials, matching Player Pool
+- **2026-06-21** — Add season-wide transfer-count fix and read-only verification SQL for MLC
+- **2026-06-21** — Show overseas badge in Picked 11 list, matching Player Pool
+- **2026-06-21** — Pull pitch-view role icon closer to its own jersey tile
+- **2026-06-21** — Add overseas badge to pitch-map jerseys when tournament enforces an OS cap
+- **2026-06-21** — Add temporary window.__osDebug() hook to diagnose missing overseas pitch badge
+- **2026-06-21** — Fix user_transfers RLS: allow authenticated read so SL leaderboard Xfers column works for all users
+- **2026-06-22** — Reverse season match-history order on page Season tab to show newest first
+- **2026-06-22** — Season tab: populate Current rank tile from live leaderboard; drop irrelevant 'no penalties' sub-text
+- **2026-06-22** — Add Booster/Xfers columns to SL leaderboard; fix booster_activations RLS
+- **2026-06-22** — Fix C/VC/Booster column alignment in leaderboard expand panel
+- **2026-06-22** — Add Captain/VC/Booster columns to Season tabs; widen headers
+- **2026-06-22** — Nudge GitHub Pages redeploy
+- **2026-06-22** — Unify Pick XI stat tiles; add Captain/Vice-C dropdown picker
+- **2026-06-22** — Unify Pick XI stat tiles; add Captain/Vice-C dropdown picker
+- **2026-06-22** — SL: accent border on Captain/Vice-C tiles; rename Season tab to History
+- **2026-06-22** — Sort C/VC picker players by role (WK/BAT/AR/BOWL)
+- **2026-06-22** — Gate Save XI: disable on load, arm only on C/VC change (not composition change)
+- **2026-06-22** — Filter player match history/recent form by the player's own loaded tournament, not the global active flag
+- **2026-06-22** — Filter player match history/recent form by the player's own loaded tournament; show booster effects on pitch tiles
+- **2026-06-22** — Allow dual_captain in user_booster_activations check constraint; tournament/booster-tile fixes
+- **2026-06-22** — Bound recent-form stats query to the active tournament's matches to avoid PostgREST 1000-row truncation
+- **2026-06-22** — Close Edit Team panel on tournament switch; bound recent-form query to tournament matches
+- **2026-06-22** — Fix user_match_xi mirror: insert real player role instead of null
+- **2026-06-23** — Fix premature match-completion detection; add Revert to Live admin control
+- **2026-06-23** — Fix Daily leaderboard stale render after Recalc; guard mobile saveXI against saving into an already-locked match
+- **2026-06-23** — Add per-tournament dot_ball_enabled toggle
+- **2026-06-24** — Fix Daily leaderboard match dropdown missing matches locked to status='live'
+- **2026-06-24** — SL: Revert to Saved now also clears a pending booster for the next match
+- **2026-06-24** — SL: suspend the credit budget cap while Free Hit is active
+- **2026-06-24** — SL: Free Hit also suspends the season transfer-count cap, not just budget
+- **2026-06-24** — SL: extend season transfer-count cap bypass to Wildcard
+- **2026-06-24** — Home tile: show match time, stop auto-navigating on select, rename button
+- **2026-06-24** — SL: remove redundant Draft and Xfers from squad info bar
+- **2026-06-24** — SL: keep Xfers in info bar, only drop Draft 11/11
+- **2026-06-24** — SL: drop redundant 'No changes to save.' label below pitch
+- **2026-06-24** — SL: move Boosters button into a stat tile, open inline panel like Captain
+- **2026-06-24** — SL: booster tile shows 0/N instead of 'None' when nothing active
+- **2026-06-24** — SL: shrink booster pills to a 3-column grid (Option A)
+- **2026-06-24** — SL: stage booster picks, commit only on Save XI
+- **2026-06-24** — Db: listMatches() refuses falsy tournamentId instead of returning all tournaments
+- **2026-06-24** — Daily: refresh saved teams from DB on every visit to My Team tab
+- **2026-06-24** — Hide header tournament dropdown (testing Home-tile-only nav)
+- **2026-06-24** — Move Rules button to Leaderboard tab, scoped per contest; hide header T20 pill
+- **2026-06-24** — Add structured user profile: first/last/team name
+- **2026-06-24** — Move Rules into its own page-tab, inline with Home/My Team/Season/Leaderboard
+- **2026-06-25** — Fix: boot/tournament-switch XI restore was treating the live match as 'next', re-showing its stale XI instead of advancing to the match just saved (e.g. from mobile)
+- **2026-06-25** — Home tile: show live match separately, fix Next to skip the live match
+- **2026-06-25** — Remove duplicate live-team pill from Leaderboard screen
+- **2026-06-25** — Fix admin nextPlayerId() to check global player ids, not just the tournament-scoped PLAYERS array
+- **2026-06-25** — Add Type/Teams/Matches disclosure-pill filter bar to web and mobile player pool; fix admin nextPlayerId() to check global IDs
+- **2026-06-25** — Add Credits filter pill (Less than 8 / Between 8 & 10 / Greater than 10) to web and mobile player pool
+- **2026-06-25** — Cascade XI/SL recompute into fielding-issue and unmatched-player resolve flows
+- **2026-06-26** — Fix: close Edit Team panel after SL Save XI, so My Team reopens in Pick 11 view
+- **2026-06-28** — Fix: connectLive() no longer blocks scorecard fetch/completion when no user XI saved
+- **2026-06-28** — Fix: Team filter no longer scoped inside active match's teams in player pool
+- **2026-06-28** — Fix MLC scorecard discovery: map franchise short codes to CricketAddictor slugs
+- **2026-07-06** — Broaden placeholder-name check to include 'empty' prefix
+- **2026-07-06** — Block placeholder names from creating fielding-credit aliases
+- **2026-07-06** — Bump db.js cache-bust version
+- **2026-07-07** — Leaderboard: show transfers left instead of used; gate booster count on match lock
+- **2026-07-07** — Retry squad_draft_xi/booster writes on RLS violation with a session refresh, add clearer error
+- **2026-07-07** — Leaderboard: gate transfer count on match lock, same as booster count
+- **2026-07-07** — Fix SL booster staging/commit/display using inconsistent match resolution, causing silent no-op saves
+- **2026-07-07** — Align pitch visuals (role icons, team double, hidden role label) across web/mobile; fix booster used-status lock gating
+- **2026-07-07** — Add Review & Save popup to web (IN/OUT diff + booster banner), matching mobile
+- **2026-07-07** — Phase 1: add unit tests for scoring engine and duplicated helpers
+- **2026-07-07** — Phase 2: eliminate duplicated helpers across web + mobile
+- **2026-07-07** — Phase 3: Extract admin panel to lazily-loaded admin.js
+- **2026-07-08** — Leagues tab: surface join option for public Season Long contest
+- **2026-07-08** — Add refactor plan
+- **2026-07-08** — Fix ReferenceError: declare missing SERIES_ID_LS constant
+- **2026-07-08** — Fix Phase 3: expose missing window.__app refs (TEAMS_DATA, isTournamentStarted, switchTournament, KNOWN_TEAMS, API_KEY_LS)
+- **2026-07-08** — Fix Phase 3: wire all remaining missing window.__app refs
+- **2026-07-08** — Fix: remove resolveFielder from window.__app (nested closure, not module-scope)
+- **2026-07-08** — Fix admin: add refreshAdminViews() to re-render all tabs on DB connect
+- **2026-07-08** — Fix refreshAdminViews: only re-render active tab, preserve tournament selection
+- **2026-07-08** — Fix roleLabel undefined in renderFantasyScorecard (admin.js)
+- **2026-07-08** — Rebrand: Super Selector -> Maestro
+- **2026-07-08** — Fix Save XI wiping picks on first-time join (refreshOnly on post-join slLoadDraft)
+- **2026-07-08** — Fix slCheckAutoLock backfilling entire season history for mid-season joiners
+- **2026-07-09** — Maestro branding assets, tab bar inset fix, EAS config
+- **2026-07-09** — WEB History: remove XI PTS column, gold color for Xfers Left & Running
+- **2026-07-09** — WEB Pool: add plays-next / after-X-matches badge to every player tile
+- **2026-07-09** — Fix plays-after badge: use exclusion not status=upcoming (DB may use scheduled etc)
+- **2026-07-09** — Fix plays-after: anchor on active match number (idx count correct as-is)
+- **2026-07-09** — Cancel reverts XI; fullScreen modals; bounces=false; badge text fixes
+- **2026-07-09** — Fix booster pill count — show used/total instead of hardcoded 0
+- **2026-07-09** — Fix horizontal scroll in pool-open — min-width:0 on player cards + badge overflow ellipsis
+- **2026-07-10** — Player card — jersey left, C/VC horizontal middle, tick absolute, CR label
+- **2026-07-10** — Fix: enforce overseas cap in player picker (mobile + web)
+- **2026-07-10** — Fix: web Revert to Saved now uses lastSavedXI instead of lastLockedXI
+- **2026-07-10** — Fix: web pool-open grid — 1fr/1fr split + 2-col cards (was 2fr/1fr + 4-col, collapsing player names to 0px width)
+- **2026-07-10** — Guarantee locked XI matches exactly what was saved: tag draft with target_match_id, verify at lock time, fall back to carrying previous XI forward on mismatch
+- **2026-07-10** — Close mobile booster-commit gap: saveXI returns real squad/match ids, commitPending verifies via read-back instead of trusting stale cache or silently no-op'ing
+- **2026-07-10** — Fix Free Hit snapshot: capture actual pre-free-hit baseline (getPreviousMatchXI), not the free-hit team itself
+- **2026-07-11** — Fix jersey text color: player pool now uses luminance-aware color like Pick 11, instead of hardcoded white
+- **2026-07-11** — Rename SL Edit Team button to Make Transfers (matches mobile)
+- **2026-07-11** — Add Revert to Locked: web save-bar button + mobile two-column status strip
+- **2026-07-11** — Show suspended-booster label in Transfers stat box instead of a misleading fraction
+- **2026-07-11** — Fix Revert to Locked visibility + stale transfer log under Wildcard/Free Hit
+- **2026-07-11** — Check transferCapSuspended before the unlimited-cap branch too, not just the configured-cap one
+- **2026-07-11** — Fix slTransferCapSuspended/slBudgetCapSuspended reading the wrong match after live-lock redirect
+- **2026-07-11** — Revert to Saved/Locked stay visible when applicable, disabled instead of hidden when a no-op
+- **2026-07-11** — Leaderboard: gate per-team detail view (captain/VC/booster/transfers) on match lock status
+- **2026-07-11** — Leaderboard summary: exclude Free Hit/Wildcard transfers from transferCount (web + mobile)
+- **2026-07-11** — History views: exclude Free Hit/Wildcard transfers from budget countdown, label them as free
+- **2026-07-11** — Free Hit selection now loads the locked team as the starting point for edits
+- **2026-07-12** — Add admin push notifications + in-app ticker inbox
+- **2026-07-13** — Playoff first-match-unlimited: phase-aware transfer displays across home tile, season tab, leaderboard
+- **2026-07-13** — Fix leaderboard undercounting: paginate past PostgREST's 1000-row select cap
+- **2026-07-13** — Bump db.js cache-bust to v119; wire playoff_first_match_unlimited into lock-matches
+- **2026-07-13** — Fix seasonXferCap null-collapse: unlimited playoff match was showing pooled cap due to ?? fallback
+- **2026-07-13** — Fix misleading pending-transfer messaging for unlimited playoff-opener matches (web + mobile)
+- **2026-07-13** — Hide top-bar Xfers count during unlimited transfer phases
+- **2026-07-13** — Add upcoming-match schedule preview drawer to player pool
+- **2026-07-13** — Convert web schedule preview from right-side drawer to centered popup
+- **2026-07-13** — Scope schedule preview popup to the Player Pool panel
+- **2026-07-14** — Ticker: fix ellipsis clipping, decouple from read state, add configurable duration
+- **2026-07-14** — Add notification ticker to web client Home tab
+- **2026-07-14** — Fix ReferenceError: use state.db instead of out-of-scope db in ticker functions
+- **2026-07-14** — Merge Season tab into SL History tab; archive one-off diagnostic SQL scripts
+- **2026-07-14** — Add per-tournament non-overseas label + pool filter chip (web + mobile)
+- **2026-07-15** — Fix lock-matches: honor target_match_id guarantee before locking draft XI
+- **2026-07-15** — Leaderboard: show '-' for Xfer count on unlimited-transfer matches
+- **2026-07-15** — Fix stale transfer info bar showing capped-transfer text when Wildcard/Free Hit is active
+- **2026-07-16** — Block name-collision duplicates in CSV player import and Add Player
+- **2026-07-16** — Fix duplicate player creation (CSV import, Add Player, Scraper Unmatched); mobile currentMatchId staleness; leaderboard Xfer column + transfer info bar race
+- **2026-07-16** — Fix Home greeting flashing stale display_name before first name loads
+- **2026-07-16** — Scope name/alias matching to the two teams in each match; don't let a saved alias bypass ambiguity detection
+- **2026-07-16** — Bring poll-cricapi fielding-credit matching up to scrape-scorecard's standard: full 2-team roster, ambiguity detection, admin review queue
+- **2026-07-16** — Fix mobile Home greeting using email instead of first name; fix SL leaderboard showing team name twice
+- **2026-07-16** — Admin: add Live/Review/Danger Zone tabs, move Delete Tournament + Close Out Tournament to Danger Zone
+- **2026-07-16** — Admin: move team-code mismatch banner to Review tab
+- **2026-07-16** — Cache-bust admin.js load (was never versioned, unlike db.js) — fixes stale Danger Zone content on web
+- **2026-07-16** — Admin: move Unmatched Players/Fielding Issues/Recoverable Stats from Tournament tab to Review tab
+- **2026-07-16** — Admin: move live-connect bar, live scorecard, and fantasy scorecard from Schedule tab to Live tab
+- **2026-07-16** — Admin: move live-connect bar/scorecards to Live tab; keep per-match actions in Schedule
+- **2026-07-16** — Admin Phase 3: relabel Players toolbar, recopy Teams alias panel, collapse DB connection once connected
+- **2026-07-16** — Admin Phase 4: add Duplicate Players review queue (detect/delete/merge) to Review tab
+- **2026-07-16** — Fix: dedupe player_match_stats rows by local player id in Live tab's rescore/save-to-DB, matching Finalize's existing guard
+- **2026-07-16** — Remove duplicate Fix Team Codes button from Schedule — same function already in Teams tab
+- **2026-07-16** — Add Reference tab: full-depth documentation of every admin action and its impact
+- **2026-07-16** — Fix free-hit revert: previous-XI baseline lookups weren't checking the pre-free-hit snapshot
+- **2026-07-16** — Fix free-hit snapshot getting overwritten at lock time; correct Fedxpress's corrupted M32 snapshot/M33 draft
+- **2026-07-16** — Fix transfer-count baseline (prevXI) not applying free-hit-snapshot substitution
+- **2026-07-17** — CSV schedule bulk-upload + match delay/push-time/abandon workflow
+- **2026-07-17** — Tighten tournaments RLS to admin-only writes (was open to any authenticated user)
+- **2026-07-17** — Contest tab: consolidate per-field saves into one Save per contest, locked once tournament starts
+- **2026-07-17** — Pick 11: de-duplicate redundant over-budget messaging — save-bar label now points to the detailed note instead of restating it
+- **2026-07-18** — Fix transfer count double-counting current match; improve over-budget messaging (web + mobile)
+- **2026-07-20** — Fix: mobile player grid min card width — 155px→200px (tablet) + 1fr on phones (was 1fr 1fr, collapsed names)
+- **2026-07-20** — Feat: leaderboard progress chart — Table/Chart toggle + animated SVG in modal
+- **2026-07-20** — Fix: wire leaderboard toggle buttons via addEventListener (module scope)
+- **2026-07-20** — Fix: add Table/Chart toggle to inline Contest-tab leaderboard (not just modal)
+- **2026-07-20** — Fix: chart Y-axis font smaller + your-line glow/stroke reduced
+- **2026-07-21** — Fix: chart Y-axis nice step, remove dots, correct booster emoji mapping, dynamic legend
+- **2026-07-21** — Chart: smaller booster icons + single-line right labels
+- **2026-07-21** — Chart: configurable Top-N cap + interactive legend with eye toggle
+- **2026-07-21** — Feat: trace button on web + mobile leaderboard progress chart
+- **2026-07-21** — Add T20 30-run and 3/4-wicket bonus tiers, plus min-balls scoring notes in Rules UI
+- **2026-07-21** — Add admin Score Audit panel + Freeze rules action; verify-scores.js CLI tool
+- **2026-07-30** — Add privacy policy page
+- **2026-07-31** — Update privacy policy contact email to support address
+- **2026-08-04** — Fix window.__app.PLAYERS missing setter; make domestic-double booster icon/label tournament-specific instead of hardcoded US flag
+- **2026-08-04** — Make team_id/credits/is_overseas tournament-scoped instead of silently overwriting global players row on CSV import, edit, or scraper auto-add
+- **2026-08-04** — Add per-team custom jersey SVG asset (falls back to color fill)
+- **2026-08-04** — Fix jersey label sizing on custom SVG assets (inject text into SVG coordinate space instead of pixel-math overlay)
+- **2026-08-05** — Rename Pick XI booster label to 'Booster Applied'; fix mobile schedule ordering for unnumbered playoff fixtures
+- **2026-08-05** — Add 'name your squad' prompt on contest join (mobile); use profile team_name for the daily leaderboard mirror instead of hardcoded 'My Squad' (web)
+- **2026-08-05** — Add player photos: migration, import pipeline, Jersey rendering, Admin CSV import + kill switch
+- **2026-08-05** — Add player photo rendering to the deployed web app (index.html)
+- **2026-08-06** — Add photo-aware V-neck collar variant to jerseyHtml/pitchJerseyHtml, used only when a photo/silhouette is rendering; plain jersey collar unchanged
+- **2026-08-06** — Don't overlay team-code label on custom uploaded jersey designs (customJerseyHtml/customPitchJerseyHtml) — only the plain color-fill jersey shows the team code
+
+## 3) Mobile Developments
+
+- **2026-06-22** — Real per-matchweek leaderboard history + real contest deadlines
+- **2026-06-22** — Mirror mobile XI saves into user_teams so web sees them
+- **2026-06-23** — Add jersey-styled visuals to pitch map, player pool, and captain picker
+- **2026-06-23** — Add booster/transfer usage columns to mobile leaderboard (SL/private)
+- **2026-06-23** — Fix Home tile XI status + SL carry-forward + cross-contest selection bleed
+- **2026-06-23** — Rebuild Daily leaderboard to per-match model matching web
+- **2026-06-23** — Match web's auto-generated team name for mirrored Daily saves
+- **2026-06-23** — Gate match history on status, not lock_time/start_time
+- **2026-06-23** — Fix Daily leaderboard: scope by tournament, not unpopulated contest_id
+- **2026-06-23** — Reverse Daily match-history scroll: newest match rightmost, auto-scroll into view
+- **2026-06-23** — Add live score: Home pill + Leaderboard banner, full scorecard modal
+- **2026-06-23** — Fix live match detection: include status='live' (set by lock-matches), not just 'in_progress'
+- **2026-06-23** — Add live-team breakdown components
+- **2026-06-23** — Replace raw live scorecard with user's own live fantasy team (Daily + SL)
+- **2026-06-23** — Fix Daily leaderboard stale render after Recalc; guard mobile saveXI against saving into an already-locked match
+- **2026-06-23** — Gate dot_ball by tournament.dot_ball_enabled (migration_v30)
+- **2026-06-24** — Fix booster activation always failing (wrong upsert onConflict target)
+- **2026-06-24** — Add structured user profile: first/last/team name
+- **2026-06-25** — Add last-3 form strip + match-history modal to player pool (mobile)
+- **2026-06-25** — Match web's filter order; default match list to live/next match
+- **2026-06-25** — Fix currentMatchId still pointing at a live match instead of advancing to the next one
+- **2026-06-25** — Mobile SL boosters: staged-commit model, budget/transfer cap suspension, season transfer-cap enforcement, Free Hit revert
+- **2026-06-25** — Remove duplicate live-team pill from Leaderboard screen
+- **2026-06-25** — Add Type/Teams/Matches disclosure-pill filter bar to web and mobile player pool; fix admin nextPlayerId() to check global IDs
+- **2026-06-25** — Add Credits filter pill (Less than 8 / Between 8 & 10 / Greater than 10) to web and mobile player pool
+- **2026-06-26** — Sync SL draft state between web and mobile via squad_draft_xi
+- **2026-06-26** — Refetch SL stats/leaderboard/XI-status on focus, not just mount
+- **2026-06-26** — Fix Home SL stats querying transfer config from wrong table
+- **2026-06-26** — Fix Home SL stats query + guard saveXI against cross-tournament matchId
+- **2026-07-07** — Fix Dual Captain booster not highlighting Captain tile on mobile
+- **2026-07-07** — Fix mobile transfer count showing row count instead of actual transfers used
+- **2026-07-07** — Show transfers left, surface pending-transfer count, fix IN/OUT diff baseline
+- **2026-07-07** — Leaderboard: show transfers left instead of used; gate booster count on match lock
+- **2026-07-07** — Leaderboard: gate transfer count on match lock, same as booster count
+- **2026-07-07** — Align mobile pitch tiles with web: borderless tokens, badge-icon-swap booster decor
+- **2026-07-07** — Add overseas badge to mobile pitch tiles so OS/US Double targeting is visible
+- **2026-07-07** — Show Team Double's rocket icon on role-chip labels, matching web
+- **2026-07-07** — Align pitch visuals (role icons, team double, hidden role label) across web/mobile; fix booster used-status lock gating
+- **2026-07-07** — Align pitch visuals across web/mobile, fix booster used-status lock gating, show booster in IN/OUT review
+- **2026-07-07** — Adaptive per-row jersey sizing on pitch (was fixed 32px)
+- **2026-07-07** — Phase 1: add unit tests for scoring engine and duplicated helpers
+- **2026-07-07** — Phase 2: eliminate duplicated helpers across web + mobile
+- **2026-07-08** — Add Admin tab with Match Lock, Fetch Scores, and Player Map sections
+- **2026-07-08** — Rebrand: Super Selector -> Maestro
+- **2026-07-08** — Rebrand: fix remaining Super Selector on home/lobby screens, drop IPL 2026 tagline
+- **2026-07-08** — Add Expo Updates/EAS config and app icon assets
+- **2026-07-08** — Rebrand: add spacing between Maestro wordmark and tagline
+- **2026-07-09** — Fix tab bar insets, add countdown timer, EAS build config
+- **2026-07-09** — Maestro branding assets, tab bar inset fix, EAS config
+- **2026-07-09** — UI fixes: C/VC flow, leaderboard, home pill, cancel button, instant transitions
+- **2026-07-09** — Add plays-next / after-X-matches badge to player pool cards
+- **2026-07-09** — Fix plays-after badge: use exclusion not status=upcoming (DB may use scheduled etc)
+- **2026-07-09** — Fix plays-after: anchor on active match number (idx count correct as-is)
+- **2026-07-09** — Cancel reverts XI; fullScreen modals; bounces=false; badge text fixes
+- **2026-07-09** — Home: LIVE pill shows match name only; View Your XI replaces Edit Your XI in tiles
+- **2026-07-09** — Fix discardPending: use buildBoosterList so blocked boosters reset to available on cancel
+- **2026-07-09** — Match pill, revertXI+booster cancel, badge text, info strip, bounce fixes
+- **2026-07-10** — Design: BoostersBar — flat row of icon-first card tiles, no horizontal scroll, fonts 8/9→11px
+- **2026-07-10** — Design: theme xs/sm font bump 9→11/12px, PlayerPickerScreen gold reduction
+- **2026-07-10** — Design: ConfirmXIModal — 7 hardcoded sub-11px fonts → fontSize.xs, header/hint gold → neutral
+- **2026-07-10** — Design: MyXIScreen — sign-out → profile chip, info strip gold removal, larger CTA, neutral borders
+- **2026-07-10** — Design: HomeScreen — sign-out text link, SL header pts/xfer dark, structural gold borders → neutral
+- **2026-07-10** — Design: CricketPitch action sheet — cream bg, teal → app green; HomeScreen gold cleanup
+- **2026-07-10** — Design: Leaderboard gold/font cleanup; TournamentLobby sign-out link; BudgetBar+RoleStats stragglers
+- **2026-07-10** — Design: task #16 — font minimums + gold reduction across remaining components
+- **2026-07-10** — Fix: enforce overseas cap in player picker (mobile + web)
+- **2026-07-10** — Close mobile booster-commit gap: saveXI returns real squad/match ids, commitPending verifies via read-back instead of trusting stale cache or silently no-op'ing
+- **2026-07-11** — Fix jersey text color: player pool now uses luminance-aware color like Pick 11, instead of hardcoded white
+- **2026-07-11** — Add Revert to Locked: web save-bar button + mobile two-column status strip
+- **2026-07-11** — Fix unreadable revert pills: size off own padding instead of flex-dividing an undetermined height
+- **2026-07-11** — Clarify transfer messaging when Wildcard/Free Hit suspends the cap
+- **2026-07-11** — Fix Revert to Locked visibility + stale transfer log under Wildcard/Free Hit
+- **2026-07-11** — Fix Revert to Saved flashing on: guard against savedSnapshot being null on mount
+- **2026-07-11** — Revert to Locked: explicitly clear this match's transfer log instead of relying on diff computation
+- **2026-07-11** — Leaderboard summary: exclude Free Hit/Wildcard transfers from transferCount (web + mobile)
+- **2026-07-12** — Free Hit activation loads the locked team as the starting point for edits
+- **2026-07-12** — Block invalid role composition at pick-time (mirrors web's canAddToSlXi)
+- **2026-07-12** — Fix TDZ error: move currentMatchId and previousLockedXI declarations before use
+- **2026-07-12** — Add admin push notifications + in-app ticker inbox
+- **2026-07-13** — Playoff first-match-unlimited: phase-aware transfer displays across home tile, season tab, leaderboard
+- **2026-07-13** — Fix leaderboard undercounting: paginate past PostgREST's 1000-row select cap
+- **2026-07-13** — Fix misleading pending-transfer messaging for unlimited playoff-opener matches (web + mobile)
+- **2026-07-13** — Hide top-bar Xfers count during unlimited phases; mobile wording fix
+- **2026-07-13** — Add upcoming-match schedule preview drawer to player pool
+- **2026-07-14** — Ticker: fix ellipsis clipping, decouple from read state, add configurable duration
+- **2026-07-14** — Admin: fix keyboard covering Notify form, add dismiss handling
+- **2026-07-14** — Ticker: collapse newlines/whitespace so multiline messages stay single-line
+- **2026-07-14** — Ticker: fix text wrapping/no-scroll via offscreen width probe instead of position tricks
+- **2026-07-14** — Ticker: vertically center text via lineHeight (top:0 was pinning it, textAlignVertical is Android-only)
+- **2026-07-14** — Add per-tournament non-overseas label + pool filter chip (web + mobile)
+- **2026-07-15** — Refresh currentMatchId on Pick XI screen focus, not just app launch
+- **2026-07-16** — Fix mobile Home greeting using email instead of first name; fix SL leaderboard showing team name twice
+- **2026-07-17** — Match delay/push-time/abandon workflow, aligned with web admin
+- **2026-07-17** — Wire up google-services.json for Firebase push notifications
+- **2026-07-17** — Fix misleading transfer-budget-exhausted message on mobile Home — season cap is a hard block, not a pay-per-transfer option
+- **2026-07-18** — Block aliasing placeholder scraper names in Player Map
+- **2026-07-18** — Fix transfer count double-counting current match; improve over-budget messaging (web + mobile)
+- **2026-07-21** — Feat: leaderboard progress chart in mobile app (Top N + tappable legend)
+- **2026-07-21** — Feat: trace button on web + mobile leaderboard progress chart
+- **2026-07-21** — Add T20 30-run and 3/4-wicket bonus tiers, plus min-balls scoring notes in Rules UI
+- **2026-07-30** — Update Android package name to com.maestroapp.cricket
+- **2026-07-30** — Update google-services.json for new package name
+- **2026-08-04** — Fix hardcoded 'US Double' booster — icon/label now come from tournament domestic_label/domestic_icon, matching web fix
+- **2026-08-04** — Fix booster picker tiles rendering raw data-URI text instead of the crest image
+- **2026-08-04** — Shorten booster labels to '2x' and reduce tile font size to prevent truncation
+- **2026-08-04** — Block advancing past player picker until XI has exactly 11 players
+- **2026-08-04** — Add per-team custom jersey SVG asset (falls back to color fill)
+- **2026-08-04** — Fix jersey label sizing on custom SVG assets (inject text into SVG coordinate space instead of pixel-math overlay)
+- **2026-08-05** — Rename Pick XI booster label to 'Booster Applied'; fix mobile schedule ordering for unnumbered playoff fixtures
+- **2026-08-05** — Fix long player names clipping to '...' on Pick XI pitch tiles
+- **2026-08-05** — Add 'name your squad' prompt on contest join (mobile); use profile team_name for the daily leaderboard mirror instead of hardcoded 'My Squad' (web)
+- **2026-08-05** — Add player photos: migration, import pipeline, Jersey rendering, Admin CSV import + kill switch
+- **2026-08-05** — Fix player photo sizing/positioning: proper headroom above collar, larger head, pitch WK row clearance
+- **2026-08-06** — Add photo-aware V-neck collar variant to Jersey.tsx, used only when a photo/silhouette is rendering; plain jersey collar unchanged
+- **2026-08-06** — Don't overlay team-code label on custom uploaded jersey designs in Jersey.tsx — only the plain color-fill jersey shows the team code
+
+## How to update this document
+
+- After completing new work, append new dated bullets (`- **YYYY-MM-DD** — description`) to the bottom of the relevant section (Web Developments or Mobile Developments), keeping entries in chronological order within each section.
+- Use one bullet per commit or per small cluster of directly-related commits (e.g. a feature plus its immediate same-day bugfix). Base bullet text on the actual commit message(s), lightly cleaned up for readability — don't invent details that aren't in the commit.
+- If a change touches both `app/` (mobile) and root-level files (`index.html`, `db.js`, `admin.js`, migrations, `supabase/functions/*`) substantively, add the bullet to both sections. If in doubt about categorization or exact history, `git log` is the source of truth.
