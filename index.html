@@ -1265,7 +1265,7 @@
         <button class="rules-inner-tab" data-rtab="boosters"
                 style="padding:10px 16px; font-size:12px; font-weight:600; border:none;
                        border-bottom:2px solid transparent; background:transparent;
-                       color:var(--muted); cursor:pointer; white-space:nowrap;">⚡ Boosters</button>
+                       color:var(--muted); cursor:pointer; white-space:nowrap;">🏆 Contest</button>
         <button class="rules-inner-tab" data-rtab="leagues"
                 style="padding:10px 16px; font-size:12px; font-weight:600; border:none;
                        border-bottom:2px solid transparent; background:transparent;
@@ -11475,14 +11475,17 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
     $('#adminBtn').addEventListener('click', () => { if (isAdmin()) window.__admin?.openAdmin?.(); });
     // ─── Rules modal ─────────────────────────────────────────────────────────
 
+    // Descriptions kept in sync with the mobile app's BOOSTER_META
+    // (app/src/store/boosterStore.ts) so the same booster reads identically
+    // on both platforms' Rules/Contest tab.
     const BOOSTER_META_WEB = {
       triple_captain: { icon:'⚡', name:'Triple Captain',  desc:"Your Captain scores 3× their base points for one match. Use once per season." },
       dual_captain:   { icon:'👥', name:'Dual Captain',    desc:"Both Captain and Vice-Captain score 2× their base points for one match. Use once per season." },
-      team_double:    { icon:'🚀', name:'Team Double',      desc:"All 11 players score double points this matchweek. Use once per season." },
-      free_hit:       { icon:'🔄', name:'Free Hit',         desc:"One extra free transfer this matchweek at no points cost. Use once per season." },
-      wildcard:       { icon:'♾️', name:'Wildcard',         desc:"Unlimited transfers this matchweek, no points deduction. Use once per season." },
-      indian_double:  { icon:'🇺🇸', name:'US Double',      desc:"All US domestic (non-overseas) players in your XI score 2× this matchweek. Use once per season." },
-      os_double:      { icon:'✈️', name:'OS Double',        desc:"All overseas players in your XI score 2× their base points. Use once per season." },
+      team_double:    { icon:'🚀', name:'Team 2x',         desc:"All 11 players score 2x their base points. Use once per season." },
+      free_hit:       { icon:'🔄', name:'Free Hit',         desc:"Unlimited transfers this match with no budget-cap limit; Team reverts to previous match's locked team after the match. Use once per season." },
+      wildcard:       { icon:'♾️', name:'Wildcard',         desc:"Unlimited transfers this match — Locked Team is carried forward in the next match. Use once per season." },
+      indian_double:  { icon:'🇺🇸', name:'US 2x',         desc:"All US domestic (non-overseas) players in your XI score 2× their base points. Use once per season." },
+      os_double:      { icon:'✈️', name:'OS 2x',           desc:"All overseas players in your XI score 2× their base points. Use once per season." },
     };
 
     const RULES_BATTING = [
@@ -11560,7 +11563,17 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
 
     async function loadRulesData() {
       if (rulesData) return rulesData;
-      const result = { rules: null, boosters: [], fmt: 'T20', isDefault: true, dotBallEnabled: false };
+      const result = {
+        rules: null, fmt: 'T20', isDefault: true, dotBallEnabled: false,
+        // available_boosters is a JSONB map of booster_key → uses-per-season
+        // (see migration_v12_boosters.sql / migration_v47's max-uses
+        // trigger) — NOT an array. Reading it as an array (the old
+        // behaviour here) silently dropped the per-booster use count, so a
+        // booster configured for 2 uses looked identical to one configured
+        // for 1. Mirrors the equivalent fix in the mobile app's RulesScreen.
+        boosters: {},
+        transferConfig: null, leagueMatchCount: null, playoffMatchCount: null,
+      };
 
       try {
         const tid = state.activeTournamentId;
@@ -11575,17 +11588,39 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
           const fmtRules = allRules?.[result.fmt] ?? null;
           if (fmtRules) { result.rules = fmtRules; result.isDefault = false; }
 
-          // Boosters from the specific contest the Rules button was opened
-          // from (falls back to a type match, then the first contest, if the
-          // exact id isn't found — e.g. contest list hasn't loaded yet).
+          // Contest config — boosters + transfers, from the specific contest
+          // the Rules button was opened from (falls back to a type match,
+          // then any season_long/private contest, then the first contest —
+          // transfer caps/boosters only exist on season_long/private
+          // contests, not daily, so prefer those over an arbitrary list[0]
+          // that might be a daily contest with none of this configured).
           const contests = await state.db.getContests(tid);
           const list = contests ?? [];
           const contest = list.find(c => c.id === activeRulesContest.id)
             ?? list.find(c => c.contest_type === activeRulesContest.type)
+            ?? list.find(c => c.contest_type === 'season_long')
             ?? list[0];
-          if (contest?.available_boosters) {
-            result.boosters = Array.isArray(contest.available_boosters)
-              ? contest.available_boosters : [];
+
+          if (contest?.available_boosters
+              && typeof contest.available_boosters === 'object'
+              && !Array.isArray(contest.available_boosters)) {
+            result.boosters = contest.available_boosters;
+          }
+
+          if (contest) {
+            result.transferConfig = {
+              total_transfers_allowed:       contest.total_transfers_allowed       ?? null,
+              playoff_transfers_allowed:     contest.playoff_transfers_allowed     ?? null,
+              playoff_first_match_unlimited: contest.playoff_first_match_unlimited ?? false,
+              start_match_number:            contest.start_match_number           ?? null,
+              playoff_start_match_number:    contest.playoff_start_match_number   ?? null,
+            };
+            if (result.transferConfig.playoff_start_match_number != null) {
+              const playoffStart = result.transferConfig.playoff_start_match_number;
+              const matches = state.matches || [];
+              result.leagueMatchCount  = matches.filter(m => (m.match_number ?? 0) > 0 && (m.match_number ?? 0) < playoffStart).length;
+              result.playoffMatchCount = matches.filter(m => (m.match_number ?? 0) >= playoffStart).length;
+            }
           }
         }
       } catch(e) { console.warn('[rules] load failed', e); }
@@ -11640,32 +11675,67 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
         `;
 
       } else if (tab === 'boosters') {
-        if (!data.boosters.length) {
+        // Tab id kept as 'boosters' internally (data-rtab, rulesActiveTab) —
+        // only the visible label changed to "Contest" — so this branch now
+        // renders both Transfers and Boosters, mirroring the mobile app's
+        // Contest section in RulesScreen.tsx.
+        const boosterIds = Object.keys(data.boosters);
+        const tc = data.transferConfig;
+
+        if (!boosterIds.length && !tc) {
           el.innerHTML = `<div style="padding:40px 16px; text-align:center; color:var(--muted); font-size:13px;">
-            No boosters configured for this tournament's contest.</div>`;
+            No contest details configured for this tournament.</div>`;
           return;
         }
+
         el.innerHTML = `
-          <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px;
-                      padding:10px 12px; margin-bottom:12px; font-size:12px; color:var(--muted); line-height:1.6;">
-            Boosters are one-time power-ups for Season Long and private leagues.
-            Only <strong style="color:var(--accent)">one booster</strong> can be active per match.
-            Once used it cannot be reapplied.
-          </div>
-          ${data.boosters.map(id => {
-            const dm = id === 'indian_double' ? getDomesticBoosterMeta() : null;
-            const m = dm ? { icon: dm.icon, name: dm.label, desc: dm.desc }
-                          : (BOOSTER_META_WEB[id] ?? { icon:'🎯', name:id, desc:'Special booster — use once per season.' });
-            return `
-              <div style="display:flex; gap:12px; padding:12px; margin-bottom:8px;
-                          border:1px solid var(--border); border-radius:8px; background:var(--panel);">
-                <span style="font-size:26px; flex-shrink:0;">${iconHtml(m.icon, m.name)}</span>
-                <div>
-                  <div style="font-size:13px; font-weight:700; color:var(--text); margin-bottom:3px;">${m.name}</div>
-                  <div style="font-size:12px; color:var(--muted); line-height:1.5;">${m.desc}</div>
-                </div>
-              </div>`;
-          }).join('')}
+          ${tc ? `
+            <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px;
+                        color:var(--muted); margin:2px 0 6px;">Transfers</div>
+            <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px;
+                        padding:10px 12px; margin-bottom:8px; font-size:12px; color:var(--muted); line-height:1.6;">
+              <strong style="color:var(--accent)">League Phase:</strong>
+              ${tc.total_transfers_allowed ?? 'Unlimited'} transfers${data.leagueMatchCount != null ? ` for the ${data.leagueMatchCount} league matches` : ''} —
+              unlimited until your first match locks, then the cap applies.
+            </div>
+            <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px;
+                        padding:10px 12px; margin-bottom:12px; font-size:12px; color:var(--muted); line-height:1.6;">
+              <strong style="color:var(--accent)">Playoffs:</strong>
+              ${tc.playoff_transfers_allowed ?? 'Unlimited'} transfers${data.playoffMatchCount != null ? ` for the ${data.playoffMatchCount} playoff matches` : ''}${tc.playoff_first_match_unlimited
+                ? ' — unlimited until Qualifier 1 match locks, then the cap applies.'
+                : '.'}
+            </div>
+          ` : ''}
+          ${boosterIds.length ? `
+            <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px;
+                        color:var(--muted); margin:2px 0 6px;">Boosters</div>
+            <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px;
+                        padding:10px 12px; margin-bottom:12px; font-size:12px; color:var(--muted); line-height:1.6;">
+              ${boosterIds.length} booster${boosterIds.length !== 1 ? 's' : ''} available this season.
+              Only <strong style="color:var(--accent)">one booster</strong> can be active per match, and each can only be
+              used the number of times shown below.
+            </div>
+            ${boosterIds.map(id => {
+              const uses = data.boosters[id];
+              const dm = id === 'indian_double' ? getDomesticBoosterMeta() : null;
+              const m = dm ? { icon: dm.icon, name: dm.label, desc: dm.desc }
+                            : (BOOSTER_META_WEB[id] ?? { icon:'🎯', name:id, desc:'Special booster — use once per season.' });
+              return `
+                <div style="display:flex; gap:12px; padding:12px; margin-bottom:8px;
+                            border:1px solid var(--border); border-radius:8px; background:var(--panel);">
+                  <span style="font-size:26px; flex-shrink:0;">${iconHtml(m.icon, m.name)}</span>
+                  <div style="flex:1; min-width:0;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:3px;">
+                      <div style="font-size:13px; font-weight:700; color:var(--text);">${m.name}</div>
+                      <div style="font-size:10px; font-weight:700; color:var(--text); white-space:nowrap;
+                                  background:rgba(201,168,76,0.15); border:1px solid rgba(201,168,76,0.4);
+                                  border-radius:6px; padding:2px 8px;">${uses} use${uses !== 1 ? 's' : ''}</div>
+                    </div>
+                    <div style="font-size:12px; color:var(--muted); line-height:1.5;">${m.desc}</div>
+                  </div>
+                </div>`;
+            }).join('')}
+          ` : ''}
         `;
 
       } else {
