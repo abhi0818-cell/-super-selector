@@ -52,6 +52,7 @@ export interface Booster {
   id:     string;
   icon:   string;
   name:   string;
+  fullName: string;
   desc:   string;
   scope:  BoosterScope;
   slot:   BoosterSlot;
@@ -65,7 +66,14 @@ export interface Booster {
 
 interface BoosterMeta {
   icon:  string;
+  /** Short label shown on the tile itself — kept tight (2-3 chars where
+   * possible) so all 7 boosters fit in one un-scrollable row without
+   * truncating (see BoostersBar.tsx). */
   name:  string;
+  /** Full, unabbreviated name — used anywhere there's room to spell it out
+   * (long-press info alert title, staged/removed toasts), so shortening
+   * `name` for tile-width reasons never actually hides the real name. */
+  fullName: string;
   desc:  string;
   scope: BoosterScope;
   slot:  BoosterSlot;
@@ -74,14 +82,16 @@ interface BoosterMeta {
 export const BOOSTER_META: Record<string, BoosterMeta> = {
   triple_captain: {
     icon:  '⚡',
-    name:  'Triple Captain',
+    name:  '3xC',
+    fullName: 'Triple Captain',
     desc:  "Your Captain scores 3× their base points for one match. Use once per season.",
     scope: 'captain',
     slot:  'captain',
   },
   dual_captain: {
     icon:  '👥',
-    name:  'Dual Captain',
+    name:  'C+C',
+    fullName: 'Dual Captain',
     desc:  "Both Captain and Vice-Captain score 2× their base points for one match. Use once per season.",
     // Applies to BOTH the Captain and Vice-Captain tiles — mirrors web's
     // pitchBoosterDecor, which sets `boosted` for `(isCap || isVc)` when
@@ -92,35 +102,40 @@ export const BOOSTER_META: Record<string, BoosterMeta> = {
   },
   team_double: {
     icon:  '🚀',
-    name:  'Team 2x',
-    desc:  "All 11 players score double points this matchweek. Use once per season.",
+    name:  '2x',
+    fullName: 'Team 2x',
+    desc:  "All 11 players score 2x their base points. Use once per season.",
     scope: 'all',
     slot:  'squad',
   },
   free_hit: {
     icon:  '🔄',
-    name:  'Free Hit',
-    desc:  "Unlimited transfers this matchweek with no budget-cap limit; your squad reverts after the match. Use once per season.",
+    name:  'FH',
+    fullName: 'Free Hit',
+    desc:  "Unlimited transfers this match with no budget-cap limit; Team reverts to previous match's locked team after the match. Use once per season.",
     scope: 'all',
     slot:  'transfers',
   },
   wildcard: {
     icon:  '♾️',
-    name:  'Wildcard',
-    desc:  "Unlimited transfers this matchweek, no points deduction — picks are permanent. Use once per season.",
+    name:  'WC',
+    fullName: 'Wildcard',
+    desc:  "Unlimited transfers this match — Locked Team is carried forward in the next match. Use once per season.",
     scope: 'all',
     slot:  'transfers',
   },
   indian_double: {
     icon:  '🇺🇸',
-    name:  'US 2x',
+    name:  '2x',
+    fullName: 'US 2x',
     desc:  "All US domestic (non-overseas) players in your XI score 2× their base points. Use once per season.",
     scope: 'all',
     slot:  'squad',
   },
   os_double: {
     icon:  '✈️',
-    name:  'OS 2x',
+    name:  '2x',
+    fullName: 'OS 2x',
     desc:  "All overseas players in your XI score 2× their base points. Use once per season.",
     scope: 'all',
     slot:  'squad',
@@ -129,6 +144,7 @@ export const BOOSTER_META: Record<string, BoosterMeta> = {
   super_cap: {
     icon:  '⚡',
     name:  'Super Captain',
+    fullName: 'Super Captain',
     desc:  "Doubles your Captain's 2× multiplier to 4×. Use once per season.",
     scope: 'captain',
     slot:  'captain',
@@ -136,6 +152,7 @@ export const BOOSTER_META: Record<string, BoosterMeta> = {
   super_vc: {
     icon:  '🚀',
     name:  'Super Vice-Captain',
+    fullName: 'Super Vice-Captain',
     desc:  "Doubles your Vice-Captain's 1.5× multiplier to 3×. Use once per season.",
     scope: 'vice_captain',
     slot:  'vice_captain',
@@ -159,7 +176,8 @@ function getDomesticBoosterMeta(): BoosterMeta {
   const label = getDomesticLabel();
   return {
     icon:  getDomesticIcon() || DOMESTIC_ICON_FALLBACK,
-    name:  `${label} 2x`,
+    name:  '2x',
+    fullName: `${label} 2x`,
     desc:  `All ${label} (non-overseas) players in your XI score 2× their base points.`,
     scope: 'all',
     slot:  'squad',
@@ -349,7 +367,7 @@ function buildBoosterList(
 ): Booster[] {
   return Object.keys(availableMap).map(id => {
     const meta = getBoosterMeta(id) ?? {
-      icon: '🎯', name: id, desc: '', scope: 'all' as BoosterScope, slot: 'squad' as BoosterSlot,
+      icon: '🎯', name: id, fullName: id, desc: '', scope: 'all' as BoosterScope, slot: 'squad' as BoosterSlot,
     };
 
     const totalUses   = availableMap[id] ?? 1;

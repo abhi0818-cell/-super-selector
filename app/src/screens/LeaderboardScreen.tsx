@@ -197,8 +197,8 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
               <Text style={styles.modalCloseText}>✕</Text>
             </Pressable>
             <View style={styles.modalMeta}>
-              <Text style={styles.modalName} numberOfLines={1}>{entry.displayName}</Text>
-              <Text style={styles.modalTeamName} numberOfLines={1}>{entry.teamName}</Text>
+              <Text style={styles.modalName} numberOfLines={1}>{entry.teamName}</Text>
+              <Text style={styles.modalTeamName} numberOfLines={1}>{entry.displayName}</Text>
             </View>
             <View style={styles.modalTotalBox}>
               <Text style={styles.modalTotalPts}>{entry.points.toLocaleString()}</Text>
@@ -414,18 +414,18 @@ function EntryRow({ entry, onPress, showSlCols }: EntryRowProps) {
         )}
       </View>
 
-      {/* Avatar */}
+      {/* Avatar — initial of the team name, since that's now the headline identity */}
       <View style={[styles.avatar, entry.isCurrentUser && styles.avatarMe]}>
-        <Text style={styles.avatarText}>{entry.displayName.charAt(0).toUpperCase()}</Text>
+        <Text style={styles.avatarText}>{entry.teamName.charAt(0).toUpperCase()}</Text>
       </View>
 
-      {/* Names */}
+      {/* Names — team name is the headline (bold), user's display name is the subline. */}
       <View style={styles.nameBlock}>
         <Text style={[styles.displayName, entry.isCurrentUser && styles.displayNameMe]}>
-          {entry.displayName}
+          {entry.teamName}
           {entry.isCurrentUser && <Text style={styles.youBadge}> (you)</Text>}
         </Text>
-        <Text style={styles.teamName}>{entry.teamName}</Text>
+        <Text style={styles.teamName}>{entry.displayName}</Text>
         {showSlCols && (
           <View style={styles.slColsRow}>
             <Text style={styles.slColText}>🎯 {boosterLabel}</Text>

@@ -66,7 +66,7 @@ export default function BoostersBar({ contestType, squadId, matchId, onStaged, p
       const reason = b.usedInOther >= b.totalUses
         ? 'This booster has already been used this season.'
         : 'Another booster is already selected for this match, or this one has no effect here.';
-      Alert.alert(`${alertIcon(b.icon)}  ${b.name}`, reason);
+      Alert.alert(`${alertIcon(b.icon)}  ${b.fullName}`, reason);
       return;
     }
 
@@ -88,15 +88,15 @@ export default function BoostersBar({ contestType, squadId, matchId, onStaged, p
     }
 
     onStaged?.(becomingStaged
-      ? `${alertIcon(b.icon)} ${b.name} staged — Save XI to confirm.${resetNote}`
-      : `${alertIcon(b.icon)} ${b.name} removed — Save XI to confirm.`);
+      ? `${alertIcon(b.icon)} ${b.fullName} staged — Save XI to confirm.${resetNote}`
+      : `${alertIcon(b.icon)} ${b.fullName} removed — Save XI to confirm.`);
   };
 
   const handleInfo = (id: string) => {
     const b = boosters.find(x => x.id === id)!;
     const remaining = Math.max(b.totalUses - b.usedInOther, 0);
     const usesLine = b.totalUses > 1 ? `\n\n${remaining}/${b.totalUses} uses remaining this season.` : '';
-    Alert.alert(`${alertIcon(b.icon)}  ${b.name}`, `${b.desc}${usesLine}`);
+    Alert.alert(`${alertIcon(b.icon)}  ${b.fullName}`, `${b.desc}${usesLine}`);
   };
 
   return (
@@ -126,12 +126,16 @@ export default function BoostersBar({ contestType, squadId, matchId, onStaged, p
               onPress={() => handlePress(b.id)}
               onLongPress={() => handleInfo(b.id)}
             >
-              {showsBadge && (
-                <View style={[styles.usesBadge, isUsed && styles.usesBadgeSpent]}>
-                  <Text style={styles.usesBadgeText}>{remaining}/{b.totalUses}</Text>
-                </View>
-              )}
-              <BoosterIcon icon={b.icon} size={20} style={styles.cardIcon} />
+              {/* Fixed-height box so emoji icons (Text, ~20px glyph) and crest
+                  icons (Image, explicit pixel size) land at the same vertical
+                  position — otherwise the name text below sat at different
+                  heights tile-to-tile. The crest is also rendered smaller
+                  than the emoji footprint and centered in that box, instead
+                  of filling it edge-to-edge, so it no longer collides with
+                  the uses-remaining badge in the corner. */}
+              <View style={styles.iconBox}>
+                <BoosterIcon icon={b.icon} size={20} style={styles.cardIcon} imageStyle={styles.cardIconImage} />
+              </View>
               <Text
                 style={[styles.cardName, isUsed && styles.cardNameUsed]}
                 numberOfLines={1}
@@ -142,6 +146,15 @@ export default function BoostersBar({ contestType, squadId, matchId, onStaged, p
                 <Text style={[styles.cardStatus, isPending && styles.cardStatusPending]}>
                   {isPending ? 'Staged' : 'Active'}
                 </Text>
+              )}
+              {/* Rendered LAST so it paints above the icon (RN stacks same-
+                  zIndex siblings in JSX order) — previously this sat before
+                  BoosterIcon and the flag-crest image (e.g. Caribbean's data-
+                  URI icon) painted over it, hiding the "2" count entirely. */}
+              {showsBadge && (
+                <View style={[styles.usesBadge, isUsed && styles.usesBadgeSpent]}>
+                  <Text style={styles.usesBadgeText}>{remaining}/{b.totalUses}</Text>
+                </View>
               )}
             </Pressable>
           );
@@ -199,23 +212,41 @@ const styles = StyleSheet.create({
   cardIcon: {
     fontSize: 20,
   },
+  iconBox: {
+    height:         22,
+    alignItems:     'center',
+    justifyContent: 'center',
+  },
+  cardIconImage: {
+    width:        14,
+    height:        14,
+    borderRadius:  3,
+  },
   usesBadge: {
     position:        'absolute',
-    top:             4,
-    right:           4,
-    minWidth:        22,
-    paddingHorizontal: 3,
-    paddingVertical: 1,
-    borderRadius:    8,
+    top:             2,
+    right:           2,
+    minWidth:        16,
+    height:          14,
+    paddingHorizontal: 2,
+    borderRadius:    7,
     backgroundColor: C.accent,
     alignItems:      'center',
+    justifyContent:  'center',
+    borderWidth:     1,
+    borderColor:     '#FFFFFF',
+    // Explicit stacking (in addition to JSX paint order) so the badge
+    // reliably sits above icon images on Android, where elevation also
+    // affects paint order between siblings.
+    zIndex:          10,
+    elevation:       4,
   },
   usesBadgeSpent: {
     backgroundColor: C.muted,
   },
   usesBadgeText: {
-    fontSize:   8.5,
-    fontWeight: '700',
+    fontSize:   7,
+    fontWeight: '800',
     color:      '#FFFFFF',
   },
   cardName: {
