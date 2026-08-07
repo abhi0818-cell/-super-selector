@@ -213,14 +213,26 @@ const styles = StyleSheet.create({
     fontSize: 20,
   },
   iconBox: {
-    height:         22,
+    height:         26,
     alignItems:     'center',
     justifyContent: 'center',
+    // Explicit — Android clips a View's children to its bounds by default
+    // unless overflow is set to 'visible', regardless of RN's declarative
+    // default. Multi-color emoji glyphs (✈️🚀♾️🔄👥⚡ at fontSize 20) often
+    // render a couple px taller than their reported text height, and were
+    // getting bottom-clipped by the fixed-height box on Android without
+    // this. The crest image below is sized to fit within the box, so this
+    // is purely a safety margin for the emoji case.
+    overflow:       'visible',
   },
   cardIconImage: {
-    width:        14,
-    height:        14,
-    borderRadius:  3,
+    // Bumped up from 14 — at 14px the crest read visibly smaller than the
+    // ~20-24px emoji icons next to it. Now that the uses-badge reliably
+    // paints on top (see the comment below), the crest no longer needs to
+    // be tiny just to dodge the badge corner.
+    width:        18,
+    height:        18,
+    borderRadius:  4,
   },
   usesBadge: {
     position:        'absolute',
