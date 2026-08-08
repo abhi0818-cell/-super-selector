@@ -2782,9 +2782,16 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
             else fieldingIssues.push({ stage: 'parse', dismissalType: 'stumped', batter: batterName, dismissalRaw, reason: 'no fielder name found in dismissal text' });
           }
           if (parsed.type === 'run_out') {
-            if (parsed.fielder || parsed.fielder2) {
-              addFielding(parsed.fielder,  'runOutDirect');
+            if (parsed.fielder && parsed.fielder2) {
+              // Two fielders named — "run out (A / B)" doesn't reliably tell
+              // you who threw vs who broke the stumps (convention varies by
+              // source), so credit both as assists rather than arbitrarily
+              // treating whichever name comes first as the "direct" hit.
+              addFielding(parsed.fielder,  'runOutIndirect');
               addFielding(parsed.fielder2, 'runOutIndirect');
+            } else if (parsed.fielder || parsed.fielder2) {
+              // Exactly one fielder named — a clean, solo direct hit.
+              addFielding(parsed.fielder || parsed.fielder2, 'runOutDirect');
             } else {
               fieldingIssues.push({ stage: 'parse', dismissalType: 'run_out', batter: batterName, dismissalRaw, reason: 'no fielder name found in dismissal text' });
             }

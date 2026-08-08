@@ -326,6 +326,42 @@ function firstLinkText(html: string): string {
   return m ? m[1].trim() : ''
 }
 
+// When a batter's name isn't a hyperlink (common for less-established
+// players CricketAddictor hasn't built a profile page for), the old logic
+// took just the cell's first whitespace-delimited token as "the name" —
+// which breaks the moment a name has more than one word (e.g. "Chemar
+// Parris"): the surname is then left stuck as a prefix on the dismissal
+// text ("Parris c Jahmar Hamilton b A Joseph"), which fails every
+// ^-anchored dismissal regex downstream (parseScrapedDismissal here, and
+// its client-side twin index.html's parseDismissalEntry) with no error or
+// visible warning — silently dropping the named fielder's credit entirely.
+// Instead, search for the EARLIEST known dismissal-text opening
+// (word-boundary anchored) and treat everything before it as the name.
+const DISMISSAL_START_RE = /\b(not\s*out|run\s*out|runout|hit\s*wicket|c\s*&\s*b|ct\s|c\s|st\s|lbw|b\s)/i
+
+function splitNameAndDismissal(strippedCell: string, linkedName: string): { name: string; afterName: string } {
+  if (linkedName) {
+    // Full name already known from the <a> link — just peel it off the front.
+    return strippedCell.startsWith(linkedName)
+      ? { name: linkedName, afterName: strippedCell.slice(linkedName.length).trim() }
+      : { name: linkedName, afterName: strippedCell.replace(linkedName, '').trim() }
+  }
+  const m = strippedCell.match(DISMISSAL_START_RE)
+  if (m && m.index !== undefined && m.index > 0) {
+    return { name: strippedCell.slice(0, m.index).trim(), afterName: strippedCell.slice(m.index).trim() }
+  }
+  // No recognizable dismissal keyword found at all — fall back to the old
+  // first-token heuristic rather than guessing further (e.g. a genuinely
+  // unrecognized format, or an empty cell).
+  const fallbackName = strippedCell.split(' ')[0]
+  return {
+    name: fallbackName,
+    afterName: strippedCell.startsWith(fallbackName)
+      ? strippedCell.slice(fallbackName.length).trim()
+      : strippedCell.replace(fallbackName, '').trim(),
+  }
+}
+
 function parseTables(html: string): string[] {
   const tables: string[] = []
   const re = /<table[\s\S]*?<\/table>/gi
@@ -385,16 +421,14 @@ function parseCricketAddictor(html: string): Innings[] {
       for (const cells of parseRows(tables[0])) {
         if (cells.length < 6) continue
         const nameHtml  = cells[0]
-        const name      = firstLinkText(nameHtml) || stripTags(nameHtml).split(' ')[0]
-        if (!name) continue
         // The dismissal text lives in the same cell, after the name and a small
         // arrow-icon <img> (e.g. "Lhuan-dre Pretorius [icon] c A Fletcher b A
         // Russell" or "Hammad Azam Not out"). Strip the whole cell to plain text,
-        // then peel the name back off the front to leave just the dismissal part.
+        // then peel the name back off the front to leave just the dismissal part
+        // — see splitNameAndDismissal() for why this isn't just "first word".
         const strippedCell = stripTags(nameHtml)
-        const afterName = strippedCell.startsWith(name)
-          ? strippedCell.slice(name.length).trim()
-          : strippedCell.replace(name, '').trim()
+        const { name, afterName } = splitNameAndDismissal(strippedCell, firstLinkText(nameHtml))
+        if (!name) continue
         const notOut    = afterName === '' || /^not\s*out/i.test(afterName)
         const dismissed = !notOut
         batting.push({
@@ -1298,8 +1332,17 @@ Deno.serve(async (req: Request) => {
             if (parsed.type === 'caught')  addFieldingCredit(parsed.fielder, 'catches', bat.name, bat.dismissalText!)
             if (parsed.type === 'stumped') addFieldingCredit(parsed.fielder, 'stumpings', bat.name, bat.dismissalText!)
             if (parsed.type === 'run_out') {
-              addFieldingCredit(parsed.fielder,  'runOutDirect',   bat.name, bat.dismissalText!)
-              addFieldingCredit(parsed.fielder2, 'runOutIndirect', bat.name, bat.dismissalText!)
+              if (parsed.fielder && parsed.fielder2) {
+                // Two fielders named — the scorecard notation doesn't
+                // reliably tell you who threw vs who broke the stumps, so
+                // credit both as assists instead of arbitrarily treating
+                // whichever name is listed first as the "direct" hit.
+                addFieldingCredit(parsed.fielder,  'runOutIndirect', bat.name, bat.dismissalText!)
+                addFieldingCredit(parsed.fielder2, 'runOutIndirect', bat.name, bat.dismissalText!)
+              } else {
+                // Exactly one fielder named — a clean, solo direct hit.
+                addFieldingCredit(parsed.fielder ?? parsed.fielder2, 'runOutDirect', bat.name, bat.dismissalText!)
+              }
             }
           }
 

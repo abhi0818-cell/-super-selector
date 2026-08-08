@@ -299,8 +299,17 @@ function fromCricAPI(payload: any): { players: ApiPlayer[]; fieldingEvents: Fiel
       if (parsed.type === 'caught')  addFielding(parsed.fielder, 'catches', batterName, dismissalText)
       if (parsed.type === 'stumped') addFielding(parsed.fielder, 'stumpings', batterName, dismissalText)
       if (parsed.type === 'run_out') {
-        addFielding(parsed.fielder, 'runOutDirect', batterName, dismissalText)
-        addFielding(parsed.fielder2, 'runOutIndirect', batterName, dismissalText)
+        if (parsed.fielder && parsed.fielder2) {
+          // Two fielders named — the scorecard notation doesn't reliably
+          // tell you who threw vs who broke the stumps, so credit both as
+          // assists instead of arbitrarily treating whichever name is
+          // listed first as the "direct" hit.
+          addFielding(parsed.fielder, 'runOutIndirect', batterName, dismissalText)
+          addFielding(parsed.fielder2, 'runOutIndirect', batterName, dismissalText)
+        } else {
+          // Exactly one fielder named — a clean, solo direct hit.
+          addFielding(parsed.fielder ?? parsed.fielder2, 'runOutDirect', batterName, dismissalText)
+        }
       }
     }
 
