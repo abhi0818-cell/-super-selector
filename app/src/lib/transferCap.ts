@@ -178,36 +178,32 @@ export async function getPreviousMatchXI(
 }
 
 /**
- * Mirrors lockMatchXI's isFirstActiveLock detection: true if this squad has
- * no real transfer baseline — either it never locked anything before, or the
- * only prior lock on record was a retroactive one for an already-completed
- * match the squad never actually picked. False (real baseline) if any
- * earlier match has a recorded user_match_xi row for this squad.
+ * Mirrors lockMatchXI's isFirstActiveLock detection: true only when this
+ * squad has NO recorded previous locked XI at all (prev.playerIds is empty)
+ * — i.e. this is genuinely the squad's first-ever lock, so there's nothing
+ * to diff a transfer against.
+ *
+ * Previously this also exempted any squad whose last-locked match was
+ * itself the earliest match in the schedule (no way to check "was there an
+ * even earlier lock" for it), on the theory that it might be a late-joiner's
+ * retroactively auto-filled placeholder rather than a real pick. In practice
+ * that fired for EVERY squad's ordinary M1→M2 transition too — M1 never has
+ * an earlier match by definition — silently making the season's first real
+ * transfer free for every squad, not just late joiners. Web's display-side
+ * calc was already narrowed to just `!prev.length` (see index.html's
+ * isFirstActiveLock, fixed in commit 22020e0) specifically because the
+ * broader check was misfiring on the common case; this brings the
+ * authoritative lock-time check (here, db.js's lockMatchXI, and the
+ * lock-matches Edge Function) in line with that same, narrower rule so a
+ * squad's real M1 pick is always honored as a real baseline for M2 —
+ * matching what the UI has told users to expect all along.
  */
 export async function computeIsFirstActiveLock(
-  squadId: string,
+  _squadId: string,
   prev: PreviousXI,
-  allMatches: MatchLite[],
+  _allMatches: MatchLite[],
 ): Promise<boolean> {
-  if (!prev.playerIds.length) return true;
-
-  const prevMatchStatus = prev.matchId
-    ? (allMatches.find(m => m.id === prev.matchId)?.status ?? null)
-    : null;
-  if (prevMatchStatus !== 'completed') return false;
-
-  const prevMatchNum = allMatches.find(m => m.id === prev.matchId)?.match_number ?? 0;
-  const earlierMatchIds = allMatches
-    .filter(m => (m.match_number ?? 0) < prevMatchNum)
-    .map(m => m.id);
-  if (!earlierMatchIds.length) return true; // prev is the earliest possible match
-
-  const { count } = await supabase
-    .from('user_match_xi')
-    .select('id', { count: 'exact', head: true })
-    .eq('squad_id', squadId)
-    .in('match_id', earlierMatchIds);
-  return !((count ?? 0) > 0);
+  return !prev.playerIds.length;
 }
 
 // ─── Phase detection (mirrors db.js saveMatchXI) ───────────────────────────

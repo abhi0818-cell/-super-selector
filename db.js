@@ -4726,38 +4726,19 @@ export function createDb(cfg = {}) {
         squadId, matchId, sorted, contestConfig.start_match_number ?? null
       );
 
-      // "First active lock" = this squad has no real transfer baseline — either it
-      // never locked anything before, or the only prior lock on record was a
-      // retroactive auto-lock for a match that was ALREADY completed by the time
-      // the squad joined (so that XI was never actually picked by the user).
-      // We distinguish that from the normal, common case of an actively-playing
-      // squad whose previous match simply finished and got scored before they got
-      // around to locking the next one — checked by looking for ANY earlier locked
-      // match for this squad. If one exists, they've been actively playing and the
-      // real baseline must be honored regardless of the previous match's status.
-      let isFirstActiveLock = !prev.playerIds?.length;
-      if (!isFirstActiveLock) {
-        const prevMatchStatus = prev.matchId
-          ? (allMatches.find(m => m.id === prev.matchId)?.status ?? null)
-          : null;
-        if (prevMatchStatus === 'completed') {
-          const prevMatchNum = sorted.find(m => m.id === prev.matchId)?.match_number ?? 0;
-          const earlierMatchIds = sorted
-            .filter(m => (m.match_number ?? 0) < prevMatchNum)
-            .map(m => m.id);
-          if (earlierMatchIds.length) {
-            const sb = await getClient();
-            const { count } = await sb
-              .from('user_match_xi')
-              .select('id', { count: 'exact', head: true })
-              .eq('squad_id', squadId)
-              .in('match_id', earlierMatchIds);
-            isFirstActiveLock = !(count > 0);
-          } else {
-            isFirstActiveLock = true; // prev is the earliest possible match — genuinely first lock
-          }
-        }
-      }
+      // "First active lock" = this squad has NO recorded previous locked XI at
+      // all. Previously this also fired whenever the previous locked match was
+      // itself the earliest match in the schedule (no earlier match to check
+      // for a prior lock against), on the theory it might be a late-joiner's
+      // retroactively auto-filled placeholder rather than a real pick — but
+      // that misfired on every squad's ordinary M1→M2 transition too, since M1
+      // never has an earlier match by definition, silently making the whole
+      // season's first real transfer free for everyone. Narrowed to match
+      // web's display-side calc (index.html's isFirstActiveLock, commit
+      // 22020e0), which already only checks "no baseline at all" — so a
+      // squad's real M1 pick is honored as a real baseline for M2, matching
+      // what the UI has told users to expect all along.
+      const isFirstActiveLock = !prev.playerIds?.length;
       const baselinePlayerIds = isFirstActiveLock ? [] : prev.playerIds;
 
       // GUARANTEE: only ever lock in a draft that was explicitly Saved for
