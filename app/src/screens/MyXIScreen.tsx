@@ -302,13 +302,21 @@ export default function MyXIScreen({ route }: Props) {
     used: number; total: number | null; free: number;
   } | null>(null);
   const [squadId, setSquadId] = useState<string | null>(null);
-  // Transfers already committed for the CURRENT (not-yet-locked) match —
-  // i.e. swaps made against the squad's last locked XI that will take effect
-  // once this match's transfer window closes. Read straight from
-  // user_transfers (match_id = currentMatchId), the same rows
-  // checkAndLogTransfers writes on Save — so this count always matches what
-  // was actually logged, not a UI-only diff.
+  // Transfers pending for the CURRENT (not-yet-locked) match. Two sources,
+  // checked in order:
+  //   1. user_transfers (match_id = currentMatchId) — set once this match
+  //      has actually locked (mobile's own saveXI writes here immediately,
+  //      "save IS the lock"; web's saveXI doesn't touch this until the
+  //      lock-matches cron fires at start_time).
+  //   2. squad_draft_xi vs. previousLockedXI — the pre-lock diff, mirrors
+  //      web's client-side renderSlXferInfoBar() math. Without this, a web
+  //      save sitting in the draft table (not yet locked) was invisible
+  //      here — mobile showed 0 pending / full budget remaining even though
+  //      web was already showing "N pending ... remaining after lock".
   const [pendingTransfers, setPendingTransfers] = useState(0);
+  // Budget remaining if the current draft locks in as-is (cap − used − pending).
+  // null when uncapped or not yet known.
+  const [remainingAfterLock, setRemainingAfterLock] = useState<number | null>(null);
   // The squad's true previous LOCKED XI (baseline checkAndLogTransfers diffs
   // against) — used as the "previous" comparison for the Review & Save
   // modal's IN/OUT list, so that list always matches what actually gets
@@ -398,6 +406,7 @@ export default function MyXIScreen({ route }: Props) {
       if (!squad) {
         setTransferInfo({ used: 0, total: config.total_transfers_allowed, free: config.free_transfers_per_match ?? 1 });
         setPendingTransfers(0);
+        setRemainingAfterLock(null);
         setPreviousLockedXI([]);
         return;
       }
@@ -415,17 +424,6 @@ export default function MyXIScreen({ route }: Props) {
         const { used, cap } = await getTransferUsage(squad.id, currentMatchId, config, allMatches);
         setTransferInfo({ used, total: cap, free: config.free_transfers_per_match ?? 1 });
 
-        // Transfers already committed FOR this specific (not-yet-locked) match
-        // — the rows checkAndLogTransfers writes with match_id = currentMatchId
-        // when the XI was last saved. These are the swaps that will "take"
-        // once this match's transfer window closes.
-        const { count: pendingCount } = await supabase
-          .from('user_transfers')
-          .select('id', { count: 'exact', head: true })
-          .eq('squad_id', squad.id)
-          .eq('match_id', currentMatchId);
-        setPendingTransfers(pendingCount ?? 0);
-
         // The squad's true previous LOCKED XI — same baseline
         // checkAndLogTransfers diffs against — so the Review & Save modal's
         // IN/OUT list always matches what actually gets counted as a
@@ -442,9 +440,46 @@ export default function MyXIScreen({ route }: Props) {
             captaincy: (p.id === baseline.captainId ? 'captain' : p.id === baseline.vcId ? 'vice_captain' : 'normal') as CaptaincyRole,
           }));
         setPreviousLockedXI(baselineXI);
+
+        // Transfers already committed FOR this specific (not-yet-locked) match
+        // — the rows checkAndLogTransfers writes with match_id = currentMatchId
+        // when the XI was last saved. These are the swaps that will "take"
+        // once this match's transfer window closes.
+        const { count: lockedPendingCount } = await supabase
+          .from('user_transfers')
+          .select('id', { count: 'exact', head: true })
+          .eq('squad_id', squad.id)
+          .eq('match_id', currentMatchId);
+
+        let pending = lockedPendingCount ?? 0;
+
+        // Pre-lock fallback: nothing's logged in user_transfers yet if this
+        // match hasn't locked (web's saveXI only writes squad_draft_xi until
+        // the lock-matches cron fires at start_time — see teamStore.ts Path
+        // A0). Diff the draft against the locked baseline the same way
+        // checkAndLogTransfers will once it actually locks, so "pending"
+        // shows up here too instead of only after the fact.
+        if (pending === 0) {
+          const { data: draft } = await supabase
+            .from('squad_draft_xi')
+            .select('player_ids, target_match_id')
+            .eq('squad_id', squad.id)
+            .maybeSingle();
+          if (draft?.target_match_id === currentMatchId && draft.player_ids?.length) {
+            const prevSet = new Set(baseline.playerIds);
+            const draftIds = draft.player_ids as string[];
+            const playersOut = baseline.playerIds.filter(id => !draftIds.includes(id));
+            const playersIn  = draftIds.filter(id => !prevSet.has(id));
+            pending = Math.min(playersOut.length, playersIn.length);
+          }
+        }
+
+        setPendingTransfers(pending);
+        setRemainingAfterLock(cap !== null ? Math.max(0, cap - used - pending) : null);
       } else {
         setTransferInfo({ used: 0, total: config.total_transfers_allowed, free: config.free_transfers_per_match ?? 1 });
         setPendingTransfers(0);
+        setRemainingAfterLock(null);
         setPreviousLockedXI([]);
       }
     } catch (e) {
@@ -785,7 +820,7 @@ export default function MyXIScreen({ route }: Props) {
                 would be misleading. */}
             {activeContext && activeContext.contestType !== 'daily' && pendingTransfers > 0 && (
               <View style={styles.infoPill}>
-                <Text style={styles.infoPillIcon}>{isUncappedTransfers ? '⚡' : '🔄'}</Text>
+                <Text style={styles.infoPillIcon}>{isUncappedTransfers ? '⚡' : '⇄'}</Text>
                 <Text style={styles.infoPillValue}>
                   {isUncappedTransfers ? `${pendingTransfers} free` : `${pendingTransfers} pending`}
                 </Text>
@@ -794,16 +829,25 @@ export default function MyXIScreen({ route }: Props) {
           </View>
         )}
 
-        {/* Clarifying note for pending transfers — shown until the match locks */}
+        {/* Clarifying note for pending transfers — shown until the match locks.
+            Capped/non-boosted case mirrors web's renderSlXferInfoBar() wording
+            exactly ("N pending transfers · X remaining after lock. Counts when
+            M2 starts") so the two platforms read the same, whether the pending
+            count came from an already-locked user_transfers row or (pre-lock)
+            a diff against the squad_draft_xi baseline above. */}
         {activeContext && activeContext.contestType !== 'daily' && pendingTransfers > 0 && (
           <View style={styles.pendingNote}>
             <Text style={styles.pendingNoteText}>
               {transferCapSuspended
                 ? `${pendingTransfers} free change${pendingTransfers !== 1 ? 's' : ''} this match (${suspendingBooster?.name ?? 'booster'} active)`
+                  + (countdown && countdown !== 'Locked' ? ` — locks in ${countdown}` : ' — locks with this match')
                 : transferInfo?.total === null
                   ? `${pendingTransfers} free transfer${pendingTransfers !== 1 ? 's' : ''}`
-                  : `${pendingTransfers} transfer${pendingTransfers !== 1 ? 's' : ''} made from your last locked XI`}
-              {countdown && countdown !== 'Locked' ? ` — locks in ${countdown}` : ' — locks with this match'}
+                    + (countdown && countdown !== 'Locked' ? ` — locks in ${countdown}` : ' — locks with this match')
+                  : `${pendingTransfers} pending transfer${pendingTransfers !== 1 ? 's' : ''}`
+                    + (remainingAfterLock !== null ? ` · ${remainingAfterLock} remaining after lock` : '')
+                    + '.'
+                    + (currentMatchLabel ? ` Counts when ${currentMatchLabel} starts.` : '')}
             </Text>
           </View>
         )}

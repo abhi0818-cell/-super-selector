@@ -15,7 +15,7 @@ select
   pi.name           as player_in,
   ut.is_free,
   ut.points_deducted,
-  ut.created_at
+  ut.transferred_at
 from user_transfers ut
 join user_squads us on us.id = ut.squad_id
 join contests    c  on c.id = us.contest_id
@@ -24,7 +24,7 @@ join matches     m  on m.id = ut.match_id
 left join players po on po.id = ut.player_out_id
 left join players pi on pi.id = ut.player_in_id
 where p.email = 'abhi0818@gmail.com'
-order by ut.created_at desc;
+order by ut.transferred_at desc;
 
 -- Also show the currently locked XI for whichever match you just saved, so
 -- we can compare "who's actually in the XI now" against "how many transfer
