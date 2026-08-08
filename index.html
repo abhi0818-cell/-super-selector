@@ -9652,16 +9652,18 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       // color-fill jerseys' HEAD_CX/CY — no separate overlay element needed.
       const vb = jerseyViewBox(photoUrl);
       const dispH = photoUrl ? h * (vb.h / JERSEY_VIEWBOX_H) : h;
-      // Custom uploaded designs already carry their own team identity —
-      // don't overlay the team-code label on top of real art (that's only
-      // meaningful as a stand-in on the plain color-fill jersey).
       const stripped = stripSvgFixedSize(jerseySvg)
         .replace('<svg', '<svg width="' + w + '" height="' + dispH + '" style="display:block;flex-shrink:0;"')
         .replace(/viewBox="[^"]*"/i, 'viewBox="' + vb.viewBox + '"');
-      if (!photoUrl) return stripped;
-      const idx = stripped.lastIndexOf('</svg>');
-      if (idx === -1) return stripped;
-      return stripped.slice(0, idx) + jerseyPhotoLayer(photoUrl, uid) + stripped.slice(idx);
+      // TEMP: re-enabled the team-code label on custom uploaded jerseys too
+      // (was removed in ff53adb "Don't overlay team-code label on custom
+      // uploaded jersey designs" — disabled per request, show the label
+      // regardless of custom vs plain color-fill jersey for now).
+      const withLabel = injectJerseyLabel(stripped, label, jerseyLabelFontSize(label, true));
+      if (!photoUrl) return withLabel;
+      const idx = withLabel.lastIndexOf('</svg>');
+      if (idx === -1) return withLabel;
+      return withLabel.slice(0, idx) + jerseyPhotoLayer(photoUrl, uid) + withLabel.slice(idx);
     }
 
     function jerseyHtml(c1, c2, label, jerseySvg, photoUrl, uid) {
@@ -13173,10 +13175,10 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       const stripped = stripSvgFixedSize(jerseySvg)
         .replace('<svg', '<svg style="display:block; filter:drop-shadow(0 3px 7px rgba(0,0,0,0.65));"')
         .replace(/viewBox="[^"]*"/i, 'viewBox="' + vb.viewBox + '"');
-      // Custom uploaded designs already carry their own team identity —
-      // no team-code label overlay here (that's only meaningful as a
-      // stand-in on the plain color-fill jersey).
-      let withLabel = stripped;
+      // TEMP: re-enabled the team-code label on custom uploaded jerseys too
+      // (was removed in ff53adb — disabled per request, show the label
+      // regardless of custom vs plain color-fill jersey for now).
+      let withLabel = injectJerseyLabel(stripped, label, jerseyLabelFontSize(label, false));
       if (photoUrl) {
         const idx = withLabel.lastIndexOf('</svg>');
         if (idx !== -1) withLabel = withLabel.slice(0, idx) + jerseyPhotoLayer(photoUrl, uid) + withLabel.slice(idx);
