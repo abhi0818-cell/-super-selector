@@ -2641,12 +2641,23 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       if (/^hit.?wicket$/i.test(d)) {
         return { type: 'hit_wicket', bowler: bowlerName, fielder: null };
       }
-      if (/^run\s*out/.test(d)) {
+      if (/^run\s*out/.test(d) || /^run\s*out/.test(dText)) {
         // Extract fielder(s) from "run out (Fielder)" or "run out (Fielder1 / Fielder2)".
         // CricAPI sometimes puts the parenthesized name(s) in the short `dismissal`
         // field (d), but for run-outs it's often only present in the longer
         // `dismissal-text` (dText) — try both before falling back to the
         // Shape-A catch/fielder/catcher fields, which run-outs frequently leave empty.
+        //
+        // BUG FIX: this gate used to test only `d` (the short CricAPI dismissal
+        // code). Scraper-sourced matches cache rows with NO `d` at all — only
+        // `dismissal-text` (see scrape-scorecard/index.ts's match_scorecards
+        // cache-writer) — so `d` is always '' for them, meaning EVERY run-out
+        // on a scraper match silently returned null here (not even the "no
+        // fielder name found" issue got recorded, since that check lives inside
+        // this branch) and Shape B below has no run_out case to fall back to.
+        // This is why run-out fielders (direct AND indirect) got zero credit
+        // and never showed up as a Review-tab / Fantasy-Scorecard fielding
+        // issue — the dismissal wasn't even recognized as a run-out.
         const parenMatch = d.match(/run\s*out\s*\(([^)]+)\)/i) || dText.match(/run\s*out\s*\(([^)]+)\)/i);
         const parts = parenMatch
           ? parenMatch[1].split(/\s*[/\\&]\s*/).map(n => n.trim()).filter(Boolean)
