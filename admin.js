@@ -2266,7 +2266,7 @@
       let json;
       json = await fetchJsonWithFallback(k => `match_scorecard?apikey=${encodeURIComponent(k)}&id=${encodeURIComponent(m.external_id)}`);
       await state.db.saveMatchScorecard(m.id, json);
-      const players = fromCricAPI(json, A.PLAYERS, m.format);
+      const players = fromCricAPI(json, matchSquadFor(m), m.format);
       if (!players.length) throw new Error('CricAPI returned no player rows');
       // Use a Map to deduplicate by local player ID — two CricAPI names can resolve
       // to the same local player via findLocalByName, which would cause a PostgreSQL
@@ -2483,7 +2483,7 @@
           throw new Error('No external_id on this match and no cached scorecard — cannot recalc.');
         }
 
-        const players = fromCricAPI(json, A.PLAYERS, m.format || 'T20');
+        const players = fromCricAPI(json, matchSquadFor(m), m.format || 'T20');
         if (!players.length) throw new Error('Scorecard parsed 0 players — check payload.');
 
         // Log fielding summary to console for easy verification
@@ -2965,6 +2965,29 @@
     }
 
 
+    /**
+     * Narrow A.PLAYERS (the WHOLE active tournament's roster — every team,
+     * not just the two playing today) down to just the two teams in match m.
+     * fromCricAPI's resolveFielder() runs its surname-fallback tiers against
+     * whatever "squad" it's given; passing the full tournament roster means
+     * a fielder's raw name (e.g. "S Springer") can silently resolve against
+     * — or collide with — a same-surname player on a completely different
+     * team that isn't even in this match. The server-side scraper function
+     * already scopes its own equivalent match to just matchTeamIds for
+     * exactly this reason (see scrape-scorecard/index.ts's resolveFielderName
+     * doc comment); this mirrors that here for the client-side path used by
+     * Recalculate / Fantasy Scorecard / rescore / finalize. Falls back to the
+     * full roster if the match has no team ids to filter by, so callers never
+     * get an empty squad they didn't ask for.
+     */
+    function matchSquadFor(m) {
+      const home = m?.home_team_id, away = m?.away_team_id;
+      if (!home && !away) return A.PLAYERS;
+      const teamOf = p => p.team_id || p.team;
+      const scoped = A.PLAYERS.filter(p => teamOf(p) === home || teamOf(p) === away);
+      return scoped.length ? scoped : A.PLAYERS;
+    }
+
     // ─── FANTASY SCORECARD ───────────────────────────────────────────────────
     // Engine-calculated fantasy points for every player in the live match.
     // Independent of the user's XI — shows what each player WOULD score
@@ -2983,9 +3006,13 @@
         return;
       }
 
-      // Pass A.PLAYERS as the squad so fielders who didn't bat/bowl are still found via
-      // the squad fallback. Captaincy multipliers are overridden below with 'normal'.
-      const players = fromCricAPI(payload, A.PLAYERS, state.format);
+      // Scope the squad to the two teams actually playing this match (see
+      // matchSquadFor) instead of the whole tournament roster — otherwise a
+      // fielder's raw surname can mismatch against an unrelated player on a
+      // different team, silently stealing or losing fielding credit.
+      const externalId = $('#matchId')?.value?.trim();
+      const currentMatch = state.matches?.find(m => m.external_id === externalId);
+      const players = fromCricAPI(payload, matchSquadFor(currentMatch), state.format);
       const xiIds = new Set(state.selected);
       const scored = players.map(pl => {
         const local = findLocalByName(pl.name);
@@ -3248,7 +3275,7 @@
       const localMatch = state.matches.find(m => m.external_id === externalId);
       if (!localMatch) { toast('Match not found in DB — sync first.'); return; }
 
-      const apiPlayers = fromCricAPI(state.lastScorecard, A.PLAYERS, state.format);
+      const apiPlayers = fromCricAPI(state.lastScorecard, matchSquadFor(localMatch), state.format);
       // Use a Map to deduplicate by local player ID — two CricAPI names (e.g. a
       // player's own batting/bowling line and a separately-aliased fielding-only
       // credit) can resolve to the same local player via findLocalByName, which
@@ -3316,7 +3343,7 @@
       if (!localMatch) { toast('Selected match isn\'t in your DB. Run sync first.'); return; }
 
       try {
-        const players = fromCricAPI(state.lastScorecard, A.PLAYERS, state.format);
+        const players = fromCricAPI(state.lastScorecard, matchSquadFor(localMatch), state.format);
         // Only persist rows whose API name maps to a local player (FK requirement).
         // Dedup by local player ID for the same reason as rescoreCurrentMatch/
         // finalizeOneMatch — two CricAPI names can resolve to the same local
