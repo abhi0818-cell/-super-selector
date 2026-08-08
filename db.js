@@ -1834,6 +1834,28 @@ export function createDb(cfg = {}) {
     },
 
     /**
+     * Read back every alias resolved for a tournament, regardless of which
+     * flow created it — the admin Review tab (source='cricketaddictor' /
+     * 'business_standard', via resolveUnmatchedAsAlias/resolveFieldingIssueAsCredit)
+     * or the Fantasy Scorecard panel's own inline "Link" button (source='cricapi',
+     * via upsertNameAlias). All three write into this one table with the same
+     * shape, so a single unfiltered read lets the browser's in-memory
+     * NAME_ALIASES (index.html) merge in fixes made from EITHER screen — closing
+     * the gap where resolving something in Review never used to show up as
+     * resolved in the Fantasy Scorecard.
+     */
+    async getNameAliases(tournamentId) {
+      if (!tournamentId) return [];
+      const sb = await getClient();
+      const { data, error } = await sb
+        .from('player_name_aliases')
+        .select('alias, player_id, source')
+        .eq('tournament_id', tournamentId);
+      if (error) throw error;
+      return data ?? [];
+    },
+
+    /**
      * Resolve an unmatched name by adding the player to the global pool + tournament roster.
      * Also creates an alias for future auto-resolution.
      *
@@ -1892,12 +1914,19 @@ export function createDb(cfg = {}) {
       });
       if (te) throw te;
       // 3. Create alias
-      await sb.from('player_name_aliases').upsert({
+      const { error: aliasErr } = await sb.from('player_name_aliases').upsert({
         player_id    : playerId,
         tournament_id: tournamentId,
         alias        : rawName.toLowerCase().trim(),
         source,
       }, { onConflict: 'alias,source,tournament_id', ignoreDuplicates: true });
+      // Don't throw here — the player + roster rows above already committed
+      // successfully, and failing loudly now would tell the admin "add player"
+      // failed when it actually mostly succeeded. But this used to fail
+      // silently (error was never even read), which is exactly how a caller
+      // passing the wrong `source` value (violating player_name_aliases'
+      // CHECK constraint) went unnoticed for a long time. Surface it instead.
+      if (aliasErr) console.warn('[resolveUnmatchedAsNewPlayer] alias upsert failed:', aliasErr.message);
       // 4. Mark resolved
       const { error: re } = await sb
         .from('scraper_unmatched')

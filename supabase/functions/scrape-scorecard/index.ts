@@ -1448,8 +1448,17 @@ Deno.serve(async (req: Request) => {
       }
 
       // ── 8. Persist fuzzy aliases so next run auto-resolves them ───────────
+      // NOTE: none of steps 8/9/9a/9b below used to check the upsert's `error`
+      // return value — a constraint violation (bad enum value, FK mismatch,
+      // etc.) would fail completely silently: the row just never lands, with
+      // no exception, no log line, nothing. That's exactly the shape of bug
+      // reported for two run-out fielders (Jahmar Hamilton, Alzari Joseph)
+      // that got neither fantasy credit NOR a Review-tab "fielding issue" row
+      // — the in-memory match-resolution logic for both traced out correctly
+      // in isolation, so if they're still not appearing after this fix ships,
+      // the edge function logs will now show exactly why the write failed.
       if (fuzzyAliases.length) {
-        await sb.from('player_name_aliases').upsert(
+        const { error: faErr } = await sb.from('player_name_aliases').upsert(
           fuzzyAliases.map(a => ({
             player_id    : a.player_id,
             tournament_id: tournament.id,
@@ -1458,11 +1467,12 @@ Deno.serve(async (req: Request) => {
           })),
           { onConflict: 'alias,source,tournament_id', ignoreDuplicates: true },
         )
+        if (faErr) console.error(`[${match.id}] fuzzyAliases upsert failed:`, faErr.message)
       }
 
       // ── 9. Persist unmatched names so admin can reconcile ─────────────────
       if (unmatched.length) {
-        await sb.from('scraper_unmatched').upsert(
+        const { error: umErr } = await sb.from('scraper_unmatched').upsert(
           unmatched.map(u => ({
             tournament_id: tournament.id,
             match_id     : match.id,
@@ -1472,6 +1482,7 @@ Deno.serve(async (req: Request) => {
           })),
           { onConflict: 'tournament_id,raw_name,source', ignoreDuplicates: true },
         )
+        if (umErr) console.error(`[${match.id}] scraper_unmatched upsert failed:`, umErr.message)
       }
 
       // ── 9a. Persist recoverable placeholder stats ──────────────────────────
@@ -1481,7 +1492,7 @@ Deno.serve(async (req: Request) => {
       // resolved_at/resolved_by/credited_player_id on a re-scrape — only
       // raw_stats refreshes (the match may still be live).
       if (placeholderRows.size) {
-        await sb.from('scraper_placeholder_stats').upsert(
+        const { error: psErr } = await sb.from('scraper_placeholder_stats').upsert(
           Array.from(placeholderRows.entries()).map(([context, stats]) => ({
             tournament_id: tournament.id,
             match_id     : match.id,
@@ -1491,6 +1502,7 @@ Deno.serve(async (req: Request) => {
           })),
           { onConflict: 'match_id,source,context' },
         )
+        if (psErr) console.error(`[${match.id}] scraper_placeholder_stats upsert failed:`, psErr.message)
       }
 
       // ── 9b. Persist fielding events the scraper couldn't auto-resolve ─────
@@ -1499,7 +1511,7 @@ Deno.serve(async (req: Request) => {
       // an admin already resolved doesn't get reset back to unresolved by a
       // later re-scrape that reproduces the same unresolved dismissal.
       if (fieldingIssues.length) {
-        await sb.from('scraper_fielding_issues').upsert(
+        const { error: fiErr } = await sb.from('scraper_fielding_issues').upsert(
           fieldingIssues.map(fi => ({
             tournament_id : tournament.id,
             match_id      : match.id,
@@ -1512,6 +1524,7 @@ Deno.serve(async (req: Request) => {
           })),
           { onConflict: 'match_id,raw_name,field,batter_name', ignoreDuplicates: true },
         )
+        if (fiErr) console.error(`[${match.id}] scraper_fielding_issues upsert failed:`, fiErr.message, JSON.stringify(fieldingIssues))
       }
 
       // ── 9c. Let the scraper mark a match completed too ────────────────────

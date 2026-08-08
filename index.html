@@ -3279,6 +3279,38 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       return candidates.length === 1 ? candidates[0] : null;
     }
 
+    /**
+     * Pull every player_name_aliases row for this tournament into the
+     * in-memory NAME_ALIASES map. That table is where BOTH resolution flows
+     * ultimately write: the admin Review tab's "unmatched player"/"fielding
+     * issue" queues (resolveUnmatchedAsAlias, resolveFieldingIssueAsCredit —
+     * source 'cricketaddictor'/'business_standard') and this screen's own
+     * Fantasy Scorecard "Link" button (upsertNameAlias — source 'cricapi').
+     * Without this, NAME_ALIASES only ever held the hardcoded seed list plus
+     * whatever this one browser tab wrote to localStorage — so a name fixed
+     * in the Review tab had no way to ever reach the Fantasy Scorecard's
+     * matching logic. Called on live-connect and on every poll tick so a
+     * Review-tab fix made while the panel is already open still clears
+     * within one poll interval, no reload needed.
+     */
+    async function hydrateNameAliasesFromDb(tournamentId) {
+      if (!state.db || !tournamentId) return false;
+      try {
+        const rows = await state.db.getNameAliases(tournamentId);
+        let changed = false;
+        rows.forEach(r => {
+          const p = playerById(r.player_id);
+          if (!p || !r.alias) return;
+          if (NAME_ALIASES[r.alias] !== p.name) changed = true;
+          NAME_ALIASES[r.alias] = p.name;
+        });
+        return changed;
+      } catch (e) {
+        console.warn('[hydrateNameAliasesFromDb] failed:', e.message);
+        return false;
+      }
+    }
+
     // Team reference data. Loaded from DB on connect, falls back to the seed list
     // below if running in local mode. Used by the team dropdown and CSV validator.
     let TEAMS_DATA = [
@@ -5585,10 +5617,19 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
                 const os      = row.querySelector('.ua-new-os').checked;
                 if (!name || !teamId) { toast('Name and team are required.'); return; }
                 try {
+                  // NOTE: resolveUnmatchedAsNewPlayer's signature is
+                  // (id, playerData, tournamentId, rawName, source) — there is no
+                  // matchId param. A stray `matchId` used to be passed in this slot,
+                  // which silently shifted rawName into the alias text and the real
+                  // source into the alias's `source` column (which only accepts
+                  // 'cricketaddictor'/'business_standard'/'cricapi' — see
+                  // migration_v25_cricapi_cron.sql), so the alias upsert failed
+                  // every time this button was used and the new player could never
+                  // auto-resolve on the next scrape. Fixed to match the real signature.
                   const newId = await state.db.resolveUnmatchedAsNewPlayer(
                     uid,
                     { name, playerId: pid || undefined, role, teamId, credits, overseas: os },
-                    tid, matchId, rawName, src
+                    tid, rawName, src
                   );
                   // Cascade into user team totals for this match — same reasoning
                   // as the alias path above.
@@ -5597,6 +5638,17 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
                       await window.__admin?.computeAndSaveXIScoresForMatch?.(matchId);
                       await window.__admin?.computeAndSaveSLScoresForMatch?.(matchId);
                     } catch (e) { console.warn('rescore after add-new-player failed', e); }
+                  }
+                  // The newly-created player only lives in the DB until PLAYERS is
+                  // reloaded — without this, it can't appear in the Fantasy
+                  // Scorecard's "Link" dropdown (A.PLAYERS) or the pool until the
+                  // next full page reload / tournament reselect.
+                  if (tid === state.activeTournamentId) {
+                    try {
+                      await loadPlayersForActiveTournament();
+                      renderPool();
+                      window.__admin?.renderFantasyScorecard?.();
+                    } catch (e) { console.warn('player pool refresh after add-new-player failed', e); }
                   }
                   row.remove();
                   const remaining = panel.querySelectorAll('.unmatched-row').length;
@@ -10840,6 +10892,13 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       const pollInterval = 60_000; // cheap DB read — fine to check every minute
       const pollMins     = Math.round(pollInterval / 60_000);
 
+      // Load any aliases already resolved for this tournament (from either the
+      // Review tab or a previous Fantasy Scorecard "Link") before the first
+      // render, so already-fixed names don't briefly flash as unmatched.
+      hydrateNameAliasesFromDb(localMatch.tournament_id).then((changed) => {
+        if (changed) window.__admin?.renderFantasyScorecard?.();
+      });
+
       state.poller = new DbScorePoller({
         db: state.db, matchId, format: state.format, interval: pollInterval,
         onUpdate: (statRows, rawScorecard) => {
@@ -10874,6 +10933,13 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
           renderScorecard();
           window.__admin?.renderFantasyScorecard?.();
           state._lastSyncedAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+          // Re-check for newly-resolved aliases on every poll tick (~once a
+          // minute) so a name fixed in the Review tab while this panel is
+          // already open clears here without needing a reconnect/reload.
+          hydrateNameAliasesFromDb(localMatch.tournament_id).then((changed) => {
+            if (changed) window.__admin?.renderFantasyScorecard?.();
+          });
 
           // Keep local match status in sync — the scraper/admin flow updates it server-side.
           if (status && localMatch.status !== status) {
