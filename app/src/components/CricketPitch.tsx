@@ -132,6 +132,7 @@ function PlayerTile({ player, onSetCaptaincy, onRemove, onTilePress, readOnly, b
   const sideFontSize  = Math.max(8, tsz * 0.3);
   const tileWidth     = tsz / JERSEY_FRACTION;
   const nameFontSize  = Math.max(8, tsz * 0.26);
+  const creditFontSize = Math.max(8, tsz * 0.24);
 
   return (
     <Pressable
@@ -199,6 +200,15 @@ function PlayerTile({ player, onSetCaptaincy, onRemove, onTilePress, readOnly, b
       >
         {shortName}
       </Text>
+
+      {/* Credits pill — below the name tag, mirrors web's .pitch-credit-tag.
+          Pick 11 / My XI pitch only (this component); the read-only
+          history/live-score pitch shows scored points instead, not credits. */}
+      <View style={styles.creditTag}>
+        <Text style={[styles.creditTagText, { fontSize: creditFontSize }]}>
+          {player.credits.toFixed(1)}
+        </Text>
+      </View>
     </Pressable>
   );
 }
@@ -460,6 +470,22 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0,0,0,0.85)',
     textShadowOffset:{ width: 0, height: 1 },
     textShadowRadius: 3,
+  },
+  // Credits pill — below the name tag, mirrors web's .pitch-credit-tag.
+  // fontSize is always overridden per-tile (creditFontSize, scaled off tsz).
+  creditTag: {
+    backgroundColor:   '#C9A84C',
+    borderRadius:      8,
+    paddingHorizontal: 5,
+    shadowColor:       '#000',
+    shadowOffset:      { width: 0, height: 1 },
+    shadowOpacity:     0.4,
+    shadowRadius:      3,
+    elevation:          2,
+  },
+  creditTagText: {
+    color:      '#1C1F26',
+    fontWeight: '700',
   },
   // Role icon (WK/BAT/AR/BOWL artwork) — bottom-right of the jersey, mirrors
   // web's .pitch-role-icon. bottom is fixed (web's is too — bottom:2px);
