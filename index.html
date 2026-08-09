@@ -1114,7 +1114,7 @@
     .pitch-role-lbl {
       display:none;
     }
-    .pitch-row-players { display:flex; justify-content:center; gap:calc(var(--tsz,34px)*0.18); flex-wrap:nowrap; }
+    .pitch-row-players { display:flex; justify-content:center; gap:calc(var(--tsz,34px)*0.24); flex-wrap:nowrap; }
     .pitch-player { display:flex; flex-direction:column; align-items:center; gap:2px; position:relative; cursor:default; }
     .pitch-jwrap { position:relative; width:var(--tsz,34px); }
     .pitch-jwrap svg { width:var(--tsz,34px); height:auto; display:block; filter:drop-shadow(0 3px 7px rgba(0,0,0,0.65)); }
@@ -1151,7 +1151,7 @@
     .pitch-nametag {
       font-size:calc(var(--tsz,34px)*0.28); font-weight:700; color:#fff;
       text-shadow:0 1px 4px rgba(0,0,0,1),0 0 6px rgba(0,0,0,.8);
-      text-align:center; max-width:calc(var(--tsz,34px)*1.3);
+      text-align:center; max-width:calc(var(--tsz,34px)*1.7);
       overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     }
     .pitch-ptag { font-size:calc(var(--tsz,34px)*0.235); font-weight:700; color:#FFD966; text-shadow:0 1px 3px rgba(0,0,0,.9); }
@@ -1623,7 +1623,7 @@
       <div id="dailyPanel">
       <!-- Daily tab bar -->
       <div class="daily-tabs">
-        <span class="daily-tab active" data-dailytab="xi">Pick XI</span>
+        <span class="daily-tab active" data-dailytab="xi">My XI</span>
         <span class="daily-tab" data-dailytab="live">Live Score</span>
         <span class="daily-tab" data-dailytab="history">History</span>
       </div>
@@ -1718,7 +1718,7 @@
         <!-- Single screen — no join gate; squad is created automatically on first Save XI -->
         <div id="slActiveScreen">
           <div class="sl-tabs">
-            <span class="sl-tab active" data-sltab="xi">Pick XI</span>
+            <span class="sl-tab active" data-sltab="xi">My XI</span>
             <span class="sl-tab" data-sltab="live">Live Score</span>
             <span class="sl-tab" data-sltab="season">History</span>
             <span class="sl-tab" data-sltab="leagues">Leagues</span>
@@ -13283,6 +13283,16 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       return { topRightBadge: topRightBadge, bottomLeftBadge: bottomLeftBadge, boosted: !!boosted };
     }
 
+    // "Jason Holder" → "J. Holder" — mirrors mobile's shortName format on the
+    // My XI pitch tile (see MyXI CricketPitch.tsx). Pick 11 / My XI editable
+    // pitch only (pitchPlayerToken); the read-only history/live-score pitch
+    // (histPitchToken) keeps its existing last-name-only label.
+    function pitchShortName(name) {
+      var words = (name || '').trim().split(' ');
+      if (words.length <= 1) return words[0] || '';
+      return words[0][0] + '. ' + words.slice(1).join(' ');
+    }
+
     // Team code shown on the pitch-view jersey, in place of player initials —
     // consistent with the Player Pool jersey change. Women's team codes carry
     // a "-W" suffix purely to stay unique from the men's code (e.g. "AUS-W");
@@ -13293,7 +13303,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
     }
 
     function pitchPlayerToken(p, id, isCap, isVc, boosterKey) {
-      var ln    = p.name.split(' ').pop();
+      var ln    = pitchShortName(p.name);
       var decor = pitchBoosterDecor(!!p.overseas, isCap, isVc, boosterKey || null);
       var tm = teamByCode(p.team);
       var c1 = (tm && tm.color)  || '#888888';
@@ -13328,7 +13338,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
     function histPitchToken(p, captainId, vcId, boosterKey) {
       var isCap = String(p.player_id) === String(captainId);
       var isVc  = String(p.player_id) === String(vcId);
-      var ln    = p.name.split(' ').pop();
+      var ln    = pitchShortName(p.name);
       var tm = teamByCode(p.team_id);
       var c1 = (tm && tm.color)  || '#888888';
       var c2 = (tm && tm.color2) || '#333333';
@@ -13677,7 +13687,10 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
         var yFrac = (2*i+1)/(2*N);
         var dy    = (yFrac-0.5)*oh;
         var availW = 2*a*Math.sqrt(Math.max(0, 1-(dy/b)*(dy/b)))*0.84;
-        var tsz = Math.min(38, Math.max(14, availW/(n*1.18+0.24)));
+        // Matches fitPitchRows' cap/divisor (46 / 1.24) so History and Live
+        // Score jerseys are sized the same as the My XI pitch, with the same
+        // extra breathing room for the longer "J. Holder"-style name tags.
+        var tsz = Math.min(46, Math.max(14, availW/(n*1.24+0.24)));
         row.style.setProperty('--tsz', tsz+'px');
       });
     }
@@ -13796,7 +13809,12 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
         var yFrac = (2*i+1)/(2*N);
         var dy    = (yFrac-0.5)*oh;
         var availW = 2*a*Math.sqrt(Math.max(0, 1-(dy/b)*(dy/b)))*0.84;
-        var tsz = Math.min(38, Math.max(14, availW/(n*1.18+0.24)));
+        // Cap raised from 38 to 46 and the per-tile divisor from 1.18 to 1.24
+        // (matching .pitch-row-players' wider 0.24 gap above) — on web this
+        // pitch had room to spare (the oval was hitting the old 38px cap on
+        // every row even on a wide desktop viewport) while mobile's own
+        // TSZ_MAX is 44; this pitch can afford to run a touch larger still.
+        var tsz = Math.min(46, Math.max(14, availW/(n*1.24+0.24)));
         row.style.setProperty('--tsz', tsz+'px');
       });
     }
