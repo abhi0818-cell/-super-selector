@@ -46,6 +46,20 @@ function stripGenderSuffix(slug: string): string {
   return slug.replace(/-(?:women|w)$/i, '')
 }
 
+/** Strip connector words ("and", "of", "the") that CricketAddictor's own
+ *  slugs typically omit even when our stored team name spells them out —
+ *  e.g. our "St Kitts and Nevis Patriots" → toSlug() → "st-kitts-and-nevis-
+ *  patriots", but CricketAddictor's real slug is "st-kitts-nevis-patriots"
+ *  (the connector is dropped, not spelled out). Only strips whole
+ *  hyphen-delimited tokens, never mid-word, so it's safe for names that
+ *  don't contain these as standalone words. */
+function stripConnectorWords(slug: string): string {
+  return slug
+    .split('-')
+    .filter(tok => tok !== 'and' && tok !== 'of' && tok !== 'the')
+    .join('-')
+}
+
 /** Map of short country codes (as stored in our `teams.name`, e.g. "NZ" in
  *  "NZ-W") to the full country slug CricketAddictor actually uses in its
  *  URLs. Needed because ICC-tournament URLs (e.g. the Women's T20 World Cup)
@@ -240,6 +254,8 @@ async function discoverUrl(
   const t2Bare = stripGenderSuffix(t2)
   const t1Full = expandTeamSlug(t1)
   const t2Full = expandTeamSlug(t2)
+  const t1Nc   = stripConnectorWords(t1Bare)
+  const t2Nc   = stripConnectorWords(t2Bare)
   const series = toSlug(tournamentName)
   const descs  = matchTypeSlugVariants(matchType, matchNumber)
 
@@ -249,6 +265,7 @@ async function discoverUrl(
   if (t1Full && t2Full) teamPairs.push([t1Full, t2Full], [t2Full, t1Full])
   teamPairs.push([t1, t2], [t2, t1])
   if (t1Bare !== t1 || t2Bare !== t2) teamPairs.push([t1Bare, t2Bare], [t2Bare, t1Bare])
+  if (t1Nc !== t1Bare || t2Nc !== t2Bare) teamPairs.push([t1Nc, t2Nc], [t2Nc, t1Nc])
 
   const candidates: string[] = []
   for (const desc of descs) {
@@ -267,18 +284,21 @@ async function discoverUrl(
 
   // Listing-page scan: match by team codes + start-time + tournament proximity.
   // Prefer the full-name expansion (e.g. "new-zealand") when available, since
-  // listing pages spell out full country names, not our short codes.
+  // listing pages spell out full country names, not our short codes. Fall
+  // back to the connector-stripped slug (not just gender-stripped) since
+  // CricketAddictor's own slugs typically drop "and"/"of"/"the" tokens that
+  // our stored team names spell out (e.g. "St Kitts and Nevis Patriots").
   const scanned = await scanListingsForMatch(
-    t1Full ? stripGenderSuffix(t1Full) : t1Bare,
-    t2Full ? stripGenderSuffix(t2Full) : t2Bare,
+    t1Full ? stripGenderSuffix(t1Full) : t1Nc,
+    t2Full ? stripGenderSuffix(t2Full) : t2Nc,
     startTime, tournamentName,
   )
   if (scanned) return scanned
 
-  // Last-resort fallback: substring scan using gender-stripped slugs (prefer
-  // the full-name expansion when we have one, same reasoning as above)
-  const t1Scan = t1Full ? stripGenderSuffix(t1Full) : t1Bare
-  const t2Scan = t2Full ? stripGenderSuffix(t2Full) : t2Bare
+  // Last-resort fallback: substring scan using connector-and-gender-stripped
+  // slugs (prefer the full-name expansion when we have one, same reasoning as above)
+  const t1Scan = t1Full ? stripGenderSuffix(t1Full) : t1Nc
+  const t2Scan = t2Full ? stripGenderSuffix(t2Full) : t2Nc
   try {
     const r = await fetch('https://cricketaddictor.com/livescore/recent-matches/', {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SuperSelector/1.0)' },
@@ -1621,6 +1641,20 @@ Deno.serve(async (req: Request) => {
         fieldingIssues: fieldingIssues.length,
       })
     }
+
+    // The per-match `results` array (status: 'ok' / 'stale_skipped' /
+    // 'parse_failed' / 'fetch_failed' / 'url_not_found') used to only ever
+    // reach the HTTP response body — invisible from a cron-triggered run,
+    // since nothing calls this function's response. That meant a match could
+    // silently stop updating (e.g. stuck behind the staleness guard, or a
+    // dead scorecard_url) while Supabase's log viewer showed nothing but a
+    // clean boot/shutdown, with no way to tell "working" from "silently
+    // skipping every match" without manually invoking it via the admin
+    // Scrape button. Logging the summary here makes the real reason visible
+    // in the Function Logs for every run, cron or manual.
+    console.log('[scrape-scorecard] run summary:', JSON.stringify(
+      results.map(r => ({ matchId: r.matchId, status: r.status }))
+    ))
 
     return new Response(
       JSON.stringify({ ok: true, results }),
