@@ -36,6 +36,20 @@
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// Canonical scoring math + dismissal parsing + rules resolution — see that
+// file's header for the full consolidation notes. This used to be an
+// independently-maintained copy (DEFAULT_RULES, calcBatting/calcBowling/
+// calcFielding, parseDismissalEntry, isDismissed, deriveRole) kept "in sync
+// by hand" with index.html and scrape-scorecard/index.ts, which is exactly
+// how they drifted (sr_70_to_100 default, run-out dismissal-text fallback,
+// contest-level rules support) without anyone deciding to change anything.
+import {
+  DEFAULT_RULES, MULTIPLIERS,
+  calcBattingPoints, calcBowlingPoints, calcFieldingPoints,
+  resolveEffectiveRules, deriveRole as deriveRoleShared,
+  deriveIsDismissed, parseDismissalEntry as parseDismissalEntryShared,
+  matchBowlerName as matchBowlerNameShared,
+} from '../../../scoringEngine.shared.js'
 
 const SUPABASE_URL              = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -52,109 +66,26 @@ const CORS = {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Scoring engine — ported from index.html. Keep these constants in sync with
-// DEFAULT_SCORING_RULES / MULTIPLIERS in index.html if the client's defaults
-// ever change; they are the canonical source of truth.
+// Scoring engine — thin same-signature wrappers over scoringEngine.shared.js
+// so every call site below (rawPoints, the XI/SL cascades) is unchanged.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface Rules { [key: string]: number }
-
-const DEFAULT_T20_RULES: Rules = {
-  run: 1, boundary4: 1, boundary6: 2, thirty_run_bonus: 4, half_century: 8, century: 16, duck: -2,
-  sr_above_170: 6, sr_140_to_170: 4, sr_below_70: -6, sr_70_to_100: -2,
-  wicket: 25, lbw_bowled_bonus: 8, maiden_over: 12, dot_ball: 1,
-  three_wicket_haul: 8, four_wicket_haul: 8, five_wicket_haul: 16,
-  economy_below_5: 6, economy_5_to_6: 4, economy_10_to_11: -4, economy_above_11: -6,
-  catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
-  no_ball: -1, wide: -1,
-}
-const DEFAULT_ODI_RULES: Rules = {
-  run: 1, boundary4: 1, boundary6: 2, half_century: 4, century: 8, duck: -3,
-  sr_above_140: 6, sr_120_to_140: 2, sr_below_50: -6, sr_50_to_75: -2,
-  wicket: 25, lbw_bowled_bonus: 8, maiden_over: 4, dot_ball: 0.5, four_wicket_haul: 4, five_wicket_haul: 8,
-  economy_below_2_5: 6, economy_2_5_to_3_5: 4, economy_7_to_8: -4, economy_above_9: -6,
-  catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
-  no_ball: -1, wide: -1,
-}
-const DEFAULT_TEST_RULES: Rules = {
-  run: 1, boundary4: 0, boundary6: 0, half_century: 4, century: 8, duck: -4,
-  wicket: 16, lbw_bowled_bonus: 8, maiden_over: 4, five_wicket_haul: 8,
-  catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
-  no_ball: -1, wide: -1,
-}
-const DEFAULT_RULES: Record<string, Rules> = { T20: DEFAULT_T20_RULES, ODI: DEFAULT_ODI_RULES, TEST: DEFAULT_TEST_RULES }
-
-const MULTIPLIERS: Record<string, number> = { captain: 2, triple_captain: 3, vice_captain: 1.5, normal: 1 }
-
-function strikeRate(r: number, b: number): number | null { return b === 0 ? null : (r / b) * 100 }
-function economyRate(r: number, b: number): number | null { return b === 0 ? null : (r / b) * 6 }
-
-function srBonus(sr: number | null, fmt: string, r: Rules): number {
-  if (sr === null) return 0
-  if (fmt === 'T20') {
-    if (sr > 170) return r.sr_above_170 ?? 0
-    if (sr >= 140) return r.sr_140_to_170 ?? 0
-    if (sr < 70) return r.sr_below_70 ?? 0
-    if (sr < 100) return r.sr_70_to_100 ?? 0
-  }
-  if (fmt === 'ODI') {
-    if (sr > 140) return r.sr_above_140 ?? 0
-    if (sr >= 120) return r.sr_120_to_140 ?? 0
-    if (sr < 50) return r.sr_below_50 ?? 0
-    if (sr < 75) return r.sr_50_to_75 ?? 0
-  }
-  return 0
-}
-function ecoBonus(e: number | null, fmt: string, r: Rules): number {
-  if (e === null) return 0
-  if (fmt === 'T20') {
-    if (e < 5) return r.economy_below_5 ?? 0
-    if (e < 6) return r.economy_5_to_6 ?? 0
-    if (e >= 11) return r.economy_above_11 ?? 0
-    if (e >= 10) return r.economy_10_to_11 ?? 0
-  }
-  if (fmt === 'ODI') {
-    if (e < 2.5) return r.economy_below_2_5 ?? 0
-    if (e < 3.5) return r.economy_2_5_to_3_5 ?? 0
-    if (e >= 9) return r.economy_above_9 ?? 0
-    if (e >= 7) return r.economy_7_to_8 ?? 0
-  }
-  return 0
-}
 
 interface BatRow { runs?: number; ballsFaced?: number; fours?: number; sixes?: number; isDismissed?: boolean }
 interface BowlRow { wickets?: number; wicketTypes?: string[]; maidens?: number; runsConceded?: number; ballsBowled?: number; dotBalls?: number; noBalls?: number; wides?: number }
 interface FieldRow { catches?: number; stumpings?: number; runOutDirect?: number; runOutIndirect?: number }
 
+// These three unwrap .points from the canonical {points, breakdown} shape —
+// every call site here only ever wanted the number.
 function calcBatting(bat: BatRow, role: string, fmt: string, r: Rules): number {
-  const { runs = 0, ballsFaced = 0, fours = 0, sixes = 0, isDismissed = false } = bat
-  let pts = runs * (r.run ?? 0) + fours * (r.boundary4 ?? 0) + sixes * (r.boundary6 ?? 0)
-  if (runs >= 100) pts += r.century ?? 0
-  else if (runs >= 50) pts += r.half_century ?? 0
-  else if (runs >= 30) pts += r.thirty_run_bonus ?? 0
-  // Duck penalty does NOT apply to bowlers — only batters / AR / WK.
-  if (isDismissed && runs === 0 && role !== 'bowl') pts += r.duck ?? 0
-  if (r.sr_above_170 !== undefined && ballsFaced >= 10) pts += srBonus(strikeRate(runs, ballsFaced), fmt, r)
-  return pts
+  return calcBattingPoints({ ...bat, role }, fmt, r).points
 }
 function calcBowling(bowl: BowlRow, fmt: string, r: Rules): number {
-  const { wickets = 0, wicketTypes = [], maidens = 0, runsConceded = 0, ballsBowled = 0, dotBalls = 0, noBalls = 0, wides = 0 } = bowl
-  let pts = wickets * (r.wicket ?? 0)
-  const prem = wicketTypes.filter(t => ['lbw', 'bowled'].includes(String(t).toLowerCase())).length
-  pts += prem * (r.lbw_bowled_bonus ?? 0)
-  if (wickets >= 5 && r.five_wicket_haul) pts += r.five_wicket_haul
-  else if (wickets >= 4 && r.four_wicket_haul) pts += r.four_wicket_haul
-  else if (wickets >= 3 && r.three_wicket_haul) pts += r.three_wicket_haul
-  pts += maidens * (r.maiden_over ?? 0) + dotBalls * (r.dot_ball ?? 0)
-  // Economy bonus only kicks in once a bowler has bowled more than 1 over.
-  if (ballsBowled > 6) pts += ecoBonus(economyRate(runsConceded, ballsBowled), fmt, r)
-  pts += noBalls * (r.no_ball ?? 0) + wides * (r.wide ?? 0)
-  return pts
+  return calcBowlingPoints(bowl, fmt, r).points
 }
 function calcFielding(f: FieldRow, r: Rules): number {
-  const { catches = 0, stumpings = 0, runOutDirect = 0, runOutIndirect = 0 } = f
-  return catches * (r.catch ?? 0) + stumpings * (r.stumping ?? 0)
-    + runOutDirect * (r.run_out_direct ?? 0) + runOutIndirect * (r.run_out_indirect ?? 0)
+  return calcFieldingPoints(f, r).points
 }
 
 /** Raw fantasy points (no captaincy/booster multiplier) for one player's match stats. */
@@ -191,60 +122,21 @@ function boosterMultiplier(booster: string | null, isOverseas: boolean): number 
 function int(v: unknown): number { return parseInt(String(v), 10) || 0 }
 
 function deriveRole(s = ''): string {
-  s = s.toLowerCase()
-  if (s.includes('wicket') || s === 'wk') return 'wk'
-  if (s.includes('allround') || s === 'ar') return 'ar'
-  if (s.includes('bowl')) return 'bowl'
-  return 'bat'
+  return deriveRoleShared(s)
 }
 
 interface DismissalParse { type: string; bowler: string | null; fielder: string | null; fielder2?: string | null }
 
+// THE FIX for the run-out gap: this used to check only the short `d` code
+// (never dText) for run-outs, which happened to never bite CricAPI directly
+// (it reliably populates the short code for genuine dismissals) but was the
+// same latent shape as the browser's isDismissed bug. Delegating closes it.
 function parseDismissalEntry(b: any): DismissalParse | null {
-  const dText = String(b?.['dismissal-text'] ?? b?.dismissal ?? '').toLowerCase().trim()
-  const d     = String(b?.dismissal ?? '').toLowerCase().trim()
-  if (!d && (!dText || dText.includes('not out'))) return null
-  if (d.includes('not out') || dText.includes('not out')) return null
-
-  const strOrName = (v: any) => v?.name ?? (typeof v === 'string' && v ? v : null)
-  const fielderName = strOrName(b.catch) ?? strOrName(b.fielder) ?? strOrName(b.catcher) ?? null
-  const bowlerName  = strOrName(b.bowler) ?? null
-
-  if (bowlerName && ['catch', 'caught', 'bowled', 'lbw', 'stumped'].includes(d)) {
-    const type = d === 'catch' ? 'caught' : d
-    return { type, bowler: bowlerName, fielder: fielderName }
-  }
-  if (d === 'cb' && bowlerName) return { type: 'caught', bowler: bowlerName, fielder: bowlerName }
-  if (/^hit.?wicket$/i.test(d)) return { type: 'hit_wicket', bowler: bowlerName, fielder: null }
-  if (/^run\s*out/.test(d)) {
-    const parenMatch = d.match(/run\s*out\s*\(([^)]+)\)/i)
-    const parts = parenMatch
-      ? parenMatch[1].split(/\s*[/\\&]\s*/).map((n: string) => n.trim()).filter(Boolean)
-      : (fielderName ? [fielderName] : [])
-    return { type: 'run_out', bowler: null, fielder: parts[0] || null, fielder2: parts[1] || null }
-  }
-
-  const str = dText || d
-  let m: RegExpMatchArray | null
-  if ((m = str.match(/^lbw(?:\s+b\s+(.+))?/)))        return { type: 'lbw',     bowler: (m[1] || bowlerName || '').trim() || null, fielder: fielderName }
-  if ((m = str.match(/^c\s*&\s*b\s+(.+)/)))           return { type: 'caught',  bowler: m[1].trim(),                               fielder: m[1].trim() }
-  if ((m = str.match(/^c(?:t)?\s+(.+?)\s+b\s+(.+)/))) return { type: 'caught',  bowler: m[2].trim(),                               fielder: m[1].trim() }
-  if ((m = str.match(/^st\s+(.+?)\s+b\s+(.+)/)))      return { type: 'stumped', bowler: m[2].trim(),                               fielder: m[1].trim() }
-  if ((m = str.match(/^b\s+(.+)/)))                   return { type: 'bowled',  bowler: m[1].trim(),                               fielder: null }
-  return null
+  return parseDismissalEntryShared(b)
 }
 
 function matchBowlerName(dismissalRef: string | null, candidates: string[]): string | null {
-  if (!dismissalRef) return null
-  const t = dismissalRef.toLowerCase().trim()
-  const exact = candidates.find(c => c.toLowerCase() === t)
-  if (exact) return exact
-  const refSurname = t.split(/\s+/).pop()
-  if (refSurname) {
-    const bySurname = candidates.filter(c => c.toLowerCase().split(/\s+/).pop() === refSurname)
-    if (bySurname.length === 1) return bySurname[0]
-  }
-  return null
+  return matchBowlerNameShared(dismissalRef, candidates).name
 }
 
 interface ApiPlayer { id: string; name: string; role: string; batting?: BatRow; bowling?: BowlRow; fielding?: FieldRow }
@@ -322,7 +214,7 @@ function fromCricAPI(payload: any): { players: ApiPlayer[]; fieldingEvents: Fiel
       e.role = deriveRole(batterObj?.playing_role ?? batterObj?.role ?? '')
       e.batting = {
         runs: int(b.r), ballsFaced: int(b.b), fours: int(b['4s']), sixes: int(b['6s']),
-        isDismissed: !!b.dismissal && !String(b.dismissal ?? '').toLowerCase().includes('not out'),
+        isDismissed: deriveIsDismissed(b),
       }
     }
 
@@ -777,11 +669,11 @@ Deno.serve(async (req: Request) => {
     for (const match of liveMatches as any[]) {
       const tournament = match.tournament
       const fmtKey      = (match.format ?? 'T20').toUpperCase()
-      const rules: Rules = { ...(tournament?.scoring_rules?.[fmtKey] ?? DEFAULT_RULES[fmtKey] ?? DEFAULT_T20_RULES) }
-      // dot_ball forced to 0 unless the tournament's toggle is explicitly ON
-      // (migration_v30) — see the matching comment in scrape-scorecard's
-      // rules-construction step for why this gate exists.
-      if (!tournament?.dot_ball_enabled) rules.dot_ball = 0
+      // Tournament-level rules — this is the base raw_points figure used for
+      // player_match_stats and Daily XI (which never get per-contest
+      // overrides). The per-contest override for Season Long squads is
+      // resolved separately, per-squad, in the SL cascade below.
+      const rules: Rules = resolveEffectiveRules(tournament, null, fmtKey)
 
       // ── 1. Fetch from CricAPI ────────────────────────────────────────────
       let payload: any

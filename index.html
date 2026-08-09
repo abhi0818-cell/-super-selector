@@ -2446,6 +2446,20 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
        Source of truth: cricketScoringEngine.js, cricketApiAdapter.js, db.js. */
 
     import { createDb, NotConfiguredError } from './db.js?v=121';
+    // Canonical scoring math + dismissal parsing (see that file's header for
+    // the full consolidation notes — this replaces what used to be an
+    // independently-maintained copy of calcBatting/calcBowling/calcFielding/
+    // parseDismissalEntry/isDismissed here, which is exactly where the
+    // "duck penalty missing for scraper-sourced matches" bug lived: this
+    // file's own isDismissed check never fell back to `dismissal-text`.
+    import {
+      calcBattingPoints as calcBattingPointsShared,
+      calcBowlingPoints as calcBowlingPointsShared,
+      calcFieldingPoints as calcFieldingPointsShared,
+      deriveIsDismissed,
+      parseDismissalEntry as parseDismissalEntryShared,
+      matchBowlerName as matchBowlerNameShared,
+    } from './scoringEngine.shared.js?v=1';
 
     // ─── SCORING ENGINE ──────────────────────────────────────────────────────
     // SCORING_RULES is mutable (edited via the Rules UI). DEFAULT_SCORING_RULES
@@ -2545,28 +2559,16 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
     // rulesOverride is an optional flat rules object (same shape as SCORING_RULES[fmt]).
     // When provided it takes precedence over the global SCORING_RULES — used for
     // private leagues that have their own scoring configuration.
+    //
+    // Body delegates to scoringEngine.shared.js — kept as a same-signature
+    // wrapper (rather than rewriting every call site in this file) so the
+    // canonical duck/isDismissed/rules-merge logic feeds every existing
+    // caller for free. See that file's calcBattingPoints for the actual math.
     function calcBatting(inn,fmt='T20',rulesOverride){
-      const r=rulesOverride||SCORING_RULES[fmt]; const {runs=0,ballsFaced=0,fours=0,sixes=0,isDismissed=false,role}=inn||{}; const b={};
-      b.runs=runs*r.run; b.boundary4=fours*(r.boundary4||0); b.boundary6=sixes*(r.boundary6||0);
-      if(runs>=100) b.century=r.century||0; else if(runs>=50) b.half_century=r.half_century||0; else if(runs>=30) b.thirtyRunBonus=r.thirty_run_bonus||0;
-      // Duck penalty: does NOT apply to bowlers — only batters / AR / WK.
-      if(isDismissed&&runs===0&&role!=='bowl') b.duck=r.duck||0;
-      if(r.sr_above_170!==undefined&&ballsFaced>=10){ b.strikeRateBonus=srBonus(strikeRate(runs,ballsFaced),fmt,r); } else b.strikeRateBonus=0;
-      return { points:Object.values(b).reduce((a,c)=>a+c,0), breakdown:b };
+      return calcBattingPointsShared(inn||{}, fmt, rulesOverride||SCORING_RULES[fmt]);
     }
     function calcBowling(s,fmt='T20',rulesOverride){
-      const r=rulesOverride||SCORING_RULES[fmt]; const {wickets=0,wicketTypes=[],maidens=0,runsConceded=0,ballsBowled=0,dotBalls=0,noBalls=0,wides=0}=s||{}; const b={};
-      b.wickets=wickets*r.wicket;
-      const prem=wicketTypes.filter(t=>['lbw','bowled'].includes(String(t).toLowerCase())).length;
-      b.lbwBowledBonus=prem*(r.lbw_bowled_bonus||0);
-      if(wickets>=5&&r.five_wicket_haul) b.fiveWicket=r.five_wicket_haul;
-      else if(wickets>=4&&r.four_wicket_haul) b.fourWicket=r.four_wicket_haul;
-      else if(wickets>=3&&r.three_wicket_haul) b.threeWicket=r.three_wicket_haul;
-      b.maidens=maidens*r.maiden_over; b.dotBalls=dotBalls*(r.dot_ball||0);
-      // Economy bonus: bowler must have bowled MORE than 1 over (>6 balls).
-      b.economyBonus = ballsBowled>6 ? ecoBonus(economyRate(runsConceded,ballsBowled),fmt,r) : 0;
-      b.noBalls=noBalls*(r.no_ball||0); b.wides=wides*(r.wide||0);
-      return { points:Object.values(b).reduce((a,c)=>a+c,0), breakdown:b };
+      return calcBowlingPointsShared(s||{}, fmt, rulesOverride||SCORING_RULES[fmt]);
     }
     /**
      * Force dot_ball to 0 in the in-memory SCORING_RULES for every format,
@@ -2584,9 +2586,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       }
     }
     function calcFielding(f,fmt='T20',rulesOverride){
-      const r=rulesOverride||SCORING_RULES[fmt]; const {catches=0,stumpings=0,runOutDirect=0,runOutIndirect=0}=f||{};
-      const b={ catches:catches*r.catch, stumpings:stumpings*r.stumping, runOutDirect:runOutDirect*r.run_out_direct, runOutIndirect:runOutIndirect*r.run_out_indirect };
-      return { points:Object.values(b).reduce((a,c)=>a+c,0), breakdown:b };
+      return calcFieldingPointsShared(f||{}, rulesOverride||SCORING_RULES[fmt]);
     }
     // rulesOverride: optional flat rules object for a specific league — overrides global SCORING_RULES[fmt].
     // booster:       optional active booster key for this player's squad + match.
@@ -2623,68 +2623,14 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
     // ─── ADAPTER (CricAPI subset) ────────────────────────────────────────────
     const int=v=>parseInt(v,10)||0;
     function deriveRole(s=''){ s=s.toLowerCase(); if(s.includes('wicket')||s==='wk')return 'wk'; if(s.includes('allround')||s==='ar')return 'ar'; if(s.includes('bowl'))return 'bowl'; return 'bat'; }
-    // Classify a dismissal entry. CricAPI returns one of two shapes:
-    //   (A) Structured: b.dismissal = 'catch' | 'bowled' | 'lbw' | 'stumped'  +  b.bowler = { name }
-    //   (B) Full string: b.dismissal = 'c Pant b Bumrah' (older / alternate APIs)
+    // Classify a dismissal entry. Body delegates to scoringEngine.shared.js's
+    // parseDismissalEntry (same {type, bowler, fielder, fielder2}|null shape)
+    // — kept as a same-name wrapper so every call site in this file is
+    // unchanged. See that file's classifyDismissal for the canonical version,
+    // which also distinguishes "not out" from "dismissed but unparseable"
+    // (this wrapper collapses both to null, matching the old contract here).
     function parseDismissalEntry(b) {
-      // CricAPI v1: dismissed batters have b.dismissal = short code ('catch','lbw',…)
-      // Not-out batters have NO b.dismissal — only b['dismissal-text'] = 'not out'.
-      const dText = String(b?.['dismissal-text'] ?? b?.dismissal ?? '').toLowerCase().trim();
-      const d     = String(b?.dismissal ?? '').toLowerCase().trim();
-      if (!d && (!dText || dText.includes('not out'))) return null;
-      if (d.includes('not out') || dText.includes('not out')) return null;
-
-      // Shape A — short type code with separate bowler/fielder objects.
-      // CricAPI v1 sometimes returns these as plain strings, sometimes as { name } objects.
-      const strOrName = v => v?.name ?? (typeof v === 'string' && v ? v : null);
-      const fielderName = strOrName(b.catch) ?? strOrName(b.fielder) ?? strOrName(b.catcher) ?? null;
-      const bowlerName  = strOrName(b.bowler) ?? null;
-      if (bowlerName && ['catch','caught','bowled','lbw','stumped'].includes(d)) {
-        const type = d === 'catch' ? 'caught' : d;
-        return { type, bowler: bowlerName, fielder: fielderName };
-      }
-      // 'cb' = caught and bowled — bowler is also the fielder
-      if (d === 'cb' && bowlerName) {
-        return { type: 'caught', bowler: bowlerName, fielder: bowlerName };
-      }
-      if (/^hit.?wicket$/i.test(d)) {
-        return { type: 'hit_wicket', bowler: bowlerName, fielder: null };
-      }
-      if (/^run\s*out/.test(d) || /^run\s*out/.test(dText)) {
-        // Extract fielder(s) from "run out (Fielder)" or "run out (Fielder1 / Fielder2)".
-        // CricAPI sometimes puts the parenthesized name(s) in the short `dismissal`
-        // field (d), but for run-outs it's often only present in the longer
-        // `dismissal-text` (dText) — try both before falling back to the
-        // Shape-A catch/fielder/catcher fields, which run-outs frequently leave empty.
-        //
-        // BUG FIX: this gate used to test only `d` (the short CricAPI dismissal
-        // code). Scraper-sourced matches cache rows with NO `d` at all — only
-        // `dismissal-text` (see scrape-scorecard/index.ts's match_scorecards
-        // cache-writer) — so `d` is always '' for them, meaning EVERY run-out
-        // on a scraper match silently returned null here (not even the "no
-        // fielder name found" issue got recorded, since that check lives inside
-        // this branch) and Shape B below has no run_out case to fall back to.
-        // This is why run-out fielders (direct AND indirect) got zero credit
-        // and never showed up as a Review-tab / Fantasy-Scorecard fielding
-        // issue — the dismissal wasn't even recognized as a run-out.
-        const parenMatch = d.match(/run\s*out\s*\(([^)]+)\)/i) || dText.match(/run\s*out\s*\(([^)]+)\)/i);
-        const parts = parenMatch
-          ? parenMatch[1].split(/\s*[/\\&]\s*/).map(n => n.trim()).filter(Boolean)
-          : fielderName ? [fielderName] : [];
-        return { type: 'run_out', bowler: null, fielder: parts[0] || null, fielder2: parts[1] || null };
-      }
-
-      // Shape B — parse from the full dismissal-text string (covers cases where Shape A
-      // objects are missing, and also older CricAPI formats that return only a full string).
-      // Try dText first (e.g. "c Danni Wyatt-Hodge b Sophie Ecclestone"), fall back to d.
-      const str = dText || d;
-      let m;
-      if ((m = str.match(/^lbw(?:\s+b\s+(.+))?/)))           return { type:'lbw',     bowler: (m[1] || bowlerName || '').trim() || null, fielder: fielderName };
-      if ((m = str.match(/^c\s*&\s*b\s+(.+)/)))              return { type:'caught',  bowler: m[1].trim(),                       fielder: m[1].trim() };
-      if ((m = str.match(/^c(?:t)?\s+(.+?)\s+b\s+(.+)/)))    return { type:'caught',  bowler: m[2].trim(),                       fielder: m[1].trim() };
-      if ((m = str.match(/^st\s+(.+?)\s+b\s+(.+)/)))         return { type:'stumped', bowler: m[2].trim(),                       fielder: m[1].trim() };
-      if ((m = str.match(/^b\s+(.+)/)))                      return { type:'bowled',  bowler: m[1].trim(),                       fielder: null };
-      return null;
+      return parseDismissalEntryShared(b);
     }
 
     // Render a dismissal back into the standard scorecard short form.
@@ -2713,21 +2659,12 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
     }
 
     // Loose match of "Bumrah" against bowler "Jasprit Bumrah" — last word match.
+    // Body delegates to scoringEngine.shared.js's matchBowlerName, unwrapped
+    // back to the plain string|null this file's call sites expect (the
+    // canonical version returns { name, reason } so a future caller can log
+    // *why* a match failed — see that file's header for details).
     function matchBowlerName(dismissalRef, candidates) {
-      if (!dismissalRef) return null;
-      const t = dismissalRef.toLowerCase().trim();
-      // 1. Exact match
-      const exact = candidates.find(c => c.toLowerCase() === t);
-      if (exact) return exact;
-      // 2. Surname-only match — handles CricAPI spelling inconsistencies within the same
-      //    scorecard (e.g. batting row has "Charlotte Dean", bowling row has "Charollete Dean").
-      //    Only resolves when exactly one candidate shares the surname.
-      const refSurname = t.split(/\s+/).pop();
-      if (refSurname) {
-        const bySurname = candidates.filter(c => c.toLowerCase().split(/\s+/).pop() === refSurname);
-        if (bySurname.length === 1) return bySurname[0];
-      }
-      return null;
+      return matchBowlerNameShared(dismissalRef, candidates).name;
     }
 
     function fromCricAPI(payload, squad=[], fmt='T20'){
@@ -2821,7 +2758,14 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
             ballsFaced: int(b.b),
             fours: int(b['4s']),
             sixes: int(b['6s']),
-            isDismissed: !!b.dismissal && !(b.dismissal || '').toLowerCase().includes('not out'),
+            // THE FIX: was `!!b.dismissal && !(b.dismissal||'').toLowerCase().includes('not out')`
+            // — only ever checked the short `dismissal` code, never falling
+            // back to `dismissal-text`. Scraper-sourced matches only ever
+            // populate `dismissal-text` (see scrape-scorecard/index.ts), so
+            // every duck penalty for a scraper match silently evaluated to
+            // false here, even though runs/balls/everything else parsed
+            // correctly. deriveIsDismissed() checks both fields.
+            isDismissed: deriveIsDismissed(b),
           };
         });
 

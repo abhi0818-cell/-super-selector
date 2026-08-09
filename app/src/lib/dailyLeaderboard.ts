@@ -21,13 +21,12 @@ import {
   calcBattingPoints,
   calcBowlingPoints,
   calcFieldingPoints,
-  SCORING_RULES,
 } from '../engine/cricketScoringEngine';
 import { MatchFormat, PlayerRole, CaptaincyRole } from '../types';
 import { isMatchPlayed } from './matchLock';
 import { MatchWeek, MatchPlayer, MatchTeam } from './seasonHistory';
 import { resolveDisplayName } from './profileUtils';
-import { bowlingRulesFor } from './scoringUtils';
+import { resolveEffectiveRules } from './scoringUtils';
 
 // ─── Match picker (for the main ranked list) ──────────────────────────────────
 
@@ -156,12 +155,17 @@ export async function getDailyUserHistory(contestId: string, userId: string): Pr
   const tournamentId = contestRow?.tournament_id;
   if (!tournamentId) return { matchWeeks: [], history: [] };
 
-  // dot_ball_enabled (migration_v30) — whole contest is scoped to one
-  // tournament here, so a single lookup gates every matchweek below.
-  // Default false (hidden) if it can't be resolved, matching the server.
+  // Tournament-level scoring rules + dot_ball_enabled (migration_v30) — whole
+  // contest is scoped to one tournament here, so a single lookup resolves
+  // the effective rules for every matchweek below. Daily contests never get
+  // per-contest overrides (only Season Long/private leagues do — see
+  // resolveEffectiveRules's header), so tournament-level is the full answer
+  // here. Default to built-in rules if it can't be resolved, matching the
+  // server's own fallback.
   const { data: tRow } = await supabase
-    .from('tournaments').select('dot_ball_enabled').eq('id', tournamentId).maybeSingle();
+    .from('tournaments').select('scoring_rules, dot_ball_enabled').eq('id', tournamentId).maybeSingle();
   const dotBallOn = !!tRow?.dot_ball_enabled;
+  const tournamentScoringRules = tRow?.scoring_rules ?? null;
 
   const { data: tMatches, error: e1 } = await supabase
     .from('matches')
@@ -234,6 +238,12 @@ export async function getDailyUserHistory(contestId: string, userId: string): Pr
     const fmt   = (match.format ?? 'T20') as MatchFormat;
     const stats = statIdx[match.id] || {};
     const pids  = playerIdsByTeam[team.id] || [];
+    // Same effective rules (tournament overrides + dot-ball gate) for
+    // batting, bowling AND fielding — previously only bowling honored
+    // tournament-level scoring_rules, so a tournament running non-default
+    // batting/fielding rules would show a "My Team" breakdown that silently
+    // disagreed with the real persisted total.
+    const rules = resolveEffectiveRules(fmt, tournamentScoringRules, null, dotBallOn);
 
     const players: MatchPlayer[] = pids.map(pid => {
       const st   = stats[pid];
@@ -242,19 +252,19 @@ export async function getDailyUserHistory(contestId: string, userId: string): Pr
       let bat = 0, bowl = 0, field = 0, bonus = 0;
 
       if (st?.batting) {
-        const { breakdown } = calcBattingPoints({ ...st.batting, role }, fmt);
+        const { breakdown } = calcBattingPoints({ ...st.batting, role }, fmt, rules);
         bat   += (breakdown.runs ?? 0) + (breakdown.boundary4 ?? 0) + (breakdown.boundary6 ?? 0);
         bonus += (breakdown.century ?? 0) + (breakdown.half_century ?? 0)
                + (breakdown.duck ?? 0) + (breakdown.strikeRateBonus ?? 0);
       }
       if (st?.bowling) {
-        const { breakdown } = calcBowlingPoints(st.bowling, fmt, bowlingRulesFor(fmt, dotBallOn));
+        const { breakdown } = calcBowlingPoints(st.bowling, fmt, rules);
         bowl  += (breakdown.wickets ?? 0) + (breakdown.maidens ?? 0) + (breakdown.dotBalls ?? 0);
         bonus += (breakdown.lbwBowledBonus ?? 0) + (breakdown.fiveWicket ?? 0) + (breakdown.fourWicket ?? 0)
                + (breakdown.economyBonus ?? 0) + (breakdown.noBalls ?? 0) + (breakdown.wides ?? 0);
       }
       if (st?.fielding) {
-        field += calcFieldingPoints(st.fielding, fmt).points;
+        field += calcFieldingPoints(st.fielding, fmt, rules).points;
       }
 
       // Old Daily picks have no per-row multiplier column (no booster system

@@ -28,12 +28,11 @@ import {
   calcBattingPoints,
   calcBowlingPoints,
   calcFieldingPoints,
-  SCORING_RULES,
 } from '../engine/cricketScoringEngine';
 import { MatchFormat, PlayerRole, CaptaincyRole } from '../types';
 import { getBoosterMeta } from '../store/boosterStore';
 import { isMatchPlayed } from './matchLock';
-import { bowlingRulesFor } from './scoringUtils';
+import { resolveEffectiveRules } from './scoringUtils';
 
 export type MatchWeek = { id: string; label: string; match: string; date: string };
 
@@ -87,21 +86,42 @@ export async function getSquadSeasonHistory(squadId: string): Promise<{
     supabase.from('matches').select('id, format, status, tournament_id').in('id', matchIds),
   ]);
 
-  // dot_ball_enabled per tournament (migration_v30) — without this, a
-  // tournament with the toggle OFF would still show dot-ball points baked
-  // into the locally-recomputed `bowl` subtotal below, even though the
+  // Tournament-level scoring rules + dot_ball_enabled per tournament
+  // (migration_v30) — without the dot-ball gate, a tournament with the
+  // toggle OFF would still show dot-ball points baked into the
+  // locally-recomputed `bowl` subtotal below, even though the
   // server-computed `total_points` (used for `xiTotal`/`pts`) already
-  // excludes them. Default false (hidden) if the tournament can't be
+  // excludes them. Default to built-in rules if the tournament can't be
   // resolved, matching the server-side default.
   const tournamentIds = [...new Set((matchRows || []).map((m: any) => m.tournament_id).filter(Boolean))];
   const dotBallEnabledByTournament: Record<string, boolean> = {};
+  const scoringRulesByTournament: Record<string, any> = {};
   if (tournamentIds.length) {
     const { data: tRows } = await supabase
-      .from('tournaments').select('id, dot_ball_enabled').in('id', tournamentIds);
-    (tRows || []).forEach((t: any) => { dotBallEnabledByTournament[t.id] = !!t.dot_ball_enabled; });
+      .from('tournaments').select('id, scoring_rules, dot_ball_enabled').in('id', tournamentIds);
+    (tRows || []).forEach((t: any) => {
+      dotBallEnabledByTournament[t.id] = !!t.dot_ball_enabled;
+      scoringRulesByTournament[t.id] = t.scoring_rules ?? null;
+    });
   }
   const tournamentIdByMatch: Record<string, string> = {};
   (matchRows || []).forEach((m: any) => { tournamentIdByMatch[m.id] = m.tournament_id; });
+
+  // Season Long squads sit inside a private-league contest, which CAN have
+  // its own custom scoring_rules overriding the tournament's — same as
+  // admin.js's computeAndSaveSLScoresForMatch (the source of the real
+  // persisted totals). Without this, a squad in a custom-rules league would
+  // see a "My Team" breakdown computed against the tournament's default
+  // rules instead of the contest's, even though the server-side total
+  // already correctly used the contest's rules.
+  const { data: squadRow } = await supabase
+    .from('user_squads').select('contest_id').eq('id', squadId).maybeSingle();
+  let contestScoringRules: any = null;
+  if (squadRow?.contest_id) {
+    const { data: contestRow } = await supabase
+      .from('contests').select('scoring_rules').eq('id', squadRow.contest_id).maybeSingle();
+    contestScoringRules = contestRow?.scoring_rules ?? null;
+  }
 
   // Real role from `players`, not the role stored on user_match_xi (which was
   // historically hardcoded to 'bat' for every player — see db.js's
@@ -175,10 +195,16 @@ export async function getSquadSeasonHistory(squadId: string): Promise<{
     const fmt   = formatById[g.match_id] ?? 'T20';
     const stats = statIdx[g.match_id] || {};
     const net   = g.xiTotal - (penaltyByMatch[g.match_id] ?? 0);
-    // Gate dot_ball the same way the server/web do (migration_v30): only
-    // honour the rule's configured weight when the tournament has it on.
-    const dotBallOn = dotBallEnabledByTournament[tournamentIdByMatch[g.match_id]] ?? false;
-    const bowlingRules = bowlingRulesFor(fmt, dotBallOn);
+    // Effective rules for THIS match: tournament override, then this
+    // squad's contest override on top, then the dot-ball gate — same
+    // precedence as resolveEffectiveRules/computeAndSaveSLScoresForMatch.
+    // Applied consistently to batting/bowling/fielding (previously only
+    // bowling honored any override at all).
+    const tournamentId = tournamentIdByMatch[g.match_id];
+    const dotBallOn = dotBallEnabledByTournament[tournamentId] ?? false;
+    const rules = resolveEffectiveRules(
+      fmt, scoringRulesByTournament[tournamentId], contestScoringRules, dotBallOn,
+    );
 
     const players: MatchPlayer[] = g.rows.map((r: any) => {
       const st = stats[r.player_id];
@@ -186,19 +212,19 @@ export async function getSquadSeasonHistory(squadId: string): Promise<{
       let bat = 0, bowl = 0, field = 0, bonus = 0;
 
       if (st?.batting) {
-        const { breakdown } = calcBattingPoints({ ...st.batting, role }, fmt);
+        const { breakdown } = calcBattingPoints({ ...st.batting, role }, fmt, rules);
         bat   += (breakdown.runs ?? 0) + (breakdown.boundary4 ?? 0) + (breakdown.boundary6 ?? 0);
         bonus += (breakdown.century ?? 0) + (breakdown.half_century ?? 0)
                + (breakdown.duck ?? 0) + (breakdown.strikeRateBonus ?? 0);
       }
       if (st?.bowling) {
-        const { breakdown } = calcBowlingPoints(st.bowling, fmt, bowlingRules);
+        const { breakdown } = calcBowlingPoints(st.bowling, fmt, rules);
         bowl  += (breakdown.wickets ?? 0) + (breakdown.maidens ?? 0) + (breakdown.dotBalls ?? 0);
         bonus += (breakdown.lbwBowledBonus ?? 0) + (breakdown.fiveWicket ?? 0) + (breakdown.fourWicket ?? 0)
                + (breakdown.economyBonus ?? 0) + (breakdown.noBalls ?? 0) + (breakdown.wides ?? 0);
       }
       if (st?.fielding) {
-        field += calcFieldingPoints(st.fielding, fmt).points;
+        field += calcFieldingPoints(st.fielding, fmt, rules).points;
       }
 
       const captaincy: CaptaincyRole = r.is_captain ? 'captain' : r.is_vc ? 'vice_captain' : 'normal';

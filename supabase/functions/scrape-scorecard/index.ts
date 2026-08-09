@@ -16,6 +16,17 @@
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// Canonical scoring math + rules resolution — see that file's header. This
+// replaces what used to be an independently-maintained copy here (its own
+// calcBatting/calcBowling/calcFielding, a DEFAULT_T20_RULES whose
+// sr_70_to_100 had drifted to -4 vs -2 everywhere else, and — the bigger
+// one — an automatic cron cascade that only ever applied tournament-level
+// rules, never a squad's own contest-level custom scoring_rules, unlike the
+// browser's manual Finalize/Recalc path and poll-cricapi's cron).
+import {
+  DEFAULT_RULES, resolveEffectiveRules, parseOversToBalls,
+  calcBattingPoints, calcBowlingPoints, calcFieldingPoints,
+} from '../../../scoringEngine.shared.js'
 
 const SUPABASE_URL             = Deno.env.get('SUPABASE_URL')!
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -359,16 +370,68 @@ function firstLinkText(html: string): string {
 // (word-boundary anchored) and treat everything before it as the name.
 const DISMISSAL_START_RE = /\b(not\s*out|run\s*out|runout|hit\s*wicket|c\s*&\s*b|ct\s|c\s|st\s|lbw|b\s)/i
 
-function splitNameAndDismissal(strippedCell: string, linkedName: string): { name: string; afterName: string } {
+/**
+ * @typedef {'linked'|'roster'|'regex'|'first_token'} NameSplitMethod
+ *   linked      — name came from an <a> profile link (exact, always reliable)
+ *   roster      — matched a known player name from this match's roster (see below)
+ *   regex       — fell back to DISMISSAL_START_RE's word-boundary keyword search
+ *   first_token — nothing recognizable matched at all; took the first word
+ */
+
+/**
+ * When a batter's name isn't a hyperlink (common for less-established
+ * players the site hasn't built a profile page for), the ONLY signal left to
+ * find where the name ends and the dismissal text begins used to be
+ * DISMISSAL_START_RE, which requires a word boundary (`\b`) immediately
+ * before the matched keyword. That fails silently whenever the site's markup
+ * has literally no separator between the name and the dismissal — e.g.
+ * "Navin Bidaiseec Joshua Da Silva b Terrance Hinds" (no space before the
+ * "c" that starts "c Joshua..."): there's no boundary there, so the regex
+ * skips past it and matches the LATER "b Terrance Hinds" instead, producing
+ * a garbled name that fails roster matching (shows up as an "unmatched"
+ * player in Review) and silently drops the fielder's catch credit, since the
+ * text naming the fielder became part of the mangled "name" instead of the
+ * dismissal text.
+ *
+ * Matching against the match's own roster sidesteps the boundary problem
+ * entirely — we don't need a separator if we already know what the name is.
+ * This is tried BEFORE the regex fallback whenever a roster is available;
+ * the regex/first-token tiers remain as a last resort for names not on the
+ * roster (imports lagging the actual squad, spelling variants, etc.).
+ *
+ * @param strippedCell - the batting cell's plain text (name + dismissal, tags stripped)
+ * @param linkedName - the name from an <a> tag, if the site linked this player
+ * @param knownNames - every player name on the two teams in this match, for roster-prefix matching
+ */
+function splitNameAndDismissal(
+  strippedCell: string,
+  linkedName: string,
+  knownNames: string[] = [],
+): { name: string; afterName: string; method: string } {
   if (linkedName) {
     // Full name already known from the <a> link — just peel it off the front.
     return strippedCell.startsWith(linkedName)
-      ? { name: linkedName, afterName: strippedCell.slice(linkedName.length).trim() }
-      : { name: linkedName, afterName: strippedCell.replace(linkedName, '').trim() }
+      ? { name: linkedName, afterName: strippedCell.slice(linkedName.length).trim(), method: 'linked' }
+      : { name: linkedName, afterName: strippedCell.replace(linkedName, '').trim(), method: 'linked' }
   }
+
+  if (knownNames.length) {
+    const lowerCell = strippedCell.toLowerCase()
+    let best: string | null = null
+    for (const known of knownNames) {
+      if (!known) continue
+      if (lowerCell.startsWith(known.toLowerCase()) && (!best || known.length > best.length)) {
+        best = known // prefer the longest match, e.g. "Chris Gayle" over "Chris"
+      }
+    }
+    if (best) {
+      return { name: best, afterName: strippedCell.slice(best.length).trim(), method: 'roster' }
+    }
+  }
+
   const m = strippedCell.match(DISMISSAL_START_RE)
   if (m && m.index !== undefined && m.index > 0) {
-    return { name: strippedCell.slice(0, m.index).trim(), afterName: strippedCell.slice(m.index).trim() }
+    return { name: strippedCell.slice(0, m.index).trim(), afterName: strippedCell.slice(m.index).trim(), method: 'regex' }
   }
   // No recognizable dismissal keyword found at all — fall back to the old
   // first-token heuristic rather than guessing further (e.g. a genuinely
@@ -379,6 +442,7 @@ function splitNameAndDismissal(strippedCell: string, linkedName: string): { name
     afterName: strippedCell.startsWith(fallbackName)
       ? strippedCell.slice(fallbackName.length).trim()
       : strippedCell.replace(fallbackName, '').trim(),
+    method: 'first_token',
   }
 }
 
@@ -407,8 +471,15 @@ function parseRows(tableHtml: string): string[][] {
 }
 
 /** Parse CricketAddictor scorecard HTML */
-function parseCricketAddictor(html: string): Innings[] {
+function parseCricketAddictor(html: string, knownNames: string[] = []): Innings[] {
   const innings: Innings[] = []
+  // QA signal: every batting row whose name didn't come from a clean <a>
+  // link (roster-matched, regex-guessed, or first-token-guessed). Attached
+  // to the return value below so the caller can log/report it even when the
+  // guess turned out fine — this is what makes the "name+dismissal glued
+  // together" failure class visible in Function Logs instead of only ever
+  // showing up (if at all) as a confusing garbled name in Review.
+  const nameSplitFallbacks: { teamName: string; raw: string; resolvedName: string; method: string }[] = []
   // Innings sections are delimited by <h2> headers containing "Inning" —
   // but the live markup wraps the score in nested tags (e.g. a <span>),
   // so we can't require the whole <h2> body to be plain text. Instead,
@@ -447,8 +518,11 @@ function parseCricketAddictor(html: string): Innings[] {
         // then peel the name back off the front to leave just the dismissal part
         // — see splitNameAndDismissal() for why this isn't just "first word".
         const strippedCell = stripTags(nameHtml)
-        const { name, afterName } = splitNameAndDismissal(strippedCell, firstLinkText(nameHtml))
+        const { name, afterName, method } = splitNameAndDismissal(strippedCell, firstLinkText(nameHtml), knownNames)
         if (!name) continue
+        if (method !== 'linked') {
+          nameSplitFallbacks.push({ teamName, raw: strippedCell, resolvedName: name, method })
+        }
         const notOut    = afterName === '' || /^not\s*out/i.test(afterName)
         const dismissed = !notOut
         batting.push({
@@ -483,6 +557,7 @@ function parseCricketAddictor(html: string): Innings[] {
 
     if (batting.length || bowling.length) innings.push({ teamName, batting, bowling })
   }
+  ;(innings as any).nameSplitFallbacks = nameSplitFallbacks
   return innings
 }
 
@@ -655,90 +730,29 @@ function matchBowlerNameInInnings(ref: string | null, candidates: string[]): str
 
 interface Rules { [key: string]: number }
 
-function srBonus(sr: number, fmt: string, r: Rules): number {
-  if (fmt === 'T20') {
-    if (sr > 170) return r.sr_above_170 ?? 0
-    if (sr >= 140) return r.sr_140_to_170 ?? 0
-    if (sr < 70)  return r.sr_below_70 ?? 0
-    if (sr < 100) return r.sr_70_to_100 ?? 0
-  }
-  if (fmt === 'ODI') {
-    if (sr > 140) return r.sr_above_140 ?? 0
-    if (sr >= 120) return r.sr_120_to_140 ?? 0
-    if (sr < 50)  return r.sr_below_50 ?? 0
-    if (sr < 75)  return r.sr_50_to_75 ?? 0
-  }
-  return 0
-}
-
-function ecoBonus(eco: number, fmt: string, r: Rules): number {
-  if (fmt === 'T20') {
-    if (eco < 5)  return r.economy_below_5 ?? 0
-    if (eco < 6)  return r.economy_5_to_6 ?? 0
-    if (eco >= 11) return r.economy_above_11 ?? 0
-    if (eco >= 10) return r.economy_10_to_11 ?? 0
-  }
-  if (fmt === 'ODI') {
-    if (eco < 2.5) return r.economy_below_2_5 ?? 0
-    if (eco < 3.5) return r.economy_2_5_to_3_5 ?? 0
-    if (eco >= 9)  return r.economy_above_9 ?? 0
-    if (eco >= 7)  return r.economy_7_to_8 ?? 0
-  }
-  return 0
-}
-
+// Thin wrappers over scoringEngine.shared.js, translating this file's field
+// names (balls/dismissed/overs/dots) to the canonical shape
+// (ballsFaced/isDismissed/ballsBowled/dotBalls). sr_70_to_100 no longer has
+// its own copy here to drift out of sync — DEFAULT_RULES.T20 is canonical's.
 function calcBatting(bat: BatRow, role: string, fmt: string, r: Rules): number {
-  let pts = 0
-  pts += bat.runs  * (r.run ?? 1)
-  pts += bat.fours * (r.boundary4 ?? 0)
-  pts += bat.sixes * (r.boundary6 ?? 0)
-  if (bat.runs >= 100) pts += (r.century ?? 0)
-  else if (bat.runs >= 50) pts += (r.half_century ?? 0)
-  else if (bat.runs >= 30) pts += (r.thirty_run_bonus ?? 0)
-  if (bat.dismissed && bat.runs === 0 && role !== 'bowl') pts += (r.duck ?? 0)
-  if (r.sr_above_170 !== undefined && bat.balls >= 10) {
-    const sr = (bat.runs / bat.balls) * 100
-    pts += srBonus(sr, fmt, r)
-  }
-  return pts
+  return calcBattingPoints(
+    { runs: bat.runs, ballsFaced: bat.balls, fours: bat.fours, sixes: bat.sixes, isDismissed: bat.dismissed, role },
+    fmt, r,
+  ).points
 }
 
 function calcBowling(bowl: BowlRow, fmt: string, r: Rules): number {
-  let pts = 0
-  pts += bowl.wickets * (r.wicket ?? 25)
-  if (bowl.wickets >= 5 && r.five_wicket_haul) pts += r.five_wicket_haul
-  else if (bowl.wickets >= 4 && r.four_wicket_haul) pts += r.four_wicket_haul
-  else if (bowl.wickets >= 3 && r.three_wicket_haul) pts += r.three_wicket_haul
-  pts += bowl.maidens * (r.maiden_over ?? 0)
-  pts += bowl.dots    * (r.dot_ball ?? 0)
-  const ballsBowled = Math.round(bowl.overs) * 6 + Math.round((bowl.overs % 1) * 10)
-  if (ballsBowled > 6) {
-    const eco = ballsBowled === 0 ? 0 : (bowl.runs / ballsBowled) * 6
-    pts += ecoBonus(eco, fmt, r)
-  }
-  return pts
-}
-
-// ─── Default T20 scoring rules (fallback if tournament has none) ──────────────
-const DEFAULT_T20_RULES: Rules = {
-  run: 1, boundary4: 1, boundary6: 2,
-  thirty_run_bonus: 4, half_century: 8, century: 16, duck: -2,
-  sr_above_170: 6, sr_140_to_170: 4, sr_below_70: -6, sr_70_to_100: -4,
-  wicket: 25, maiden_over: 8, dot_ball: 0,
-  three_wicket_haul: 8, four_wicket_haul: 8, five_wicket_haul: 16,
-  economy_below_5: 6, economy_5_to_6: 4, economy_10_to_11: -4, economy_above_11: -6,
-  catch: 8, stumping: 12, run_out_direct: 12, run_out_indirect: 6,
-  lbw_bowled_bonus: 8,
+  return calcBowlingPoints(
+    { wickets: bowl.wickets, maidens: bowl.maidens, runsConceded: bowl.runs, ballsBowled: parseOversToBalls(bowl.overs), dotBalls: bowl.dots },
+    fmt, r,
+  ).points
 }
 
 interface FieldRow { catches: number; stumpings: number; runOutDirect: number; runOutIndirect: number }
 
 /** Mirrors index.html's calcFielding / poll-cricapi's calcFielding. */
 function calcFielding(f: FieldRow, r: Rules): number {
-  return f.catches * (r.catch ?? 0)
-    + f.stumpings * (r.stumping ?? 0)
-    + f.runOutDirect * (r.run_out_direct ?? 0)
-    + f.runOutIndirect * (r.run_out_indirect ?? 0)
+  return calcFieldingPoints(f, r).points
 }
 
 /** Mirrors poll-cricapi/cricketScoringEngine.js's lbw_bowled_bonus: a bonus to
@@ -899,7 +913,25 @@ function xiBoosterMultiplier(booster: string | null, isOverseas: boolean): numbe
   return 1
 }
 
-async function scoreXIForMatch(matchId: string, pointsMap: Map<string, number>) {
+/**
+ * THE FIX: this used to take a flat `pointsMap` (one number per player,
+ * computed from TOURNAMENT-level rules only) and apply it to every squad's
+ * XI regardless of which contest they're in — so a Season League squad
+ * sitting in a private league with its own custom scoring_rules got wrong
+ * automatic (cron) scores, correct only after an admin manually re-ran
+ * Finalize in the browser (which does resolve contest-level rules). Now
+ * mirrors poll-cricapi's scoreSLForMatch / admin.js's
+ * computeAndSaveSLScoresForMatch: resolve each squad's contest, and where a
+ * contest has its own scoring_rules for this format, re-derive that squad's
+ * points from the player's raw batting/bowling/fielding stats using the
+ * contest's effective rules instead of the tournament-level total.
+ */
+async function scoreXIForMatch(
+  matchId: string,
+  tournament: any,
+  fmt: string,
+  statsByPlayer: Map<string, { batting?: any; bowling?: any; fielding?: FieldRow; rawPoints: number }>,
+) {
   // Get all locked XIs for this match
   const { data: xiRows, error } = await sb
     .from('user_match_xi')
@@ -917,14 +949,48 @@ async function scoreXIForMatch(matchId: string, pointsMap: Map<string, number>) 
   const boosterMap = new Map<string, string>()
   for (const b of boosterRows ?? []) boosterMap.set(b.squad_id, b.booster)
 
-  // Overseas flag per player — needed for os_double / indian_double.
+  // Overseas flag + role per player — role is needed for the duck-penalty
+  // role check when re-scoring from raw stats under custom contest rules.
   const playerIds = Array.from(new Set(xiRows.map((r: any) => r.player_id)))
-  const { data: playerRows } = await sb.from('players').select('id, is_overseas').in('id', playerIds)
+  const { data: playerRows } = await sb.from('players').select('id, is_overseas, role').in('id', playerIds)
   const overseasMap = new Map<string, boolean>()
-  for (const p of playerRows ?? []) overseasMap.set(p.id, !!p.is_overseas)
+  const roleMap = new Map<string, string>()
+  for (const p of playerRows ?? []) {
+    overseasMap.set(p.id, !!p.is_overseas)
+    roleMap.set(p.id, p.role ?? 'bat')
+  }
+
+  // Squad → contest → contest's effective rules (only populated when the
+  // contest actually has its own scoring_rules for this format — squads in
+  // Daily-style or default-rules contests fall through to the tournament
+  // total below, same as before).
+  const squadIds = Array.from(new Set(xiRows.map((r: any) => r.squad_id)))
+  const { data: squadRows } = await sb.from('user_squads').select('id, contest_id').in('id', squadIds)
+  const contestIdBySquad = new Map<string, string>()
+  for (const s of squadRows ?? []) if (s.contest_id) contestIdBySquad.set(s.id, s.contest_id)
+
+  const contestIds = Array.from(new Set(contestIdBySquad.values()))
+  const rulesByContest = new Map<string, Rules | null>()
+  if (contestIds.length) {
+    const { data: contests } = await sb.from('contests').select('id, scoring_rules').in('id', contestIds)
+    for (const c of contests ?? []) {
+      rulesByContest.set(c.id, c.scoring_rules?.[fmt] ? resolveEffectiveRules(tournament, c, fmt) : null)
+    }
+  }
 
   const scoreRows = xiRows.map((xi: any) => {
-    const raw       = pointsMap.get(xi.player_id) ?? 0
+    const contestId   = contestIdBySquad.get(xi.squad_id)
+    const customRules = contestId ? (rulesByContest.get(contestId) ?? null) : null
+    const s           = statsByPlayer.get(xi.player_id)
+
+    const raw = (customRules && s)
+      ? (
+          (s.batting  ? calcBattingPoints({ ...s.batting, role: roleMap.get(xi.player_id) ?? 'bat' }, fmt, customRules).points : 0) +
+          (s.bowling  ? calcBowlingPoints(s.bowling, fmt, customRules).points : 0) +
+          (s.fielding ? calcFieldingPoints(s.fielding, customRules).points : 0)
+        )
+      : (s?.rawPoints ?? 0)
+
     const booster   = boosterMap.get(xi.squad_id) ?? null
     const captaincy: 'captain' | 'vice_captain' | 'normal' = xi.is_captain ? 'captain' : xi.is_vc ? 'vice_captain' : 'normal'
     const isOverseas = overseasMap.get(xi.player_id) ?? false
@@ -1117,9 +1183,22 @@ Deno.serve(async (req: Request) => {
         continue
       }
 
+      // ── 2b. Roster names for this match's two teams ────────────────────────
+      // Fetched here (before parsing, not with the rest of the name-resolution
+      // maps in step 4 below) purely so splitNameAndDismissal can match a
+      // non-hyperlinked player's name against the real roster instead of
+      // guessing from dismissal-keyword regexes alone — see its doc comment.
+      const matchTeamIdsForParse = [(match.home_team as any)?.id, (match.away_team as any)?.id].filter(Boolean)
+      const { data: rosterForParse } = await sb
+        .from('tournament_players')
+        .select('players(name)')
+        .eq('tournament_id', tournament.id)
+        .in('team_id', matchTeamIdsForParse.length ? matchTeamIdsForParse : ['__none__'])
+      const knownNames = (rosterForParse ?? []).map((r: any) => r.players?.name).filter(Boolean)
+
       // ── 3. Parse innings ──────────────────────────────────────────────────
       const innings = source === 'cricketaddictor'
-        ? parseCricketAddictor(html)
+        ? parseCricketAddictor(html, knownNames)
         : parseBusinessStandard(html)
 
       if (!innings.length) {
@@ -1277,16 +1356,12 @@ Deno.serve(async (req: Request) => {
       }
 
       // ── 5. Scoring rules ──────────────────────────────────────────────────
+      // Tournament-level only — this is the base raw_points figure written to
+      // player_match_stats and used for Daily XI. dot_ball is forced to 0
+      // unless the tournament's "Dot ball scoring" toggle is explicitly ON
+      // (migration_v30) — resolveEffectiveRules applies that gate.
       const fmtKey   = fmt.toUpperCase() === 'ODI' ? 'ODI' : 'T20'
-      const rules: Rules = { ...(tournament.scoring_rules?.[fmtKey] ?? DEFAULT_T20_RULES) }
-      // dot_ball is forced to 0 unless the tournament's "Dot ball scoring"
-      // toggle is explicitly ON (migration_v30) — independent of whatever
-      // numeric weight happens to be saved in scoring_rules. This used to be
-      // hidden from the rules UI entirely on the assumption that no feed
-      // would ever report per-bowler dot-ball counts; CricketAddictor-scraped
-      // matches do report them, so without this gate dot_ball could silently
-      // score with zero admin visibility or control.
-      if (!tournament.dot_ball_enabled) rules.dot_ball = 0
+      const rules: Rules = resolveEffectiveRules(tournament, null, fmtKey)
 
       // ── 6. Process innings → stat rows ───────────────────────────────────
       // player_id → { batting?, bowling?, fielding?, rawPoints }
@@ -1399,7 +1474,7 @@ Deno.serve(async (req: Request) => {
         for (const bowl of inn.bowling) {
           if (isPlaceholderName(bowl.name)) {
             const wicketTypes = wicketsByBowlerRaw[bowl.name] ?? []
-            const ballsBowled = Math.round(bowl.overs) * 6 + Math.round((bowl.overs % 1) * 10)
+            const ballsBowled = parseOversToBalls(bowl.overs)
             const rawPts = calcBowling(bowl, fmtKey, rules) + calcLbwBowledBonus(wicketTypes, rules)
             placeholderRows.set('bowling', {
               bowling: { wickets: bowl.wickets, wicketTypes, maidens: bowl.maidens, runsConceded: bowl.runs, ballsBowled, dotBalls: bowl.dots, noBalls: 0, wides: 0 },
@@ -1416,7 +1491,7 @@ Deno.serve(async (req: Request) => {
 
           const wicketTypes  = wicketsByBowlerRaw[bowl.name] ?? []
           const rawPts       = calcBowling(bowl, fmtKey, rules) + calcLbwBowledBonus(wicketTypes, rules)
-          const ballsBowled  = Math.round(bowl.overs) * 6 + Math.round((bowl.overs % 1) * 10)
+          const ballsBowled  = parseOversToBalls(bowl.overs)
 
           const existing = statAccum.get(playerId)
           if (existing) {
@@ -1608,14 +1683,27 @@ Deno.serve(async (req: Request) => {
       // here too, so scoring stays consistent with what's actually persisted
       // above rather than re-applying points from the discarded worse read.
       const pointsMap = new Map<string, number>()
+      // Same regression-aware selection as pointsMap above, but keeping the
+      // full batting/bowling/fielding shape (not just the collapsed number)
+      // — scoreXIForMatch needs the raw stats to re-derive points under a
+      // contest's custom scoring rules, not just the tournament-level total.
+      const statsByPlayer = new Map<string, { batting?: any; bowling?: any; fielding?: FieldRow; rawPoints: number }>()
       for (const [pid, s] of statAccum) {
         if (regressedPlayers.includes(pid)) {
-          pointsMap.set(pid, existingByPlayer.get(pid)?.raw_points ?? s.rawPoints)
+          const ex = existingByPlayer.get(pid)
+          pointsMap.set(pid, ex?.raw_points ?? s.rawPoints)
+          statsByPlayer.set(pid, {
+            batting  : ex?.batting  ?? s.batting,
+            bowling  : ex?.bowling  ?? s.bowling,
+            fielding : ex?.fielding ?? s.fielding,
+            rawPoints: ex?.raw_points ?? s.rawPoints,
+          })
         } else {
           pointsMap.set(pid, s.rawPoints)
+          statsByPlayer.set(pid, { batting: s.batting, bowling: s.bowling, fielding: s.fielding, rawPoints: s.rawPoints })
         }
       }
-      await scoreXIForMatch(match.id, pointsMap)
+      await scoreXIForMatch(match.id, tournament, fmtKey, statsByPlayer)
       const dailyTeamsScored = await scoreDailyTeamsForMatch(match.id, pointsMap)
 
       // ── 11. Bump the progress watermark now that this read has landed ─────
@@ -1639,6 +1727,12 @@ Deno.serve(async (req: Request) => {
         completionMarked: completionInfo.completed && match.status !== 'completed',
         fieldingCredited: fieldingByPlayer.size,
         fieldingIssues: fieldingIssues.length,
+        // QA signal (see splitNameAndDismissal): every batting row whose name
+        // didn't come from a clean profile link, even if it resolved fine —
+        // worth a glance in Function Logs, since a 'regex' or 'first_token'
+        // entry here is exactly the shape of bug that silently drops a
+        // fielder's credit without ever showing up as an "unmatched" row.
+        nameSplitFallbacks: (innings as any).nameSplitFallbacks ?? [],
       })
     }
 

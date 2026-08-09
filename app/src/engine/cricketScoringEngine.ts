@@ -17,7 +17,7 @@ import {
 
 // ─── Scoring Rules ────────────────────────────────────────────────────────────
 
-type ScoringRuleSet = Record<string, number>;
+export type ScoringRuleSet = Record<string, number>;
 
 export const SCORING_RULES: Record<MatchFormat, ScoringRuleSet> = {
   T20: {
@@ -105,8 +105,9 @@ function calcEconomyBonus(eco: number, format: MatchFormat, rules: ScoringRuleSe
 export function calcBattingPoints(
   innings: BattingInnings & { role: PlayerRole },
   format: MatchFormat = 'T20',
+  rulesOverride?: ScoringRuleSet,
 ): { points: number; breakdown: Record<string, number> } {
-  const rules = SCORING_RULES[format];
+  const rules = rulesOverride ?? SCORING_RULES[format];
   const { runs, ballsFaced, fours, sixes, isDismissed, role } = innings;
   const breakdown: Record<string, number> = {};
 
@@ -175,8 +176,9 @@ export function calcBowlingPoints(
 export function calcFieldingPoints(
   fielding: FieldingStats,
   format: MatchFormat = 'T20',
+  rulesOverride?: ScoringRuleSet,
 ): { points: number; breakdown: Record<string, number> } {
-  const rules = SCORING_RULES[format];
+  const rules = rulesOverride ?? SCORING_RULES[format];
   const breakdown: Record<string, number> = {
     catches:        (fielding.catches        ?? 0) * rules.catch,
     stumpings:      (fielding.stumpings      ?? 0) * rules.stumping,
