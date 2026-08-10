@@ -3015,10 +3015,15 @@
       // still get their own row each, since those genuinely need a Link click.
       const { matched, unmatched: unmatchedPl } = mergeApiPlayersByLocalId(players, findLocalByName);
       const matchedScored = matched.map(({ local, pl }) => {
-        const s = calculateScore({ ...pl, captaincy: 'normal' }, state.format);
+        // Use the local DB role, not the API-derived role. fromCricAPI
+        // promotes any player who both batted AND bowled to 'ar', which
+        // incorrectly triggers the duck penalty for specialist bowlers who
+        // bat lower-order. The DB role is the authoritative designation
+        // (same pattern as finalizeOneMatch/forceRefinalizeMatch).
+        const s = calculateScore({ ...pl, role: local.role, captaincy: 'normal' }, state.format);
         return {
           apiName: local.name,
-          role: pl.role,
+          role: local.role,
           localPlayer: local,
           inXi: xiIds.has(local.id),
           points: s.rawPoints,
@@ -3293,7 +3298,11 @@
       const { matched, unmatched: unmatchedPl3 } = mergeApiPlayersByLocalId(apiPlayers, findLocalByName);
       const unmatchedNames = unmatchedPl3.map(p => p.name);
       const rows = matched.map(({ local, pl }) => {
-        const s = calculateScore({ ...pl, captaincy: 'normal' }, state.format);
+        // Use the local DB role, not the API-derived role — see
+        // finalizeOneMatch's comment; fromCricAPI promotes any
+        // batted-and-bowled player to 'ar', which wrongly triggers the duck
+        // penalty for specialist bowlers.
+        const s = calculateScore({ ...pl, role: local.role, captaincy: 'normal' }, state.format);
         return {
           playerId : local.id,
           batting  : pl.batting  ?? null,
@@ -3355,7 +3364,11 @@
         const { matched, unmatched: unmatchedPl4 } = mergeApiPlayersByLocalId(players, findLocalByName);
         const unmatched = unmatchedPl4.length;
         const rows = matched.map(({ local, pl }) => {
-          const s = calculateScore({ ...pl, captaincy: 'normal' }, state.format);
+          // Use the local DB role, not the API-derived role — see
+          // finalizeOneMatch's comment; fromCricAPI promotes any
+          // batted-and-bowled player to 'ar', which wrongly triggers the
+          // duck penalty for specialist bowlers.
+          const s = calculateScore({ ...pl, role: local.role, captaincy: 'normal' }, state.format);
           return {
             playerId  : local.id,
             batting   : pl.batting   ?? null,
@@ -4606,6 +4619,7 @@
     // ─── Score Audit ─────────────────────────────────────────────────────────
 
     let lastAuditResults = null; // cache so Recalc/Finalize buttons can re-render without a full re-fetch of stale data
+    let lastAuditRawStats = null; // { stats, playerById, tFmt } — kept so "Fix" can recompute from already-stored batting/bowling/fielding without hitting CricAPI
 
     /**
      * Recomputes every player_match_stats row in the active tournament from
@@ -4672,6 +4686,12 @@
           }
         }
 
+        // Kept for recomputeStoredStatsForMatch — lets "Fix" re-derive
+        // raw_points from the batting/bowling/fielding already sitting in
+        // player_match_stats (unchanged) instead of refetching from CricAPI,
+        // which the scraper-sourced tournaments have no reliable link to.
+        lastAuditRawStats = { stats, playerById: playerById2, matchById, tFmt, tournamentScoringRules: t?.scoring_rules || {} };
+
         lastAuditResults = { missingScorecard, mismatches, rowsChecked: stats.length, matchCount: matches.length };
         renderScoreAuditResults();
 
@@ -4682,6 +4702,61 @@
         toast('Audit failed: ' + e.message, 5000);
       } finally {
         if (btn) { btn.disabled = false; btn.textContent = 'Run Score Audit'; }
+      }
+    }
+
+    /**
+     * Recomputes and re-saves raw_points for every player_match_stats row of
+     * one match using the stats ALREADY STORED (batting/bowling/fielding
+     * left untouched) — no CricAPI call. This is the right fix for the
+     * "bowler wrongly got duck penalty" class of bug: the captured stats
+     * were always correct, only the role used to score them was wrong, so
+     * there's nothing to refetch. Use forceRefinalizeMatch/"Recalc" instead
+     * only when the stored stats themselves are missing or wrong (e.g. a
+     * genuinely incomplete scorecard) — for scraper-sourced tournaments that
+     * button also isn't reliable since matches usually have no real CricAPI
+     * external_id to refetch from.
+     */
+    async function recomputeStoredStatsForMatch(matchId) {
+      if (!state.db) { toast('Connect a database first.'); return; }
+      if (!lastAuditRawStats) { toast('Run Score Audit first.'); return; }
+
+      const { stats, playerById, matchById, tFmt, tournamentScoringRules } = lastAuditRawStats;
+      const match = matchById.get(matchId);
+      const fmt = (match?.format || tFmt || 'T20').toUpperCase();
+      const rules = { ...DEFAULT_SCORING_RULES[fmt], ...(tournamentScoringRules[fmt] || {}) };
+
+      const rowsForMatch = stats.filter(s => s.match_id === matchId);
+      if (!rowsForMatch.length) { toast('No stored stats for this match.'); return; }
+
+      const rows = rowsForMatch.map(row => {
+        const player = playerById.get(row.player_id);
+        const role = player?.role ?? 'bat';
+        const scored = calculateScore(
+          { name: player?.name ?? row.player_id, role, captaincy: 'normal',
+            batting: row.batting, bowling: row.bowling, fielding: row.fielding },
+          fmt, rules,
+        );
+        return {
+          playerId : row.player_id,
+          batting  : row.batting  ?? null,
+          bowling  : row.bowling  ?? null,
+          fielding : row.fielding ?? null,
+          rawPoints: scored.rawPoints,
+        };
+      });
+
+      const n = await state.db.bulkUpsertPlayerMatchStats(matchId, rows);
+      const xiSaved = await computeAndSaveXIScoresForMatch(matchId);
+      await computeAndSaveSLScoresForMatch(matchId);
+
+      toast(`Fixed M${match?.match_number ?? '?'} — ${n} row(s) recomputed from stored stats (no CricAPI call)`
+        + `${xiSaved ? `, ${xiSaved} XI total${xiSaved === 1 ? '' : 's'} updated` : ''}.`);
+      renderMatchesAdmin();
+      renderHistory();
+      if ($('#lbModal')?.classList.contains('open')) {
+        await renderLeaderboard();
+        maybeStartLbPolling();
       }
     }
 
@@ -4713,7 +4788,10 @@
             <td>${escapeHtml(m.playerName)}</td>
             <td>${m.stored}</td>
             <td>${m.recomputed} <span style="color:${m.diff > 0 ? 'var(--accent-2)' : 'var(--bad)'};">(${m.diff > 0 ? '+' : ''}${m.diff})</span></td>
-            <td><button class="row-audit-recalc" data-match-id="${m.matchId}" style="font-size:11px; padding:3px 8px;">Recalc</button></td>
+            <td>
+              <button class="row-audit-fix" data-match-id="${m.matchId}" style="font-size:11px; padding:3px 8px;" title="Recompute from already-stored stats — no CricAPI call">Fix</button>
+              <button class="row-audit-recalc" data-match-id="${m.matchId}" style="font-size:11px; padding:3px 8px;" title="Refetch from CricAPI — only if the stored stats themselves are wrong/incomplete">Recalc</button>
+            </td>
           </tr>`);
       }
 
@@ -4724,6 +4802,17 @@
           <tbody>${rows.join('')}</tbody>
         </table>`;
 
+      resultsEl.querySelectorAll('.row-audit-fix').forEach(b => {
+        b.addEventListener('click', async () => {
+          b.disabled = true; b.textContent = '…';
+          try {
+            await recomputeStoredStatsForMatch(b.dataset.matchId);
+          } catch (e) {
+            toast('Fix failed: ' + e.message, 5000);
+          }
+          await runScoreAudit(); // re-check so fixed rows drop off the list
+        });
+      });
       resultsEl.querySelectorAll('.row-audit-recalc').forEach(b => {
         b.addEventListener('click', async () => {
           b.disabled = true; b.textContent = '…';

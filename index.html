@@ -11174,7 +11174,12 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
             if (!mine) { unmatched.push(pl.name); return; }
             matched.push(`${pl.name} → ${mine.name}`);
             state.stats[mine.id] = { batting: pl.batting, bowling: pl.bowling, fielding: pl.fielding };
-            const s = calculateScore({ ...pl, captaincy: 'normal' }, state.format);
+            // Use the local DB role, not the API-derived role — fromCricAPI
+            // promotes any player who both batted AND bowled to 'ar', which
+            // wrongly triggers the duck penalty for specialist bowlers
+            // batting lower-order. The DB role is authoritative (same
+            // pattern as finalizeOneMatch/admin.js).
+            const s = calculateScore({ ...pl, role: mine.role, captaincy: 'normal' }, state.format);
             statRows.push({ playerId: mine.id, batting: pl.batting ?? null, bowling: pl.bowling ?? null, fielding: pl.fielding ?? null, rawPoints: s.rawPoints });
           });
           // Persist per-player raw stats too — History/Leaderboard breakdown panels
