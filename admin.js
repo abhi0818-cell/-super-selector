@@ -34,6 +34,7 @@
   const escapeHtml           = A.escapeHtml;
   const playerById           = A.playerById;
   const findLocalByName      = A.findLocalByName;
+  const mergeApiPlayersByLocalId = A.mergeApiPlayersByLocalId;
   const teamCodes            = A.teamCodes;
   const teamByCode           = A.teamByCode;
   const isAdmin              = A.isAdmin;
@@ -2268,30 +2269,24 @@
       await state.db.saveMatchScorecard(m.id, json);
       const players = fromCricAPI(json, matchSquadFor(m), m.format);
       if (!players.length) throw new Error('CricAPI returned no player rows');
-      // Use a Map to deduplicate by local player ID — two CricAPI names can resolve
-      // to the same local player via findLocalByName, which would cause a PostgreSQL
-      // "ON CONFLICT DO UPDATE command cannot affect row a second time" error.
-      const rowMap = new Map(); const unmatchedNames = [];
-      for (const pl of players) {
-        const local = findLocalByName(pl.name);
-        if (!local) { unmatchedNames.push(pl.name); continue; }
-        if (rowMap.has(local.id)) {
-          console.warn('[finalizeOneMatch] duplicate local player skipped:', pl.name, '→', local.id);
-          continue;
-        }
+      // Merge (not skip) duplicate API names that resolve to the same local
+      // player — see mergeApiPlayersByLocalId. Skipping used to silently
+      // drop whichever entry lost the race (e.g. a fielding-only mention).
+      const { matched, unmatched: unmatchedPl } = mergeApiPlayersByLocalId(players, findLocalByName);
+      const unmatchedNames = unmatchedPl.map(p => p.name);
+      const rows = matched.map(({ local, pl }) => {
         // Use the local DB role, not the API-derived role.  fromCricAPI promotes any player
         // who both bats AND bowls to 'ar', which incorrectly triggers the duck penalty for
         // specialist bowlers who bat lower-order.  The DB role is the authoritative designation.
         const s = calculateScore({ ...pl, role: local.role, captaincy: 'normal' }, m.format);
-        rowMap.set(local.id, {
+        return {
           playerId: local.id,
           batting : pl.batting  ?? null,
           bowling : pl.bowling  ?? null,
           fielding: pl.fielding ?? null,
           rawPoints: s.rawPoints,
-        });
-      }
-      const rows = Array.from(rowMap.values());
+        };
+      });
       if (!rows.length) throw new Error(`No player name from API matched local pool (${players.length} API players, all unmatched)`);
       await state.db.bulkUpsertPlayerMatchStats(m.id, rows);
       await computeAndSaveXIScoresForMatch(m.id);
@@ -2500,26 +2495,23 @@
         })));
         console.groupEnd();
 
-        const rowMap2 = new Map(); let unmatched = 0;
-        for (const pl of players) {
-          const local = findLocalByName(pl.name);
-          if (!local) { unmatched++; continue; }
-          if (rowMap2.has(local.id)) {
-            console.warn('[forceRefinalizeMatch] duplicate local player skipped:', pl.name, '→', local.id);
-            continue;
-          }
+        // Merge (not skip) duplicate API names resolving to the same local
+        // player — see mergeApiPlayersByLocalId; skipping used to silently
+        // drop whichever entry (e.g. a fielding-only mention) lost the race.
+        const { matched, unmatched: unmatchedPl2 } = mergeApiPlayersByLocalId(players, findLocalByName);
+        const unmatched = unmatchedPl2.length;
+        const rows = matched.map(({ local, pl }) => {
           // Use local DB role — fromCricAPI promotes any player with both batting + bowling data
           // to 'ar', which wrongly applies the duck penalty to specialist bowlers.
           const s = calculateScore({ ...pl, role: local.role, captaincy: 'normal' }, m.format || 'T20');
-          rowMap2.set(local.id, {
+          return {
             playerId: local.id,
             batting:  pl.batting  ?? null,
             bowling:  pl.bowling  ?? null,
             fielding: pl.fielding ?? null,
             rawPoints: s.rawPoints,
-          });
-        }
-        const rows = Array.from(rowMap2.values());
+          };
+        });
         if (!rows.length) throw new Error(`No API player names matched local pool (${players.length} players, all unmatched).`);
 
         await state.db.bulkUpsertPlayerMatchStats(matchId, rows);
@@ -3014,18 +3006,37 @@
       const currentMatch = state.matches?.find(m => m.external_id === externalId);
       const players = fromCricAPI(payload, matchSquadFor(currentMatch), state.format);
       const xiIds = new Set(state.selected);
-      const scored = players.map(pl => {
-        const local = findLocalByName(pl.name);
+      // Merge duplicate API names resolving to the same local player before
+      // scoring — otherwise a misspelled fielding-only mention that only
+      // resolves via a NAME_ALIASES/player_name_aliases entry (e.g. "Darron
+      // Nedd" aliased to Darren Nedd) shows up as a second ghost row for the
+      // same real player. Both entries "match" fine, so the unmatched-count
+      // banner never flags it — the row count is just wrong. Unmatched names
+      // still get their own row each, since those genuinely need a Link click.
+      const { matched, unmatched: unmatchedPl } = mergeApiPlayersByLocalId(players, findLocalByName);
+      const matchedScored = matched.map(({ local, pl }) => {
+        const s = calculateScore({ ...pl, captaincy: 'normal' }, state.format);
+        return {
+          apiName: local.name,
+          role: pl.role,
+          localPlayer: local,
+          inXi: xiIds.has(local.id),
+          points: s.rawPoints,
+          breakdown: s.breakdown,
+        };
+      });
+      const unmatchedScored = unmatchedPl.map(pl => {
         const s = calculateScore({ ...pl, captaincy: 'normal' }, state.format);
         return {
           apiName: pl.name,
           role: pl.role,
-          localPlayer: local,
-          inXi: !!(local && xiIds.has(local.id)),
+          localPlayer: null,
+          inXi: false,
           points: s.rawPoints,
           breakdown: s.breakdown,
         };
-      }).sort((a, b) => b.points - a.points);
+      });
+      const scored = [...matchedScored, ...unmatchedScored].sort((a, b) => b.points - a.points);
 
       count.textContent = scored.length ? `(${scored.length})` : '';
       meta.textContent = `Match: ${payload.data?.matchInfo?.name || payload.data?.status || ''}`;
@@ -3276,29 +3287,21 @@
       if (!localMatch) { toast('Match not found in DB — sync first.'); return; }
 
       const apiPlayers = fromCricAPI(state.lastScorecard, matchSquadFor(localMatch), state.format);
-      // Use a Map to deduplicate by local player ID — two CricAPI names (e.g. a
-      // player's own batting/bowling line and a separately-aliased fielding-only
-      // credit) can resolve to the same local player via findLocalByName, which
-      // would otherwise cause a Postgres "ON CONFLICT DO UPDATE command cannot
-      // affect row a second time" error. Mirrors finalizeOneMatch's guard.
-      const rowMap = new Map(); const unmatchedNames = [];
-      for (const pl of apiPlayers) {
-        const local = findLocalByName(pl.name);
-        if (!local) { unmatchedNames.push(pl.name); continue; }
-        if (rowMap.has(local.id)) {
-          console.warn('[rescoreCurrentMatch] duplicate local player skipped:', pl.name, '→', local.id);
-          continue;
-        }
+      // Merge (not skip) duplicate API names resolving to the same local
+      // player — see mergeApiPlayersByLocalId. Mirrors finalizeOneMatch's guard,
+      // but merges instead of dropping whichever entry lost the race.
+      const { matched, unmatched: unmatchedPl3 } = mergeApiPlayersByLocalId(apiPlayers, findLocalByName);
+      const unmatchedNames = unmatchedPl3.map(p => p.name);
+      const rows = matched.map(({ local, pl }) => {
         const s = calculateScore({ ...pl, captaincy: 'normal' }, state.format);
-        rowMap.set(local.id, {
+        return {
           playerId : local.id,
           batting  : pl.batting  ?? null,
           bowling  : pl.bowling  ?? null,
           fielding : pl.fielding ?? null,
           rawPoints: s.rawPoints,
-        });
-      }
-      const rows = Array.from(rowMap.values());
+        };
+      });
 
       if (!rows.length) {
         toast(`Still no matching players (${unmatchedNames.length} unmatched). Check player names.`, 4000);
@@ -3314,9 +3317,9 @@
       await computeAndSaveSLScoresForMatch(localMatch.id);
 
       // Refresh live stats in state.stats so both daily and SL panels update
-      apiPlayers.forEach(pl => {
-        const local = findLocalByName(pl.name);
-        if (!local) return;
+      // (use the merged rows, not raw apiPlayers, so this reflects the same
+      // combined batting/bowling/fielding that just got saved).
+      matched.forEach(({ local, pl }) => {
         state.stats[local.id] = { batting: pl.batting, bowling: pl.bowling, fielding: pl.fielding };
       });
 
@@ -3345,28 +3348,22 @@
       try {
         const players = fromCricAPI(state.lastScorecard, matchSquadFor(localMatch), state.format);
         // Only persist rows whose API name maps to a local player (FK requirement).
-        // Dedup by local player ID for the same reason as rescoreCurrentMatch/
-        // finalizeOneMatch — two CricAPI names can resolve to the same local
-        // player, which would otherwise collide in the ON CONFLICT batch upsert.
-        const rowMap = new Map();
-        let unmatched = 0;
-        for (const pl of players) {
-          const local = findLocalByName(pl.name);
-          if (!local) { unmatched++; continue; }
-          if (rowMap.has(local.id)) {
-            console.warn('[saveFantasyScorecard] duplicate local player skipped:', pl.name, '→', local.id);
-            continue;
-          }
+        // Merge (not skip) by local player ID for the same reason as
+        // rescoreCurrentMatch/finalizeOneMatch — two CricAPI names resolving
+        // to the same local player used to collide in the ON CONFLICT batch
+        // upsert, and skipping the second one silently dropped its stats.
+        const { matched, unmatched: unmatchedPl4 } = mergeApiPlayersByLocalId(players, findLocalByName);
+        const unmatched = unmatchedPl4.length;
+        const rows = matched.map(({ local, pl }) => {
           const s = calculateScore({ ...pl, captaincy: 'normal' }, state.format);
-          rowMap.set(local.id, {
+          return {
             playerId  : local.id,
             batting   : pl.batting   ?? null,
             bowling   : pl.bowling   ?? null,
             fielding  : pl.fielding  ?? null,
             rawPoints : s.rawPoints,
-          });
-        }
-        const rows = Array.from(rowMap.values());
+          };
+        });
         if (!rows.length) {
           toast(`Nothing to save — ${unmatched} player(s) couldn\'t be matched to your DB.`, 4000);
           return;

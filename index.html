@@ -3251,6 +3251,68 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
     }
 
     /**
+     * Groups raw fromCricAPI() player rows by matched local player id,
+     * MERGING duplicate entries instead of dropping them.
+     *
+     * Two different API-reported spellings of the same real player (e.g. a
+     * batting/bowling line under the correct name, plus a separately-aliased
+     * fielding-only mention under a misspelled variant — resolvable only via
+     * NAME_ALIASES/player_name_aliases) both resolve to the same local
+     * player id via findLocalByName. Every save path used to build a
+     * Map keyed by local id and skip any entry once that id was already
+     * present ("first one wins"), which silently discarded whichever entry
+     * lost the race — including real stats it carried. Concretely: CPL M3,
+     * Darren Nedd's deep-square-leg catch of Evin Lewis came in as a
+     * "Darron Nedd" entry (aliased to p22 in player_name_aliases), landed
+     * AFTER his batting-line entry, and was dropped — his fielding points
+     * never got saved. It also showed up as a visible ghost duplicate row
+     * in the live Fantasy Scorecard panel, with no "unmatched" banner to
+     * flag it (both entries resolved fine — matching isn't the failure).
+     *
+     * batting/bowling: a player has at most one line of each, so whichever
+     * entry has it wins (first non-null kept). fielding: SUMMED across
+     * entries, since a player can rack up multiple separate fielding
+     * mentions (e.g. two catches reported as two rows) in one match.
+     *
+     * Returns { matched: [{ local, pl }], unmatched: [pl, ...] } — `pl` in
+     * `matched` is the merged raw player object (batting/bowling/fielding
+     * combined across every entry that resolved to that local id); `pl`
+     * objects in `unmatched` are untouched raw entries that matched no one.
+     */
+    function mergeApiPlayersByLocalId(players, resolveLocal = findLocalByName) {
+      const byId = new Map();
+      const unmatched = [];
+      for (const pl of players) {
+        const local = resolveLocal(pl.name);
+        if (!local) { unmatched.push(pl); continue; }
+        const existing = byId.get(local.id);
+        if (!existing) { byId.set(local.id, { local, pl: { ...pl } }); continue; }
+        const merged = existing.pl;
+        if (pl.batting && merged.batting && pl.batting !== merged.batting) {
+          console.warn('[mergeApiPlayersByLocalId] two distinct batting lines resolved to the same player — keeping the first:', local.name, '←', pl.name);
+        } else if (pl.batting && !merged.batting) {
+          merged.batting = pl.batting;
+        }
+        if (pl.bowling && merged.bowling && pl.bowling !== merged.bowling) {
+          console.warn('[mergeApiPlayersByLocalId] two distinct bowling lines resolved to the same player — keeping the first:', local.name, '←', pl.name);
+        } else if (pl.bowling && !merged.bowling) {
+          merged.bowling = pl.bowling;
+        }
+        if (pl.fielding) {
+          const a = merged.fielding || {};
+          const b = pl.fielding;
+          merged.fielding = {
+            catches:        (a.catches        || 0) + (b.catches        || 0),
+            stumpings:      (a.stumpings      || 0) + (b.stumpings      || 0),
+            runOutDirect:   (a.runOutDirect   || 0) + (b.runOutDirect   || 0),
+            runOutIndirect: (a.runOutIndirect || 0) + (b.runOutIndirect || 0),
+          };
+        }
+      }
+      return { matched: Array.from(byId.values()), unmatched };
+    }
+
+    /**
      * Pull every player_name_aliases row for this tournament into the
      * in-memory NAME_ALIASES map. That table is where BOTH resolution flows
      * ultimately write: the admin Review tab's "unmatched player"/"fielding
@@ -11293,6 +11355,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       iconHtml,
       playerById,
       findLocalByName,
+      mergeApiPlayersByLocalId,
       teamCodes,
       teamByCode,
       isAdmin,
