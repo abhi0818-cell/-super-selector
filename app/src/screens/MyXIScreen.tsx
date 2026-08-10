@@ -792,11 +792,15 @@ export default function MyXIScreen({ route }: Props) {
               </View>
             ) : null}
 
-            {/* Countdown */}
+            {/* Countdown — dropped the "Locks in " label and bumped the clock
+                icon up a couple points so it still reads as a countdown on
+                its own. Shaving those words off is what lets this pill sit
+                on the same row as the match label and Xfers pills instead
+                of wrapping to a second row (same squished-pitch cause as
+                the other info-strip/action-row fixes). */}
             {countdown ? (
               <View style={styles.infoPill}>
-                <Text style={styles.infoPillIcon}>⏱</Text>
-                <Text style={styles.infoPillLabel}>Locks in </Text>
+                <Text style={[styles.infoPillIcon, styles.clockIcon]}>⏱</Text>
                 <Text style={[
                   styles.infoPillValue,
                   countdown === 'Locked' && { color: C.bad },
@@ -1377,4 +1381,8 @@ const styles = StyleSheet.create({
   infoPillIcon:  { fontSize: 10 },
   infoPillLabel: { fontSize: fontSize.xs, color: C.muted },
   infoPillValue: { fontSize: fontSize.xs, fontWeight: '700', color: C.text },
+  // Slightly bigger than the other pill icons — stands in for the "Locks
+  // in " label that was dropped from the countdown pill, so it still
+  // reads as a countdown at a glance.
+  clockIcon: { fontSize: 13 },
 });
