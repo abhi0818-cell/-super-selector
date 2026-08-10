@@ -107,6 +107,20 @@ function expandTeamSlug(slug: string): string | null {
   return isWomen ? `${full}-women` : full
 }
 
+/** Every plausible slug form for one team, in preference order: the
+ *  country-code expansion (if any), the bare gender-stripped slug as-is, and
+ *  the connector-stripped ("and"/"of"/"the" removed) slug. We can't know in
+ *  advance whether CricketAddictor keeps or drops connector words for a given
+ *  team name — it keeps them for some ("Antigua and Barbuda Falcons" →
+ *  antigua-and-barbuda-falcons) and drops them for others ("St Kitts and
+ *  Nevis Patriots" → st-kitts-nevis-patriots) — so anything that matches
+ *  against a single guessed form (as this used to) can silently miss a match
+ *  that's sitting right there on the listing page. Callers should check a
+ *  slug against ALL of these, not just one. */
+function teamSlugVariants(full: string | null, bare: string, nc: string): string[] {
+  return [...new Set([full, bare, nc].filter((s): s is string => !!s))]
+}
+
 function ordinal(n: number): string {
   const v = n % 100
   if (v >= 11 && v <= 13) return `${n}th`
@@ -206,7 +220,7 @@ async function getListing(url: string): Promise<ListingMatch[]> {
 }
 
 async function scanListingsForMatch(
-  homeSlug: string, awaySlug: string,
+  homeSlugs: string[], awaySlugs: string[],
   startTime: string | null, tournamentName: string,
 ): Promise<string | null> {
   const pages = [
@@ -223,8 +237,8 @@ async function scanListingsForMatch(
     const listing = await getListing(page)
     for (const lm of listing) {
       const teamsMatch =
-        (teamSlugMatches(homeSlug, lm.team1Slug) && teamSlugMatches(awaySlug, lm.team2Slug)) ||
-        (teamSlugMatches(homeSlug, lm.team2Slug) && teamSlugMatches(awaySlug, lm.team1Slug))
+        (homeSlugs.some(h => teamSlugMatches(h, lm.team1Slug)) && awaySlugs.some(a => teamSlugMatches(a, lm.team2Slug))) ||
+        (homeSlugs.some(h => teamSlugMatches(h, lm.team2Slug)) && awaySlugs.some(a => teamSlugMatches(a, lm.team1Slug)))
       if (!teamsMatch) continue
 
       let score = 1
@@ -251,8 +265,9 @@ async function scanListingsForMatch(
  *    "7th-match") — and HEAD-check each.
  * 2. Scan live / upcoming / recent listing pages, matching by team codes plus
  *    start-time and tournament-name proximity as tie-breakers.
- * 3. Last resort: regex-scan recent-matches for a link containing both
- *    (gender-suffix-stripped) team slugs.
+ * 3. Last resort: regex-scan recent-matches for a link containing both team
+ *    slugs, trying every plausible slug variant (country-code expansion,
+ *    bare, connector-stripped) for each team.
  */
 async function discoverUrl(
   homeTeam: string, awayTeam: string,
@@ -294,22 +309,23 @@ async function discoverUrl(
   }
 
   // Listing-page scan: match by team codes + start-time + tournament proximity.
-  // Prefer the full-name expansion (e.g. "new-zealand") when available, since
-  // listing pages spell out full country names, not our short codes. Fall
-  // back to the connector-stripped slug (not just gender-stripped) since
-  // CricketAddictor's own slugs typically drop "and"/"of"/"the" tokens that
-  // our stored team names spell out (e.g. "St Kitts and Nevis Patriots").
-  const scanned = await scanListingsForMatch(
-    t1Full ? stripGenderSuffix(t1Full) : t1Nc,
-    t2Full ? stripGenderSuffix(t2Full) : t2Nc,
-    startTime, tournamentName,
-  )
+  // Check every plausible slug form (country-code expansion, bare, and
+  // connector-stripped) for each team, since we can't know in advance whether
+  // CricketAddictor keeps or drops "and"/"of"/"the" for THIS team's slug —
+  // it keeps them for some (e.g. "Antigua and Barbuda Falcons" →
+  // antigua-and-barbuda-falcons) and drops them for others (e.g. "St Kitts
+  // and Nevis Patriots" → st-kitts-nevis-patriots). Committing to only one
+  // guessed form here used to mean a live, listed match could still come
+  // back url_not_found if we guessed the wrong one.
+  const t1Variants = teamSlugVariants(t1Full ? stripGenderSuffix(t1Full) : null, t1Bare, t1Nc)
+  const t2Variants = teamSlugVariants(t2Full ? stripGenderSuffix(t2Full) : null, t2Bare, t2Nc)
+  const scanned = await scanListingsForMatch(t1Variants, t2Variants, startTime, tournamentName)
   if (scanned) return scanned
 
-  // Last-resort fallback: substring scan using connector-and-gender-stripped
-  // slugs (prefer the full-name expansion when we have one, same reasoning as above)
-  const t1Scan = t1Full ? stripGenderSuffix(t1Full) : t1Nc
-  const t2Scan = t2Full ? stripGenderSuffix(t2Full) : t2Nc
+  // Last-resort fallback: substring scan, same reasoning as above — try every
+  // slug variant for each team rather than committing to one.
+  const t1Alt = t1Variants.join('|')
+  const t2Alt = t2Variants.join('|')
   try {
     const r = await fetch('https://cricketaddictor.com/livescore/recent-matches/', {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SuperSelector/1.0)' },
@@ -317,7 +333,7 @@ async function discoverUrl(
     if (r.ok) {
       const html = await r.text()
       const re = new RegExp(
-        `href="(https://cricketaddictor\\.com/livescore/[^"]*(?:${t1Scan}[^"]*${t2Scan}|${t2Scan}[^"]*${t1Scan})[^"]*scorecard/)"`,
+        `href="(https://cricketaddictor\\.com/livescore/[^"]*(?:(?:${t1Alt})[^"]*(?:${t2Alt})|(?:${t2Alt})[^"]*(?:${t1Alt}))[^"]*scorecard/)"`,
         'i',
       )
       const m = html.match(re)
