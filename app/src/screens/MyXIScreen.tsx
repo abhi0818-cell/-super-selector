@@ -923,39 +923,45 @@ export default function MyXIScreen({ route }: Props) {
                 onRemove={(id) => removePlayer(id)}
               />
 
-              {/* Status strip — SL/private splits into two columns (Make
-                  Transfers spans both rows on the left; Revert to Saved /
-                  Revert to Locked stack as small pills on the right, only
-                  when there's actually something to revert). Daily keeps the
-                  original single-row layout — it has no locked/saved split. */}
+              {/* Status strip — SL/private used to split into two columns
+                  (Make Transfers spans both rows on the left; Revert to
+                  Saved / Revert to Locked stacked as pills on the right).
+                  That stack made the strip two rows tall, which ate into
+                  CricketPitch's flex:1 share of the screen and squished the
+                  pitch — worst right after a team change, since that's
+                  exactly when both revert pills are live. Now everything —
+                  the status pill and both reverts — sits in a single row,
+                  so the strip stays one row tall regardless of how many
+                  pills are showing. Daily is unaffected; it never had a
+                  revert column. */}
               {isSL && showRevertColumn ? (
-                <LinearGradient colors={G.statusBg} style={[styles.statusStrip, styles.statusStripSplit]}>
-                  <Pressable onPress={openPicker} style={styles.actionPillTall}>
-                    <Text style={styles.actionPillText}>{fabLabel}</Text>
+                <LinearGradient colors={G.statusBg} style={[styles.statusStrip, styles.statusStripRow]}>
+                  <Pressable onPress={openPicker} style={styles.actionPillRow}>
+                    <Text style={styles.actionPillRowText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
+                      {fabLabel}
+                    </Text>
                   </Pressable>
-                  <View style={styles.revertColumn}>
-                    <Pressable
-                      style={[styles.revertPill, !hasUnsavedChanges && styles.revertPillDisabled]}
-                      onPress={handleReset}
-                      disabled={!hasUnsavedChanges}
+                  <Pressable
+                    style={[styles.revertPillRow, !hasUnsavedChanges && styles.revertPillDisabled]}
+                    onPress={handleReset}
+                    disabled={!hasUnsavedChanges}
+                  >
+                    <Text
+                      style={[styles.revertPillText, !hasUnsavedChanges && styles.revertPillTextDisabled]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.7}
                     >
-                      <Text
-                        style={[styles.revertPillText, !hasUnsavedChanges && styles.revertPillTextDisabled]}
-                        numberOfLines={1}
-                        adjustsFontSizeToFit
-                        minimumFontScale={0.8}
-                      >
-                        Revert to saved
+                      Revert to saved
+                    </Text>
+                  </Pressable>
+                  {showRevertLocked && (
+                    <Pressable style={styles.revertPillRow} onPress={handleRevertToLocked}>
+                      <Text style={styles.revertPillText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+                        Revert to locked
                       </Text>
                     </Pressable>
-                    {showRevertLocked && (
-                      <Pressable style={styles.revertPill} onPress={handleRevertToLocked}>
-                        <Text style={styles.revertPillText} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.8}>
-                          Revert to locked
-                        </Text>
-                      </Pressable>
-                    )}
-                  </View>
+                  )}
                 </LinearGradient>
               ) : (
                 <LinearGradient colors={G.statusBg} style={styles.statusStrip}>
@@ -1213,39 +1219,35 @@ const styles = StyleSheet.create({
   },
   resetBtnText: { color: C.bad, fontSize: fontSize.xs, fontWeight: '700' },
 
-  // Two-column status strip (SL/private, when there's something to revert):
-  // Each revert pill sizes to its OWN content (fixed paddingVertical, no
-  // flex:1) instead of dividing whatever height Make Transfers happens to
-  // need — that flex:1-divides-an-undetermined-height setup was the bug:
-  // with only a single-line action button on the left driving the row's
-  // height, two flex:1 pills on the right were squeezed to ~19px each,
-  // clipping the text. Now the pills set their own comfortable height via
-  // padding, the column's height is just whatever that adds up to, and
-  // Make Transfers (alignItems:'stretch' below) grows to match it instead.
-  statusStripSplit: {
+  // Single-row status strip (SL/private, when there's something to revert):
+  // Make Transfers + Revert to Saved + Revert to Locked all sit side by
+  // side in one row instead of stacking the reverts into a second row.
+  // Keeping this one row tall (vs. the old two-row split) is what frees up
+  // the vertical space CricketPitch needs — see the comment above where
+  // this is used. Pills share the row via flex so they always fit
+  // regardless of how many are showing; text shrinks with
+  // adjustsFontSizeToFit rather than wrapping or clipping.
+  statusStripRow: {
     flexWrap:   'nowrap',
     alignItems: 'stretch',
+    gap:        6,
   },
-  actionPillTall: {
-    flex:              1.4,
+  actionPillRow: {
+    flex:              1.3,
     backgroundColor:   '#1C1F26',
     borderRadius:      radius.md,
     alignItems:        'center',
     justifyContent:    'center',
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical:   spacing.sm,
   },
-  revertColumn: {
-    flex:           1,
-    flexDirection:  'column',
-    gap:            6,
-    justifyContent: 'center',
-  },
-  revertPill: {
+  actionPillRowText: { color: '#fff', fontSize: fontSize.sm, fontWeight: '800', letterSpacing: 0.2 },
+  revertPillRow: {
+    flex:              1,
     alignItems:        'center',
     justifyContent:    'center',
-    paddingHorizontal: spacing.sm,
-    paddingVertical:   7,
-    minHeight:         30,
+    paddingHorizontal: 4,
+    paddingVertical:   spacing.sm,
     borderWidth:       1.5,
     borderColor:       'rgba(192,57,43,0.65)',
     borderRadius:      radius.md,
