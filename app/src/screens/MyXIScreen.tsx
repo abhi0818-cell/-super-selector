@@ -561,6 +561,23 @@ export default function MyXIScreen({ route }: Props) {
   // normal "pending" wording until the real value arrives.
   const isUncappedTransfers = transferCapSuspended || transferInfo?.total === null;
 
+  // Full clarifying sentence for pending transfers — same wording web's
+  // renderSlXferInfoBar() uses ("N pending transfers · X remaining after
+  // lock. Counts when M2 starts"). Used to live in its own always-visible
+  // row under the info strip; that row was one of the things squishing the
+  // pitch. Now it's folded into the Xfers pill (short form) and shown in
+  // full via a tap — see the pill's onPress below.
+  const pendingDetailText = transferCapSuspended
+    ? `${pendingTransfers} free change${pendingTransfers !== 1 ? 's' : ''} this match (${suspendingBooster?.name ?? 'booster'} active)`
+      + (countdown && countdown !== 'Locked' ? ` — locks in ${countdown}` : ' — locks with this match')
+    : transferInfo?.total === null
+      ? `${pendingTransfers} free transfer${pendingTransfers !== 1 ? 's' : ''}`
+        + (countdown && countdown !== 'Locked' ? ` — locks in ${countdown}` : ' — locks with this match')
+      : `${pendingTransfers} pending transfer${pendingTransfers !== 1 ? 's' : ''}`
+        + (remainingAfterLock !== null ? ` · ${remainingAfterLock} remaining after lock` : '')
+        + '.'
+        + (currentMatchLabel ? ` Counts when ${currentMatchLabel} starts.` : '');
+
   // ── Revert button gating (SL/private only) ────────────────────────────────
   // "Revert to Locked": there's an actual saved-but-not-yet-locked transfer
   // to undo — compare the SAVED snapshot directly against previousLockedXI
@@ -789,10 +806,23 @@ export default function MyXIScreen({ route }: Props) {
               </View>
             ) : null}
 
-            {/* Transfers left — SL / private only */}
+            {/* Transfers left — SL / private only. Pending count (transfers
+                already saved for the upcoming match but not yet locked)
+                used to be a second pill right next to this one — same icon,
+                redundant. Now it's folded into this pill's value as a
+                " · N pending" suffix. The full clarifying sentence (locks
+                in / remaining after lock / counts when the next match
+                starts) no longer sits in its own always-visible row either
+                — tap the pill to see it. Both changes were about giving
+                CricketPitch back the vertical space those extra rows were
+                eating into. */}
             {activeContext && activeContext.contestType !== 'daily' && (
-              <View style={styles.infoPill}>
-                <Text style={styles.infoPillIcon}>⇄</Text>
+              <Pressable
+                style={styles.infoPill}
+                disabled={pendingTransfers === 0}
+                onPress={() => Alert.alert(isUncappedTransfers ? 'Free transfers' : 'Pending transfers', pendingDetailText)}
+              >
+                <Text style={styles.infoPillIcon}>{pendingTransfers > 0 && isUncappedTransfers ? '⚡' : '⇄'}</Text>
                 <Text style={styles.infoPillLabel}>Xfers </Text>
                 <Text style={styles.infoPillValue}>
                   {isFirstMatch
@@ -805,50 +835,10 @@ export default function MyXIScreen({ route }: Props) {
                           ? 'Unlimited'
                           : `${Math.max(0, transferInfo.total - transferInfo.used)}/${transferInfo.total}`
                   }
+                  {pendingTransfers > 0 ? ` · ${pendingTransfers} ${isUncappedTransfers ? 'free' : 'pending'}` : ''}
                 </Text>
-              </View>
+              </Pressable>
             )}
-
-            {/* Pending — transfers already saved for the upcoming match that
-                haven't locked yet (i.e. made against the last locked XI).
-                Wording switches when Wildcard/Free Hit is active, OR when
-                this match is genuinely uncapped (transferInfo.total === null —
-                either no budget configured, or this is the playoff opener
-                carved out by playoff_first_match_unlimited) — in all of
-                those cases the transfers are free of cost and don't draw
-                against any cap, so "pending" (implying they'll be charged)
-                would be misleading. */}
-            {activeContext && activeContext.contestType !== 'daily' && pendingTransfers > 0 && (
-              <View style={styles.infoPill}>
-                <Text style={styles.infoPillIcon}>{isUncappedTransfers ? '⚡' : '⇄'}</Text>
-                <Text style={styles.infoPillValue}>
-                  {isUncappedTransfers ? `${pendingTransfers} free` : `${pendingTransfers} pending`}
-                </Text>
-              </View>
-            )}
-          </View>
-        )}
-
-        {/* Clarifying note for pending transfers — shown until the match locks.
-            Capped/non-boosted case mirrors web's renderSlXferInfoBar() wording
-            exactly ("N pending transfers · X remaining after lock. Counts when
-            M2 starts") so the two platforms read the same, whether the pending
-            count came from an already-locked user_transfers row or (pre-lock)
-            a diff against the squad_draft_xi baseline above. */}
-        {activeContext && activeContext.contestType !== 'daily' && pendingTransfers > 0 && (
-          <View style={styles.pendingNote}>
-            <Text style={styles.pendingNoteText}>
-              {transferCapSuspended
-                ? `${pendingTransfers} free change${pendingTransfers !== 1 ? 's' : ''} this match (${suspendingBooster?.name ?? 'booster'} active)`
-                  + (countdown && countdown !== 'Locked' ? ` — locks in ${countdown}` : ' — locks with this match')
-                : transferInfo?.total === null
-                  ? `${pendingTransfers} free transfer${pendingTransfers !== 1 ? 's' : ''}`
-                    + (countdown && countdown !== 'Locked' ? ` — locks in ${countdown}` : ' — locks with this match')
-                  : `${pendingTransfers} pending transfer${pendingTransfers !== 1 ? 's' : ''}`
-                    + (remainingAfterLock !== null ? ` · ${remainingAfterLock} remaining after lock` : '')
-                    + '.'
-                    + (currentMatchLabel ? ` Counts when ${currentMatchLabel} starts.` : '')}
-            </Text>
           </View>
         )}
 
@@ -1387,16 +1377,4 @@ const styles = StyleSheet.create({
   infoPillIcon:  { fontSize: 10 },
   infoPillLabel: { fontSize: fontSize.xs, color: C.muted },
   infoPillValue: { fontSize: fontSize.xs, fontWeight: '700', color: C.text },
-
-  pendingNote: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical:   4,
-    backgroundColor:   'transparent',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(28,31,38,0.08)',
-  },
-  pendingNoteText: {
-    fontSize: fontSize.xs,
-    color:    C.muted,
-  },
 });
