@@ -154,15 +154,10 @@ function PlayerTile({ player, onSetCaptaincy, onRemove, onTilePress, readOnly, b
           </View>
         )}
 
-        {/* Overseas badge — top-left, mirrors web's .pitch-os-badge. Web adds
-            a dark drop-shadow behind the ✈️ emoji (filter:drop-shadow) so its
-            light/white parts stand out against the green pitch; mobile had
-            no equivalent, so the icon just blended into the field. textShadow
-            is RN's version of that same trick — same values tileName already
-            uses for the same reason. */}
+        {/* Overseas badge — top-left, mirrors web's .pitch-os-badge */}
         {showOsBadge && (
           <View style={[styles.osBadge, { width: badgeSize, height: badgeSize, top: sideOffset, left: sideOffset }]}>
-            <Text style={[styles.osBadgeIcon, { fontSize: sideFontSize }]}>✈️</Text>
+            <Text style={{ fontSize: sideFontSize }}>✈️</Text>
           </View>
         )}
 
@@ -531,11 +526,6 @@ const styles = StyleSheet.create({
     alignItems:      'center',
     justifyContent:  'center',
     zIndex:          10,
-  },
-  osBadgeIcon: {
-    textShadowColor:  'rgba(0,0,0,0.85)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
   },
 
   // US Double badge — bottom-left of the jersey, mirrors web's .pitch-usd-badge.
