@@ -1,3 +1,4 @@
 node_modules/
 .DS_Store
 supabase/.temp/
+photo_import_output/
