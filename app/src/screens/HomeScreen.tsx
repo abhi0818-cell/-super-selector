@@ -108,8 +108,13 @@ function useSlSquadStats(contestId: string | null, userId: string | null): SlSqu
       return;
     }
     let cancelled = false;
-    const load = async () => {
-      setStats(s => ({ ...s, loading: true }));
+    // silent=true (the 30s poll tick below) skips the loading flag — only the
+    // very first load for this contest/user should swap the whole stat grid
+    // for a spinner (see SLStatsGrid's `if (stats.loading)` early return).
+    // Without this, every background poll would flash the grid to a spinner
+    // and back every 30s even though nothing visibly changed most of the time.
+    const load = async (silent = false) => {
+      if (!silent) setStats(s => ({ ...s, loading: true }));
       try {
         // 1. Squad row — total_transfers_allowed/extra_transfer_point_cost are
         // NOT columns on user_squads (they live on `contests`, see
@@ -228,7 +233,18 @@ function useSlSquadStats(contestId: string | null, userId: string | null): SlSqu
       }
     };
     load();
-    return () => { cancelled = true; };
+    // Also poll every 30s while Home is focused — mirrors useNextMatch's own
+    // interval just below. Without this, the tiles only refresh on a
+    // navigation focus EVENT: a match's lock time (and any transfer it
+    // counts) is decided server-side on its own schedule, so a user already
+    // sitting on Home when a match locks in the background never gets a
+    // trigger to re-fetch — Transfers/Points/Best Match stay frozen at their
+    // pre-lock values until the user happens to leave and come back to this
+    // tab. This is exactly what was reported after M2 locked: the tile
+    // stayed at 100/100 unused here while MyXIScreen (which reloads on its
+    // own focus) already showed the correct post-lock count.
+    const iv = setInterval(() => load(true), 30_000);
+    return () => { cancelled = true; clearInterval(iv); };
     }, [contestId, userId])
   );
 
@@ -695,6 +711,16 @@ export default function HomeScreen() {
     navigation.navigate('MyXI', { openPicker: true });
   };
 
+  // "View Your XI" — the tile itself already tells us which contest, so
+  // carry that into activeContext before navigating. Without this,
+  // MyXIScreen falls back on whatever's already in the (unpersisted)
+  // contestStore — null on a fresh app launch — and shows its own contest
+  // picker despite the user having just selected a contest by tapping in.
+  const viewForContext = (ctx: ContestContext) => {
+    setContext(ctx);
+    navigation.navigate('MyXI');
+  };
+
   const handlePickContest = (contest: RealContest) => {
     pickForContext(toContestContext(contest));
   };
@@ -827,7 +853,7 @@ export default function HomeScreen() {
             <MatchHeroCard match={nextMatch} />
             <ActionBlock
               onPickTeam={() => handlePickContest(dailyContest)}
-              onViewTeam={() => navigation.navigate('MyXI')}
+              onViewTeam={() => viewForContext(toContestContext(dailyContest))}
               teamReady={dailyXIReady}
               liveMatchLabel={liveMatchPillLabel}
               onOpenLiveScore={() => setLiveModalVisible(true)}
@@ -871,7 +897,7 @@ export default function HomeScreen() {
 
             <ActionBlock
               onPickTeam={() => handlePickContest(slContest)}
-              onViewTeam={() => navigation.navigate('MyXI')}
+              onViewTeam={() => viewForContext(toContestContext(slContest))}
               teamReady={slXIReady}
               liveMatchLabel={liveMatchPillLabel}
               onOpenLiveScore={() => setLiveModalVisible(true)}
