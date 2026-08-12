@@ -3,7 +3,7 @@
  * Contests, SL squad stats, and match info all come from the DB.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -85,12 +85,23 @@ interface SlSquadStats {
   loading:              boolean;
 }
 
-function useSlSquadStats(contestId: string | null, userId: string | null): SlSquadStats {
+function useSlSquadStats(contestId: string | null, userId: string | null): SlSquadStats & { refresh: () => void } {
   const [stats, setStats] = useState<SlSquadStats>({
     squadId: null, points: 0, rank: null,
     transfersUsed: 0, totalTransfersAllowed: null, extraCost: 4,
     bestMatchPoints: null, bestMatchLabel: null, loading: false,
   });
+
+  // Holds the in-scope `load` from the active useFocusEffect run so
+  // `refresh()` (below) can trigger an on-demand fetch — e.g. when the user
+  // taps the SL tile open — without waiting for the next focus event or the
+  // 30s poll tick. Without this, a match that locks while the user is
+  // already sitting on Home (tile closed) shows the *previous* match's
+  // transfer count the instant they open the tile — it only self-corrects
+  // once the 30s poll happens to land, or the user navigates away and back
+  // (which re-runs useFocusEffect immediately). Null while unfocused/
+  // unmounted so a stray call is a no-op instead of hitting a stale closure.
+  const loadRef = useRef<((silent?: boolean) => void) | null>(null);
 
   // useFocusEffect (not plain useEffect) — Home stays mounted in the tab
   // navigator, so a plain mount-only effect would fetch once on cold start
@@ -105,6 +116,7 @@ function useSlSquadStats(contestId: string | null, userId: string | null): SlSqu
     useCallback(() => {
     if (!contestId || !userId) {
       setStats(s => ({ ...s, squadId: null, loading: false }));
+      loadRef.current = null;
       return;
     }
     let cancelled = false;
@@ -232,6 +244,7 @@ function useSlSquadStats(contestId: string | null, userId: string | null): SlSqu
         if (!cancelled) setStats(s => ({ ...s, loading: false }));
       }
     };
+    loadRef.current = load;
     load();
     // Also poll every 30s while Home is focused — mirrors useNextMatch's own
     // interval just below. Without this, the tiles only refresh on a
@@ -244,11 +257,17 @@ function useSlSquadStats(contestId: string | null, userId: string | null): SlSqu
     // stayed at 100/100 unused here while MyXIScreen (which reloads on its
     // own focus) already showed the correct post-lock count.
     const iv = setInterval(() => load(true), 30_000);
-    return () => { cancelled = true; clearInterval(iv); };
+    return () => { cancelled = true; clearInterval(iv); loadRef.current = null; };
     }, [contestId, userId])
   );
 
-  return stats;
+  // Exposed so the SL tile can force an immediate (silent) re-fetch the
+  // moment it's opened, instead of showing whatever this hook last fetched
+  // on focus/poll — see loadRef comment above for why that's not already
+  // guaranteed to be current.
+  const refresh = useCallback(() => { loadRef.current?.(true); }, []);
+
+  return { ...stats, refresh };
 }
 
 // ─── Saved-XI status hook ──────────────────────────────────────────────────────
@@ -704,7 +723,15 @@ export default function HomeScreen() {
     if (user?.id) markAllRead(user.id);
   };
 
-  const toggleTile = (tile: TileType) => setOpenTile(prev => prev === tile ? null : tile);
+  // Opening the SL tile force-refreshes its stats on the spot — see
+  // useSlSquadStats' refresh()/loadRef comments: without this, the tile can
+  // show a just-locked match's stale transfer count for up to 30s (or until
+  // the user leaves Home and comes back) after tapping it open.
+  const toggleTile = (tile: TileType) => setOpenTile(prev => {
+    const next = prev === tile ? null : tile;
+    if (next === 'sl') slStats.refresh();
+    return next;
+  });
 
   const pickForContext = (ctx: ContestContext) => {
     setContext(ctx);
