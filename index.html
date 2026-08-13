@@ -1267,14 +1267,22 @@
       </div>
       <!-- Inner tabs -->
       <div style="display:flex; gap:0; border-bottom:1px solid var(--border); flex-shrink:0; overflow-x:auto;">
-        <button class="rules-inner-tab active" data-rtab="scoring"
+        <button class="rules-inner-tab active" data-rtab="getting-started"
                 style="padding:10px 16px; font-size:12px; font-weight:600; border:none;
                        border-bottom:2px solid var(--accent); background:transparent;
-                       color:var(--text); cursor:pointer; white-space:nowrap;">🏏 Scoring</button>
+                       color:var(--text); cursor:pointer; white-space:nowrap;">📝 Getting Started</button>
         <button class="rules-inner-tab" data-rtab="boosters"
                 style="padding:10px 16px; font-size:12px; font-weight:600; border:none;
                        border-bottom:2px solid transparent; background:transparent;
                        color:var(--muted); cursor:pointer; white-space:nowrap;">🏆 Contest</button>
+        <button class="rules-inner-tab" data-rtab="scoring"
+                style="padding:10px 16px; font-size:12px; font-weight:600; border:none;
+                       border-bottom:2px solid transparent; background:transparent;
+                       color:var(--muted); cursor:pointer; white-space:nowrap;">🏏 Scoring</button>
+        <button class="rules-inner-tab" data-rtab="ground-rules"
+                style="padding:10px 16px; font-size:12px; font-weight:600; border:none;
+                       border-bottom:2px solid transparent; background:transparent;
+                       color:var(--muted); cursor:pointer; white-space:nowrap;">📜 Ground Rules</button>
         <button class="rules-inner-tab" data-rtab="leagues"
                 style="padding:10px 16px; font-size:12px; font-weight:600; border:none;
                        border-bottom:2px solid transparent; background:transparent;
@@ -5339,6 +5347,14 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
     // the Tournament tab's per-card list. Logic below is unchanged from what
     // used to live inside renderTournamentActiveToggles(); only the render
     // target moved, from #tournamentActiveList to #reviewQueuesList.
+    //
+    // Scoped to the single active tournament (state.activeTournamentId) —
+    // same as every other admin tab (Schedule, Live, Contest, etc.), which
+    // all read/write against whichever tournament is selected in the
+    // #tournamentPicker dropdown. This previously looped over EVERY
+    // tournament ever created instead, the only tab that didn't respect the
+    // dropdown's selection — so review queues for old/unrelated tournaments
+    // cluttered the list alongside whatever's actually active right now.
     function renderReviewQueues() {
       const list = $('#reviewQueuesList');
       if (!list) return;
@@ -5347,7 +5363,13 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
         return;
       }
 
-      list.innerHTML = state.tournaments.map(t => `
+      const active = state.tournaments.find(t => t.id === state.activeTournamentId);
+      if (!active) {
+        list.innerHTML = '<div style="color:var(--muted);font-size:12px;">Select a tournament above to review it.</div>';
+        return;
+      }
+
+      list.innerHTML = [active].map(t => `
         <div style="padding:10px 12px; border:1px solid var(--border); border-radius:6px; margin-bottom:10px;">
           <div style="font-size:13px; font-weight:600; margin-bottom:2px;">${escapeHtml(t.name)}</div>
           <div style="font-size:11px; color:var(--muted); margin-bottom:4px;">${t.format || 'T20'}</div>
@@ -5398,12 +5420,12 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
           </div>
         </div>`).join('');
 
-      // Eagerly populate the "⚠️ Unmatched Players" badges for every
+      // Eagerly populate the "⚠️ Unmatched Players" badge for the active
       // tournament right now, instead of waiting for the admin to click
-      // "▶ Load" on each one — that's the only way this kind of gap (players
-      // missing from a tournament roster, silently dropped by the scraper)
-      // actually gets noticed instead of sitting unresolved for days.
-      const tIds = state.tournaments.map(t => t.id);
+      // "▶ Load" — that's the only way this kind of gap (players missing
+      // from a tournament roster, silently dropped by the scraper) actually
+      // gets noticed instead of sitting unresolved for days.
+      const tIds = [active.id];
       if (tIds.length) {
         state.db.getUnmatchedPlayersCounts(tIds).then(counts => {
           counts.forEach((count, tid) => {
@@ -6292,6 +6314,11 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
         // Always refresh Contest tab DOM so it's ready whenever user switches to it
         renderPageContestTab();
       } catch (e) { console.warn('Contests reload failed on tournament switch', e); }
+      // Review tab is scoped to the active tournament (see renderReviewQueues) —
+      // refresh it here too, same as Contest tab above, so switching tournaments
+      // while already on Review doesn't leave the previous tournament's queues
+      // on screen.
+      try { renderReviewQueues(); } catch (e) { console.warn('Review queues refresh failed on tournament switch', e); }
       // ── Clear + restore Daily XI for the new tournament ───────────────────
       state.selected    = [];
       state.captain     = null;
@@ -11736,7 +11763,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       return result;
     }
 
-    let rulesActiveTab = 'scoring';
+    let rulesActiveTab = 'getting-started';
 
     function renderRulesTab(tab, data) {
       const el = $('#rulesModalContent');
@@ -11756,7 +11783,83 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       // stored, so a pre-toggle saved weight can't leak into this view.
       const bowlingRows  = data.dotBallEnabled ? RULES_BOWLING : RULES_BOWLING.filter(r => r.key !== 'dot_ball');
 
-      if (tab === 'scoring') {
+      if (tab === 'getting-started') {
+        // Static how-to-play flow — no DB-driven content, same on every tournament/contest.
+        const step = (n, html) => `
+          <div style="display:flex; align-items:flex-start; gap:8px; margin-bottom:6px; padding:0 2px;">
+            <span style="flex-shrink:0; width:18px; height:18px; border-radius:9px; margin-top:1px;
+                        background:rgba(201,168,76,0.18); border:1px solid rgba(201,168,76,0.4);
+                        display:flex; align-items:center; justify-content:center;
+                        font-size:9px; font-weight:800; color:var(--text);">${n}</span>
+            <span style="font-size:12px; color:var(--text); line-height:1.5;">${html}</span>
+          </div>`;
+        const bullet = html => `
+          <div style="display:flex; align-items:flex-start; gap:8px; margin-bottom:6px; padding:0 2px;">
+            <span style="flex-shrink:0; font-size:12px; color:var(--muted); line-height:1.5;">•</span>
+            <span style="font-size:12px; color:var(--text); line-height:1.5;">${html}</span>
+          </div>`;
+        const infoTable = (title, rows) => `
+          <div style="border:1px solid var(--border); border-radius:8px; overflow:hidden; margin-bottom:10px;">
+            <div style="padding:7px 12px; font-size:11px; font-weight:700; text-transform:uppercase;
+                        letter-spacing:0.8px; color:var(--muted); background:rgba(201,168,76,0.08);
+                        border-bottom:1px solid var(--border);">${title}</div>
+            ${rows.map(([label, value], i) => `
+              <div style="display:flex; justify-content:space-between; align-items:center;
+                          padding:6px 12px; background:${i % 2 === 0 ? 'var(--panel)' : 'var(--bg)'};">
+                <span style="font-size:12px; color:var(--text);">${label}</span>
+                <span style="font-size:12px; font-weight:700; color:var(--text);">${value}</span>
+              </div>`).join('')}
+          </div>`;
+
+        el.innerHTML = `
+          <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px;
+                      padding:10px 12px; margin-bottom:12px; font-size:12px; color:var(--muted); line-height:1.6;">
+            New to Maestro? Here's the flow from joining a contest to your squad locking in for a match.
+          </div>
+
+          <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px;
+                      color:var(--muted); margin:2px 0 6px;">Join a Contest</div>
+          ${bullet('Pick the tournament you want to play from the <strong style="color:var(--accent)">Home</strong> tab.')}
+          ${bullet('<strong style="color:var(--accent)">Season Long</strong> is the main contest — one squad, scored across the whole tournament.')}
+          ${bullet('Playing with friends? Go to <strong style="color:var(--accent)">Season Long → Leagues → Join with code</strong> to enter a <strong style="color:var(--accent)">Private League</strong>. Your XI is shared across the public contest and every private league you\'re in — you only pick once.')}
+
+          <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px;
+                      color:var(--muted); margin:14px 0 6px;">Draft Your Squad</div>
+          <div style="font-size:12px; color:var(--muted); line-height:1.6; margin-bottom:6px;">
+            Build your 11 from the full player pool. Limits while you pick:
+          </div>
+          ${infoTable('Squad Limits', [
+            ['Budget', '100 credits total'],
+            ['Squad size', 'Exactly 11 players'],
+            ['Players from one real team', 'Max 7'],
+            ['Overseas players', 'Set per tournament — see Contest tab'],
+          ])}
+          ${infoTable('Role Composition (Final XI)', [
+            ['Wicketkeeper (WK)', '1 – 4'],
+            ['Batter (BAT)', '3 – 6'],
+            ['All-rounder (AR)', '1 – 4'],
+            ['Bowler (BOWL)', '3 – 6'],
+          ])}
+          <div style="font-size:11px; color:var(--muted); margin:-4px 0 12px; padding:0 2px;">
+            The player pool won't let you make a pick that makes a valid XI impossible — so you can't build an
+            invalid squad in the first place.
+          </div>
+
+          <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px;
+                      color:var(--muted); margin:2px 0 6px;">Captain &amp; Vice-Captain</div>
+          ${bullet('<strong style="color:var(--accent)">Captain</strong> — scores 2× their base points.')}
+          ${bullet('<strong style="color:var(--accent)">Vice-Captain</strong> — scores 1.5× their base points.')}
+
+          <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px;
+                      color:var(--muted); margin:14px 0 6px;">Save Your XI &amp; Match Lock</div>
+          ${step(1, 'Review your picks, Captain/VC, and booster, then tap <strong style="color:var(--accent)">Save XI</strong>.')}
+          ${step(2, 'Every match has a <strong style="color:var(--accent)">lock time</strong> — normally kickoff, though admins can push it earlier/later or mark a match <strong style="color:var(--accent)">delayed</strong>.')}
+          ${step(3, 'Right up until the lock time, you can keep editing — transfers, Captain/VC, and booster choice all stay open.')}
+          ${step(4, 'Once the lock passes, that match\'s XI, Captain/VC, and booster are frozen. Editing re-opens for the <strong style="color:var(--accent)">next</strong> match.')}
+          ${step(5, 'If a match is delayed, the lock moves with it — you\'re free to keep editing until the new lock time.')}
+        `;
+
+      } else if (tab === 'scoring') {
         el.innerHTML = `
           ${data.isDefault ? `
             <div style="background:rgba(201,168,76,0.1); border:1px solid rgba(201,168,76,0.3);
@@ -11766,9 +11869,9 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
             </div>` : ''}
           <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px;
                       padding:10px 12px; margin-bottom:12px; font-size:12px; color:var(--muted); line-height:1.6;">
-            Each player earns points based on their in-match performance. Your XI total
-            is the sum of all 11 players, with <strong style="color:var(--accent)">Captain earning 2×</strong> and
-            <strong style="color:var(--accent)">Vice-Captain 1.5×</strong> their base points.
+            Each player earns points based on their in-match performance. Your XI total is the sum of all 11
+            players — see <strong style="color:var(--accent)">Getting Started</strong> for how Captain and
+            Vice-Captain multipliers work.
           </div>
           ${ruleTableHtml('Batting', RULES_BATTING, displayRules)}
           <div style="font-size:11px; color:var(--muted); margin:-6px 0 10px; padding:0 2px;">
@@ -11799,6 +11902,10 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
           ${tc ? `
             <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px;
                         color:var(--muted); margin:2px 0 6px;">Transfers</div>
+            <div style="font-size:12px; color:var(--muted); line-height:1.6; margin-bottom:6px;">
+              Transfers swap players in and out of your squad between matches. Your exact allowance is set for
+              this contest below.
+            </div>
             <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px;
                         padding:10px 12px; margin-bottom:8px; font-size:12px; color:var(--muted); line-height:1.6;">
               <strong style="color:var(--accent)">League Phase:</strong>
@@ -11816,6 +11923,9 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
           ${boosterIds.length ? `
             <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.8px;
                         color:var(--muted); margin:2px 0 6px;">Boosters</div>
+            <div style="font-size:12px; color:var(--muted); line-height:1.6; margin-bottom:6px;">
+              Boosters are optional, once-per-season power-ups. Only one can be active for any given match.
+            </div>
             <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px;
                         padding:10px 12px; margin-bottom:12px; font-size:12px; color:var(--muted); line-height:1.6;">
               ${boosterIds.length} booster${boosterIds.length !== 1 ? 's' : ''} available this season.
@@ -11845,7 +11955,33 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
           ` : ''}
         `;
 
-      } else {
+      } else if (tab === 'ground-rules') {
+        const ruleCard = (title, body) => `
+          <div style="border:1px solid rgba(201,168,76,0.4); background:rgba(201,168,76,0.08);
+                      border-radius:8px; padding:12px; margin-bottom:8px;">
+            <div style="font-size:12px; font-weight:700; color:var(--text); margin-bottom:4px;">${title}</div>
+            <div style="font-size:12px; color:var(--muted); line-height:1.6;">${body}</div>
+          </div>`;
+        el.innerHTML = `
+          ${ruleCard(
+            'No points for the Super Over',
+            'Maestro only scores the main innings of a match. If a game is tied and goes to a Super Over, nobody gains or loses fantasy points for it — the result stands for the tournament table, but it has no effect on your squad\'s score.',
+          )}
+          ${ruleCard(
+            'A fixture called off before it locks doesn\'t count',
+            'If a match is cancelled or pulled from the schedule before its lock time, it\'s skipped entirely — it never locks, and everyone simply rolls forward to the next scheduled match. No points, transfers, or booster usage are affected.',
+          )}
+          ${ruleCard(
+            'A match abandoned or rained off after it\'s started is scored on the play that happened',
+            'If a match is interrupted or called off partway through (rain, bad light, etc.), it\'s scored from whatever overs/wickets were actually completed before it was called off — same scoring rules as a full match, just on a shorter innings. It is not excluded and does not get replayed for fantasy purposes, even if the real-world result is a "no result."',
+          )}
+          ${ruleCard(
+            'Transfers and boosters used for an abandoned match are not refunded',
+            'If your team had already locked for a match — even if it\'s later marked abandoned with no ball bowled — any transfer or booster you spent on that match stays spent. It still counts against your season/playoff transfer cap and your booster\'s once-per-season use, exactly as if the match had been played. There\'s no automatic refund for this today.',
+          )}
+        `;
+
+      } else if (tab === 'leagues') {
         el.innerHTML = `
           <div style="background:var(--bg); border:1px solid var(--border); border-radius:8px;
                       padding:10px 12px; margin-bottom:12px; font-size:12px; color:var(--muted); line-height:1.6;">

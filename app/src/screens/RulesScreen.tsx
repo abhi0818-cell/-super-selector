@@ -156,6 +156,52 @@ function InfoCard({ children }: { children: React.ReactNode }) {
   );
 }
 
+// ─── Getting Started / Ground Rules building blocks ───────────────────────────
+// (static, no DB-driven content — shared by both new sections below)
+
+function NumberedStep({ n, children }: { n: number; children: React.ReactNode }) {
+  return (
+    <View style={styles.stepRow}>
+      <View style={styles.stepBadge}>
+        <Text style={styles.stepBadgeText}>{n}</Text>
+      </View>
+      <Text style={styles.stepText}>{children}</Text>
+    </View>
+  );
+}
+
+function BulletItem({ children }: { children: React.ReactNode }) {
+  return (
+    <View style={styles.bulletRow}>
+      <Text style={styles.bulletDot}>•</Text>
+      <Text style={styles.bulletText}>{children}</Text>
+    </View>
+  );
+}
+
+function InfoTable({ title, rows }: { title: string; rows: [string, string][] }) {
+  return (
+    <View style={styles.ruleTable}>
+      <Text style={styles.tableTitle}>{title}</Text>
+      {rows.map(([label, value], i) => (
+        <View key={label} style={[styles.tableRow, i % 2 === 0 && styles.tableRowAlt]}>
+          <Text style={styles.tableLabel}>{label}</Text>
+          <Text style={styles.infoTableValue}>{value}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function RuleCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <View style={styles.ruleCard}>
+      <Text style={styles.ruleCardTitle}>{title}</Text>
+      <Text style={styles.ruleCardText}>{children}</Text>
+    </View>
+  );
+}
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function RulesScreen() {
@@ -309,6 +355,63 @@ export default function RulesScreen() {
             showsVerticalScrollIndicator={false}
           >
 
+            {/* ── 0. Getting Started — static how-to-play flow, no DB content ── */}
+            <SectionHeader title="Getting Started" icon="📝" />
+
+            <InfoCard>
+              <Text style={styles.infoNote}>
+                New to Maestro? Here's the flow from joining a contest to your squad locking in for a match.
+              </Text>
+            </InfoCard>
+
+            <Text style={styles.subTitle}>Join a Contest</Text>
+            <BulletItem>Pick the tournament you want to play from the <Text style={styles.infoEmph}>Home</Text> tab.</BulletItem>
+            <BulletItem><Text style={styles.infoEmph}>Season Long</Text> is the main contest — one squad, scored across the whole tournament.</BulletItem>
+            <BulletItem>
+              Playing with friends? Go to <Text style={styles.infoEmph}>Home → Season Long → Leagues → Join with code</Text> to
+              enter a <Text style={styles.infoEmph}>Private League</Text>. Your XI is shared across the public contest and every
+              private league you're in — you only pick once.
+            </BulletItem>
+
+            <Text style={styles.subTitle}>Draft Your Squad</Text>
+            <Text style={styles.infoNote}>Build your 11 from the full player pool. Limits while you pick:</Text>
+            <InfoTable
+              title="Squad Limits"
+              rows={[
+                ['Budget', '100 credits total'],
+                ['Squad size', 'Exactly 11 players'],
+                ['Players from one real team', 'Max 7'],
+                ['Overseas players', 'Set per tournament — see Contest below'],
+              ]}
+            />
+            <InfoTable
+              title="Role Composition (Final XI)"
+              rows={[
+                ['Wicketkeeper (WK)', '1 – 4'],
+                ['Batter (BAT)', '3 – 6'],
+                ['All-rounder (AR)', '1 – 4'],
+                ['Bowler (BOWL)', '3 – 6'],
+              ]}
+            />
+            <Text style={styles.ruleNote}>
+              The player pool won't let you make a pick that makes a valid XI impossible — so you can't build an invalid
+              squad in the first place.
+            </Text>
+
+            <Text style={styles.subTitle}>Captain &amp; Vice-Captain</Text>
+            <BulletItem><Text style={styles.infoEmph}>Captain</Text> — scores 2× their base points.</BulletItem>
+            <BulletItem><Text style={styles.infoEmph}>Vice-Captain</Text> — scores 1.5× their base points.</BulletItem>
+
+            <Text style={styles.subTitle}>Save Your XI &amp; Match Lock</Text>
+            <NumberedStep n={1}>Review your picks, Captain/VC, and booster, then tap <Text style={styles.infoEmph}>Save XI</Text>.</NumberedStep>
+            <NumberedStep n={2}>
+              Every match has a <Text style={styles.infoEmph}>lock time</Text> — normally kickoff, though admins can push it
+              earlier/later or mark a match <Text style={styles.infoEmph}>delayed</Text>.
+            </NumberedStep>
+            <NumberedStep n={3}>Right up until the lock time, you can keep editing — transfers, Captain/VC, and booster choice all stay open.</NumberedStep>
+            <NumberedStep n={4}>Once the lock passes, that match's XI, Captain/VC, and booster are frozen. Editing re-opens for the <Text style={styles.infoEmph}>next</Text> match.</NumberedStep>
+            <NumberedStep n={5}>If a match is delayed, the lock moves with it — you're free to keep editing until the new lock time.</NumberedStep>
+
             {/* ── 1. Contest — transfers + boosters overview ─────────────────── */}
             {(transferConfig || Object.keys(boostersMap).length > 0) && (
               <>
@@ -317,6 +420,10 @@ export default function RulesScreen() {
                 {transferConfig && (
                   <>
                     <Text style={styles.subTitle}>Transfers</Text>
+                    <Text style={styles.infoNote}>
+                      Transfers swap players in and out of your squad between matches. Your exact allowance is set for
+                      this contest below.
+                    </Text>
                     <InfoCard>
                       <Text style={styles.infoNote}>
                         <Text style={styles.infoEmph}>League Phase:</Text>{' '}
@@ -341,6 +448,9 @@ export default function RulesScreen() {
                 {Object.keys(boostersMap).length > 0 && (
                   <>
                     <Text style={styles.subTitle}>Boosters</Text>
+                    <Text style={styles.infoNote}>
+                      Boosters are optional, once-per-season power-ups. Only one can be active for any given match.
+                    </Text>
                     <InfoCard>
                       <Text style={styles.infoNote}>
                         {Object.keys(boostersMap).length} booster{Object.keys(boostersMap).length !== 1 ? 's' : ''} available
@@ -369,9 +479,9 @@ export default function RulesScreen() {
 
             <InfoCard>
               <Text style={styles.infoNote}>
-                Each player earns points based on their in-match performance. Your XI total
-                is the sum of all 11 players, with Captain earning <Text style={styles.infoEmph}>2×</Text> and
-                Vice-Captain <Text style={styles.infoEmph}>1.5×</Text> their base points.
+                Each player earns points based on their in-match performance. Your XI total is the sum of all 11
+                players — see <Text style={styles.infoEmph}>Getting Started</Text> for how Captain and Vice-Captain
+                multipliers work.
               </Text>
             </InfoCard>
 
@@ -389,7 +499,33 @@ export default function RulesScreen() {
             </Text>
             <RuleTable title="Fielding" rows={FIELDING_ROWS} rules={displayRules} />
 
-            {/* ── 3. Private Leagues ──────────────────────────────────────── */}
+            {/* ── 3. Ground Rules — static, hardcoded house rules ─────────────── */}
+            <SectionHeader title="Ground Rules" icon="📜" />
+
+            <RuleCard title="No points for the Super Over">
+              Maestro only scores the main innings of a match. If a game is tied and goes to a Super Over, nobody
+              gains or loses fantasy points for it — the result stands for the tournament table, but it has no
+              effect on your squad's score.
+            </RuleCard>
+            <RuleCard title="A fixture called off before it locks doesn't count">
+              If a match is cancelled or pulled from the schedule before its lock time, it's skipped entirely — it
+              never locks, and everyone simply rolls forward to the next scheduled match. No points, transfers, or
+              booster usage are affected.
+            </RuleCard>
+            <RuleCard title="A match abandoned or rained off after it's started is scored on the play that happened">
+              If a match is interrupted or called off partway through (rain, bad light, etc.), it's scored from
+              whatever overs/wickets were actually completed before it was called off — same scoring rules as a
+              full match, just on a shorter innings. It is not excluded and does not get replayed for fantasy
+              purposes, even if the real-world result is a "no result."
+            </RuleCard>
+            <RuleCard title="Transfers and boosters used for an abandoned match are not refunded">
+              If your team had already locked for a match — even if it's later marked abandoned with no ball
+              bowled — any transfer or booster you spent on that match stays spent. It still counts against your
+              season/playoff transfer cap and your booster's once-per-season use, exactly as if the match had been
+              played. There's no automatic refund for this today.
+            </RuleCard>
+
+            {/* ── 4. Private Leagues ──────────────────────────────────────── */}
             <SectionHeader title="Private Leagues" icon="🔒" />
 
             <InfoCard>
@@ -577,6 +713,87 @@ const styles = StyleSheet.create({
     marginTop:  -spacing.xs,
     marginBottom: spacing.xs,
     paddingHorizontal: 2,
+  },
+
+  // Plain label/value table (Getting Started — Squad Limits, Role Composition)
+  infoTableValue: {
+    fontSize:   fontSize.sm,
+    fontWeight: '700',
+    color:      colors.text,
+    minWidth:   72,
+    textAlign:  'right',
+  },
+
+  // Numbered steps (Getting Started — Save Your XI & Match Lock)
+  stepRow: {
+    flexDirection: 'row',
+    alignItems:    'flex-start',
+    gap:           spacing.sm,
+    marginBottom:  spacing.xs,
+    paddingHorizontal: 2,
+  },
+  stepBadge: {
+    width:            18,
+    height:           18,
+    borderRadius:     9,
+    backgroundColor:  'rgba(201,168,76,0.18)',
+    borderWidth:       1,
+    borderColor:       'rgba(201,168,76,0.4)',
+    alignItems:        'center',
+    justifyContent:    'center',
+    marginTop:         1,
+  },
+  stepBadgeText: {
+    fontSize:   fontSize.sm - 3,
+    fontWeight: '800',
+    color:      colors.text,
+  },
+  stepText: {
+    flex:       1,
+    fontSize:   fontSize.sm,
+    color:      colors.text,
+    lineHeight: 18,
+  },
+
+  // Bullet list (Getting Started — Join a Contest, Captain & Vice-Captain)
+  bulletRow: {
+    flexDirection: 'row',
+    alignItems:    'flex-start',
+    gap:           spacing.sm,
+    marginBottom:  spacing.xs,
+    paddingHorizontal: 2,
+  },
+  bulletDot: {
+    fontSize:   fontSize.sm,
+    color:      colors.muted,
+    lineHeight: 18,
+  },
+  bulletText: {
+    flex:       1,
+    fontSize:   fontSize.sm,
+    color:      colors.text,
+    lineHeight: 18,
+  },
+
+  // Ground Rules cards
+  ruleCard: {
+    borderRadius:      radius.lg,
+    borderWidth:        1,
+    borderColor:        'rgba(201,168,76,0.4)',
+    backgroundColor:    'rgba(201,168,76,0.08)',
+    padding:            spacing.md,
+    marginBottom:       spacing.xs,
+  },
+  ruleCardTitle: {
+    fontSize:   fontSize.sm,
+    fontWeight: '700',
+    color:      colors.text,
+    marginBottom: 4,
+  },
+  ruleCardText: {
+    fontSize:   fontSize.sm,
+    color:      colors.muted,
+    lineHeight: 18,
   },
 
   // Booster cards
