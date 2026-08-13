@@ -32,6 +32,9 @@ const ROLE_COLOR: Record<PlayerRole, string> = {
 const ROLE_LABEL: Record<PlayerRole, string> = {
   wk: 'WK', bat: 'BAT', ar: 'AR', bowl: 'BOWL',
 };
+// Display order for the player list — WK, Bat, AR, Bowl — independent of
+// whatever order the XI rows come back from the DB in.
+const ROLE_ORDER: Record<PlayerRole, number> = { wk: 0, bat: 1, ar: 2, bowl: 3 };
 
 export function capMult(p: MatchPlayer): number {
   // Real, booster-aware multiplier from the scores view (handles triple
@@ -42,8 +45,11 @@ export function capMult(p: MatchPlayer): number {
 export function rawPts(p: MatchPlayer): number {
   return p.bat + p.bowl + p.field + p.bonus;
 }
+// 1-decimal precision — matches the footer total's rounding (seasonHistory.ts's
+// `Math.round(net * 10) / 10`), so the rows visibly sum to the total instead
+// of each independently rounding to a whole number first.
 export function finalPts(p: MatchPlayer): number {
-  return Math.round(rawPts(p) * capMult(p));
+  return Math.round(rawPts(p) * capMult(p) * 10) / 10;
 }
 
 export default function TeamPointsBreakdown({ team, footerLabel }: { team: MatchTeam; footerLabel?: string }) {
@@ -73,8 +79,8 @@ export default function TeamPointsBreakdown({ team, footerLabel }: { team: Match
         <Text style={[styles.colHdr, { width: 44, textAlign: 'right'  }]}>PTS</Text>
       </View>
 
-      {/* Player rows */}
-      {team.players.map((p, i) => {
+      {/* Player rows — WK, Bat, AR, Bowl */}
+      {[...team.players].sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role]).map((p, i) => {
         const isCap = p.captaincy === 'captain';
         const isVC  = p.captaincy === 'vice_captain';
         const mult  = capMult(p);
@@ -118,7 +124,7 @@ export default function TeamPointsBreakdown({ team, footerLabel }: { team: Match
               isCap && styles.finalPtsCap,
               isVC  && styles.finalPtsVC,
             ]}>
-              {fp}
+              {fp % 1 === 0 ? fp : fp.toFixed(1)}
             </Text>
           </View>
         );

@@ -33,6 +33,7 @@ import { MatchFormat, PlayerRole, CaptaincyRole } from '../types';
 import { getBoosterMeta } from '../store/boosterStore';
 import { isMatchPlayed } from './matchLock';
 import { resolveEffectiveRules } from './scoringUtils';
+import { resolveBudgetWindow, MatchLite } from './transferCap';
 
 export type MatchWeek = { id: string; label: string; match: string; date: string };
 
@@ -51,8 +52,23 @@ export type MatchPlayer = {
 export type MatchTeam = {
   mwId: string;
   pts: number;
-  boosters: Array<{ icon: string; name: string }>;
+  boosters: Array<{ id: string; icon: string; name: string }>;
   players: MatchPlayer[];
+  /** Player swaps logged in user_transfers for this match. 0 when a
+   * transfer-bypass booster (wildcard/free_hit) was active — those swaps
+   * are free/unlimited and never get logged, so 0 here doesn't mean "no
+   * changes were made", it means "nothing was charged". Callers should
+   * check `boosters` for wildcard/free_hit before treating this as a
+   * literal swap count. */
+  xferCount: number;
+  /** Season-to-date figures AS OF this matchweek (i.e. recomputed per tab,
+   * not "as of today") — cumulative transfers/boosters used through and
+   * including this match, against the cap/allowance active in that match's
+   * phase. transfersAllowed null = unlimited that phase. */
+  seasonXferUsed:      number;
+  seasonXferAllowed:   number | null;
+  seasonBoosterUsed:   number;
+  seasonBoosterAllowed: number;
 };
 
 export async function getSquadSeasonHistory(squadId: string): Promise<{
@@ -117,10 +133,37 @@ export async function getSquadSeasonHistory(squadId: string): Promise<{
   const { data: squadRow } = await supabase
     .from('user_squads').select('contest_id').eq('id', squadId).maybeSingle();
   let contestScoringRules: any = null;
+  // Transfer/booster budget config for the "as of this matchweek" running
+  // totals below (mirrors leaderboardStore's contestRow fetch) — undefined
+  // fields all fall back to "no cap configured" so daily-shaped/legacy
+  // contests without these columns still render sane (unlimited) tiles.
+  let seasonXferAllowedFlat: number | null = null;
+  let startMatchNumber:      number | null = null;
+  let playoffStartMN:        number | null = null;
+  let playoffXferAllowed:    number | null = null;
+  let playoffFirstMatchUnlimited = false;
+  let seasonBoosterAllowed = 0;
+  let tournamentMatches: MatchLite[] = [];
   if (squadRow?.contest_id) {
     const { data: contestRow } = await supabase
-      .from('contests').select('scoring_rules').eq('id', squadRow.contest_id).maybeSingle();
-    contestScoringRules = contestRow?.scoring_rules ?? null;
+      .from('contests')
+      .select('scoring_rules, tournament_id, available_boosters, total_transfers_allowed, start_match_number, playoff_start_match_number, playoff_transfers_allowed, playoff_first_match_unlimited')
+      .eq('id', squadRow.contest_id).maybeSingle();
+    contestScoringRules       = contestRow?.scoring_rules ?? null;
+    seasonXferAllowedFlat     = contestRow?.total_transfers_allowed ?? null;
+    startMatchNumber          = contestRow?.start_match_number ?? null;
+    playoffStartMN            = contestRow?.playoff_start_match_number ?? null;
+    playoffXferAllowed        = contestRow?.playoff_transfers_allowed ?? null;
+    playoffFirstMatchUnlimited = contestRow?.playoff_first_match_unlimited ?? false;
+    seasonBoosterAllowed = contestRow?.available_boosters
+      ? Object.values(contestRow.available_boosters as Record<string, number>)
+          .reduce((sum: number, n) => sum + Number(n || 0), 0)
+      : 0;
+    if (contestRow?.tournament_id) {
+      const { data: tMatches } = await supabase
+        .from('matches').select('id, match_number, status').eq('tournament_id', contestRow.tournament_id);
+      tournamentMatches = (tMatches || []) as MatchLite[];
+    }
   }
 
   // Real role from `players`, not the role stored on user_match_xi (which was
@@ -148,8 +191,10 @@ export async function getSquadSeasonHistory(squadId: string): Promise<{
   );
 
   const penaltyByMatch: Record<string, number> = {};
+  const xferCountByMatch: Record<string, number> = {};
   (xferRows || []).forEach((t: any) => {
     penaltyByMatch[t.match_id] = (penaltyByMatch[t.match_id] ?? 0) + Number(t.points_deducted ?? 0);
+    xferCountByMatch[t.match_id] = (xferCountByMatch[t.match_id] ?? 0) + 1;
   });
 
   const boosterByMatch: Record<string, string[]> = {};
@@ -181,6 +226,37 @@ export async function getSquadSeasonHistory(squadId: string): Promise<{
   const groups = Object.values(byMatch)
     .filter(g => playedMatchIds.has(g.match_id))
     .sort((a, b) => (a.match_number ?? 0) - (b.match_number ?? 0));
+
+  // "As of this matchweek" transfer budget — recomputed per match so tabs
+  // show a genuine running tally instead of today's single season figure
+  // repeated on every tab. phaseIds partitions the season into independent
+  // pools (regular vs playoff, mirrors resolveBudgetWindow/leaderboardStore)
+  // — a match's "used" only sums transfers from matches in its OWN pool, up
+  // to and including itself, so crossing into the playoff phase correctly
+  // starts that pool's count fresh instead of carrying the regular tally over.
+  const matchNumberById: Record<string, number> = {};
+  tournamentMatches.forEach(m => { matchNumberById[m.id] = m.match_number ?? 0; });
+  function seasonXferAsOf(matchId: string, matchNumber: number): { used: number; allowed: number | null } {
+    const { activeCap, phaseIds } = resolveBudgetWindow(
+      matchNumber, tournamentMatches, startMatchNumber, playoffStartMN,
+      seasonXferAllowedFlat, playoffXferAllowed, playoffFirstMatchUnlimited,
+    );
+    const used = phaseIds
+      ? [...phaseIds]
+          .filter(mid => (matchNumberById[mid] ?? Infinity) <= matchNumber)
+          .reduce((sum, mid) => sum + (xferCountByMatch[mid] ?? 0), 0)
+      : groups
+          .filter(gr => (gr.match_number ?? 0) <= matchNumber)
+          .reduce((sum, gr) => sum + (xferCountByMatch[gr.match_id] ?? 0), 0);
+    return { used, allowed: activeCap };
+  }
+  // Boosters aren't phase-pooled — just a flat per-season allotment — so the
+  // running count is a simple sum over every match up to and including this one.
+  function seasonBoosterUsedAsOf(matchNumber: number): number {
+    return groups
+      .filter(gr => (gr.match_number ?? 0) <= matchNumber)
+      .reduce((sum, gr) => sum + (boosterByMatch[gr.match_id]?.length ?? 0), 0);
+  }
 
   const matchWeeks: MatchWeek[] = groups.map(g => ({
     id:    g.match_id,
@@ -238,10 +314,22 @@ export async function getSquadSeasonHistory(squadId: string): Promise<{
 
     const boosters = (boosterByMatch[g.match_id] || []).map(id => {
       const meta = getBoosterMeta(id);
-      return meta ? { icon: meta.icon, name: meta.name } : { icon: '🎯', name: id };
+      return meta ? { id, icon: meta.icon, name: meta.name } : { id, icon: '🎯', name: id };
     });
 
-    return { mwId: g.match_id, pts: Math.round(net * 10) / 10, boosters, players };
+    const xferAsOf = seasonXferAsOf(g.match_id, g.match_number ?? 0);
+
+    return {
+      mwId: g.match_id,
+      pts: Math.round(net * 10) / 10,
+      boosters,
+      players,
+      xferCount:            xferCountByMatch[g.match_id] ?? 0,
+      seasonXferUsed:       xferAsOf.used,
+      seasonXferAllowed:    xferAsOf.allowed,
+      seasonBoosterUsed:    seasonBoosterUsedAsOf(g.match_number ?? 0),
+      seasonBoosterAllowed: seasonBoosterAllowed,
+    };
   });
 
   return { matchWeeks, history };

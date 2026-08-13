@@ -28,6 +28,7 @@ import { useLeaderboardStore, LBEntry } from '../store/leaderboardStore';
 import { useAuthStore } from '../store/authStore';
 import { useTournamentStore } from '../store/tournamentStore';
 import { getSquadSeasonHistory, MatchWeek, MatchPlayer, MatchTeam } from '../lib/seasonHistory';
+import { TRANSFER_BOOSTERS } from '../store/boosterStore';
 import {
   getDailyMatchOptions, loadDailyLeaderboard, getDailyUserHistory,
   DailyMatchOption,
@@ -83,6 +84,9 @@ const ROLE_COLOR: Record<PlayerRole, string> = {
 const ROLE_LABEL: Record<PlayerRole, string> = {
   wk: 'WK', bat: 'BAT', ar: 'AR', bowl: 'BOWL',
 };
+// Display order for the player list — WK, Bat, AR, Bowl — independent of
+// whatever order the XI rows come back from the DB in.
+const ROLE_ORDER: Record<PlayerRole, number> = { wk: 0, bat: 1, ar: 2, bowl: 3 };
 
 // ─── Point helpers ────────────────────────────────────────────────────────────
 
@@ -95,8 +99,11 @@ function capMult(p: MatchPlayer): number {
 function rawPts(p: MatchPlayer): number {
   return p.bat + p.bowl + p.field + p.bonus;
 }
+// 1-decimal precision — matches the footer total's rounding (seasonHistory.ts's
+// `Math.round(net * 10) / 10`), so the rows visibly sum to the total instead
+// of each independently rounding to a whole number first.
 function finalPts(p: MatchPlayer): number {
-  return Math.round(rawPts(p) * capMult(p));
+  return Math.round(rawPts(p) * capMult(p) * 10) / 10;
 }
 
 function rankMedal(rank: number): string {
@@ -256,19 +263,24 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
               showsVerticalScrollIndicator={false}
             >
 
-              {/* Booster bar */}
-              <View style={styles.boosterBar}>
-                <Text style={styles.boosterBarLabel}>Boosters</Text>
-                {team.boosters.length > 0
-                  ? team.boosters.map((b, i) => (
-                      <View key={i} style={styles.boosterPill}>
-                        <BoosterIcon icon={b.icon} size={12} style={styles.boosterPillIcon} />
-                        <Text style={styles.boosterPillName}>{b.name}</Text>
-                      </View>
-                    ))
-                  : <Text style={styles.boosterNone}>None used</Text>
-                }
-              </View>
+              {/* Match/season transfer + booster stat tiles — SL/private only,
+                  daily has neither system so it keeps the plain booster line. */}
+              {contestType === 'daily' ? (
+                <View style={styles.boosterBar}>
+                  <Text style={styles.boosterBarLabel}>Boosters</Text>
+                  {team.boosters.length > 0
+                    ? team.boosters.map((b, i) => (
+                        <View key={i} style={styles.boosterPill}>
+                          <BoosterIcon icon={b.icon} size={12} style={styles.boosterPillIcon} />
+                          <Text style={styles.boosterPillName}>{b.name}</Text>
+                        </View>
+                      ))
+                    : <Text style={styles.boosterNone}>None used</Text>
+                  }
+                </View>
+              ) : (
+                <TeamStatTiles team={team} />
+              )}
 
               {/* Column headers */}
               <View style={styles.colHeaders}>
@@ -280,8 +292,8 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
                 <Text style={[styles.colHdr, { width: 44, textAlign: 'right'  }]}>PTS</Text>
               </View>
 
-              {/* Player rows */}
-              {team.players.map((p, i) => {
+              {/* Player rows — WK, Bat, AR, Bowl */}
+              {[...team.players].sort((a, b) => ROLE_ORDER[a.role] - ROLE_ORDER[b.role]).map((p, i) => {
                 const isCap = p.captaincy === 'captain';
                 const isVC  = p.captaincy === 'vice_captain';
                 const mult  = capMult(p);
@@ -325,7 +337,7 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
                       isCap && styles.finalPtsCap,
                       isVC  && styles.finalPtsVC,
                     ]}>
-                      {fp}
+                      {fp % 1 === 0 ? fp : fp.toFixed(1)}
                     </Text>
                   </View>
                 );
@@ -349,6 +361,56 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
         </SafeAreaView>
       </View>
     </Modal>
+  );
+}
+
+// ─── Match/season transfer + booster stat tiles ────────────────────────────────
+// Replaces the old "Boosters — None used" line for SL/private contests with
+// four compact tiles: this match's transfer count and booster pick, plus the
+// season-to-date transfer budget and booster tally (same figures already
+// shown on the leaderboard rows via entry.transferCount/boosterCount, so the
+// numbers always agree with what's visible outside the modal).
+
+function TeamStatTiles({ team }: { team: MatchTeam }) {
+  // Wildcard/Free Hit make that match's swaps free and unlimited — they're
+  // deliberately never logged to user_transfers (see checkAndLogTransfers),
+  // so team.xferCount reads 0 even when the whole XI changed. Showing that
+  // raw 0 would read as "no changes made" instead of "nothing was charged".
+  const isUnlimitedXfer = team.boosters.some(b => TRANSFER_BOOSTERS.has(b.id));
+  const matchXferValue  = isUnlimitedXfer ? 'Unlimited' : String(team.xferCount);
+  const matchBoosterValue = team.boosters[0]?.name ?? 'None';
+
+  // "As of this matchweek" running totals — recomputed per tab (seasonHistory.ts),
+  // so these change as you flip between matchweeks instead of repeating
+  // today's single season figure on every tab.
+  const totalXferValue = team.seasonXferAllowed == null
+    ? '∞'
+    : `${Math.max(0, team.seasonXferAllowed - team.seasonXferUsed)}/${team.seasonXferAllowed}`;
+  const totalBoosterValue = team.seasonBoosterAllowed
+    ? `${team.seasonBoosterUsed}/${team.seasonBoosterAllowed}`
+    : '—';
+
+  const lit = team.boosters.length > 0;
+
+  return (
+    <View style={styles.statTilesRow}>
+      <View style={[styles.statTile, lit && styles.statTileLit]}>
+        <Text style={[styles.statTileLabel, lit && styles.statTileLabelLit]} numberOfLines={1} adjustsFontSizeToFit>🎯 Match</Text>
+        <Text style={[styles.statTileValue, lit && styles.statTileValueLit]} numberOfLines={1} adjustsFontSizeToFit>{matchBoosterValue}</Text>
+      </View>
+      <View style={[styles.statTile, lit && styles.statTileLit]}>
+        <Text style={[styles.statTileLabel, lit && styles.statTileLabelLit]} numberOfLines={1} adjustsFontSizeToFit>⇄ Match</Text>
+        <Text style={[styles.statTileValue, lit && styles.statTileValueLit]} numberOfLines={1} adjustsFontSizeToFit>{matchXferValue}</Text>
+      </View>
+      <View style={styles.statTile}>
+        <Text style={styles.statTileLabel} numberOfLines={1} adjustsFontSizeToFit>🎯 Total</Text>
+        <Text style={styles.statTileValue} numberOfLines={1} adjustsFontSizeToFit>{totalBoosterValue}</Text>
+      </View>
+      <View style={styles.statTile}>
+        <Text style={styles.statTileLabel} numberOfLines={1} adjustsFontSizeToFit>⇄ Total</Text>
+        <Text style={styles.statTileValue} numberOfLines={1} adjustsFontSizeToFit>{totalXferValue}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -376,7 +438,7 @@ function UserHighlight({ entry, showSlCols }: { entry: LeaderboardEntry | undefi
           {showSlCols && (
             <View style={styles.slColsRow}>
               <Text style={styles.slColTextOnHighlight}>🎯 {boosterLabel}</Text>
-              <Text style={styles.slColTextOnHighlight}>🔄 {xferLabel}</Text>
+              <Text style={styles.slColTextOnHighlight}>⇄ {xferLabel}</Text>
             </View>
           )}
         </View>
@@ -429,7 +491,7 @@ function EntryRow({ entry, onPress, showSlCols }: EntryRowProps) {
         {showSlCols && (
           <View style={styles.slColsRow}>
             <Text style={styles.slColText}>🎯 {boosterLabel}</Text>
-            <Text style={styles.slColText}>🔄 {xferLabel}</Text>
+            <Text style={styles.slColText}>⇄ {xferLabel}</Text>
           </View>
         )}
       </View>
@@ -1108,6 +1170,50 @@ const styles = StyleSheet.create({
   boosterPillIcon: { fontSize: 12 },
   boosterPillName: { color: C.accent, fontSize: fontSize.xs, fontWeight: '700' },
   boosterNone:     { color: C.muted, fontSize: fontSize.xs, fontStyle: 'italic' },
+
+  // Match/season transfer + booster stat tiles — one row, four equal-width
+  // tiles. Labels are short enough to sit on one line at this font size on
+  // any phone width we support; if a label ever does wrap to two lines the
+  // tile just grows a bit taller, it won't push a tile onto a second row.
+  statTilesRow: {
+    flexDirection:     'row',
+    flexWrap:           'nowrap',
+    gap:                6,
+    paddingHorizontal:  spacing.lg,
+    paddingVertical:    spacing.sm,
+    backgroundColor:    'rgba(0,0,0,0.03)',
+    borderBottomWidth:  1,
+    borderBottomColor:  C.border,
+  },
+  statTile: {
+    flex:              1,
+    minWidth:          0,
+    alignItems:        'center',
+    paddingVertical:   6,
+    paddingHorizontal: 4,
+    borderRadius:      radius.md,
+    backgroundColor:   'rgba(28,31,38,0.04)',
+  },
+  statTileLit: {
+    backgroundColor: 'rgba(201,168,76,0.12)',
+  },
+  statTileLabel: {
+    color:         C.muted,
+    fontSize:      10,
+    fontWeight:    '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.2,
+    marginBottom:  2,
+    textAlign:     'center',
+  },
+  statTileLabelLit: { color: C.accent },
+  statTileValue: {
+    color:      C.text,
+    fontSize:   fontSize.xs,
+    fontWeight: '800',
+    textAlign:  'center',
+  },
+  statTileValueLit: { color: C.accent },
 
   // Column headers
   colHeaders: {

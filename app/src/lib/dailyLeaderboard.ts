@@ -282,10 +282,15 @@ export async function getDailyUserHistory(contestId: string, userId: string): Pr
     });
 
     return {
-      mwId:     match.id,
-      pts:      scoreByTeam[team.id] ?? 0,
-      boosters: [],   // Daily has no booster system
+      mwId:      match.id,
+      pts:       scoreByTeam[team.id] ?? 0,
+      boosters:  [],   // Daily has no booster system
       players,
+      xferCount:            0,     // Daily has no transfer system
+      seasonXferUsed:       0,
+      seasonXferAllowed:    null,
+      seasonBoosterUsed:    0,
+      seasonBoosterAllowed: 0,
     };
   });
 
