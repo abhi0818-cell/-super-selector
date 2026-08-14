@@ -4991,12 +4991,27 @@ export function createDb(cfg = {}) {
     },
 
     /**
-     * Copy the locked XI from a primary squad to all squads that share it,
-     * for a specific match.  Called by slLockForMatch after locking the primary.
+     * Copy the locked XI — and the primary squad's booster activation and
+     * transfer log for this match, if any — from a primary squad to all
+     * squads that share it. Called by slLockForMatch after locking the
+     * primary (this is the everyday path, hit whenever a user has the SL
+     * tab open past a match's lock time — lock-matches, the cron Edge
+     * Function, is the backstop for when no client is open at all; both
+     * needed the same fix, done together).
      *
      * For each shared squad, the primary squad's user_match_xi rows are
      * duplicated under the shared squad_id so that the scoring pipeline,
      * leaderboard queries, and season view all work without special handling.
+     *
+     * Booster and transfer rows get the same treatment as of this change —
+     * previously only XI was copied, so a shared squad's private-league
+     * score silently came out unboosted whenever the primary squad used a
+     * booster, and never had a transfer penalty deducted even when the
+     * primary squad incurred a real one. Requires migration_v49 — without
+     * that trigger fix, the booster insert below is rejected by
+     * enforce_booster_max_uses (migration_v47), which otherwise checks
+     * availability against the shared squad's OWN contest (a user-created
+     * league's available_boosters is always null).
      *
      * @param {string}   primarySquadId
      * @param {string}   matchId
@@ -5014,6 +5029,21 @@ export function createDb(cfg = {}) {
         .eq('match_id', matchId);
       if (xErr) throw xErr;
       if (!xiRows?.length) return 0;
+
+      // 1b. Get the primary squad's booster activation for this match, if any
+      const { data: boosterRow } = await sb
+        .from('user_booster_activations')
+        .select('booster, snapshot')
+        .eq('squad_id', primarySquadId)
+        .eq('match_id', matchId)
+        .maybeSingle();
+
+      // 1c. Get the primary squad's transfer log for this match, if any
+      const { data: xferRows } = await sb
+        .from('user_transfers')
+        .select('player_out_id, player_in_id, is_free, points_deducted')
+        .eq('squad_id', primarySquadId)
+        .eq('match_id', matchId);
 
       // 2. Get all shared squads
       const sharedSquads = await this.getSharedSquads(primarySquadId);
@@ -5039,9 +5069,32 @@ export function createDb(cfg = {}) {
         const { error: iErr } = await sb.from('user_match_xi').insert(rows);
         if (iErr) {
           console.warn(`[propagateXI] Failed for shared squad ${shared.id}:`, iErr.message);
-        } else {
-          updated++;
+          continue;
         }
+
+        // Propagate the booster activation, if any
+        if (boosterRow?.booster) {
+          await sb.from('user_booster_activations').delete()
+            .eq('squad_id', shared.id).eq('match_id', matchId);
+          const { error: bErr } = await sb.from('user_booster_activations').insert({
+            squad_id: shared.id,
+            match_id: matchId,
+            booster : boosterRow.booster,
+            snapshot: boosterRow.snapshot ?? null,
+          });
+          if (bErr) console.warn(`[propagateXI] Booster propagate failed for shared squad ${shared.id}:`, bErr.message);
+        }
+
+        // Propagate the transfer log, if any
+        if (xferRows?.length) {
+          await sb.from('user_transfers').delete()
+            .eq('squad_id', shared.id).eq('match_id', matchId);
+          const ssXferRows = xferRows.map(r => ({ ...r, squad_id: shared.id, match_id: matchId }));
+          const { error: tErr } = await sb.from('user_transfers').insert(ssXferRows);
+          if (tErr) console.warn(`[propagateXI] Transfer propagate failed for shared squad ${shared.id}:`, tErr.message);
+        }
+
+        updated++;
       }
       return updated;
     },

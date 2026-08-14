@@ -335,9 +335,13 @@ Deno.serve(async (req) => {
         }
 
         // ── Check active booster ────────────────────────────────────────────
+        // Selects `snapshot` too (not just `booster`) so this same row can be
+        // reused below to propagate the activation to shared (private-league
+        // mirror) squads — see migration_v49's fix to enforce_booster_max_uses,
+        // which is what makes that propagated insert actually succeed.
         const { data: boosterRow } = await sb
           .from('user_booster_activations')
-          .select('booster')
+          .select('booster, snapshot')
           .eq('squad_id', squad.id)
           .eq('match_id', match.id)
           .maybeSingle();
@@ -422,6 +426,13 @@ Deno.serve(async (req) => {
           if (ie) throw ie;
 
           // ── Transfer counting ──────────────────────────────────────────────
+          // Hoisted so the shared-squad propagation block below can reuse the
+          // exact rows just written for the primary squad instead of re-querying
+          // — a shared squad never runs this transfer-counting logic itself (it
+          // has no draft of its own to diff against), so without this its
+          // private-league total previously never had any transfer penalty
+          // subtracted, even when the primary squad incurred a real one.
+          let primaryXferRowsForPropagation: any[] = [];
           if (!bypassTransfers && baselineIds.length > 0) {
             const prevSet = new Set(baselineIds);
             const currSet = new Set(xiPlayerIds);
@@ -461,6 +472,8 @@ Deno.serve(async (req) => {
                   points_deducted: isFree ? 0 : extraCost,
                 };
               });
+
+              primaryXferRowsForPropagation = xferRows;
 
               const { error: xe } = await sb.from('user_transfers').insert(xferRows);
               if (xe) console.warn(`[lock-matches] Transfer log error (non-fatal):`, xe.message);
@@ -537,6 +550,42 @@ Deno.serve(async (req) => {
                 role      : 'bat',
               }));
               await sb.from('user_match_xi').insert(ssRows);
+
+              // ── Propagate the primary squad's booster activation, if any ──
+              // Without this, scrape-scorecard/poll-cricapi's per-squad
+              // booster lookup (keyed strictly on squad_id, no fallback to
+              // primary_squad_id) finds nothing for the shared squad, so it
+              // scores unboosted even though the XI it just mirrored above
+              // was the boosted one. Requires migration_v49 — without that
+              // trigger fix, this insert is rejected by
+              // enforce_booster_max_uses (migration_v47), which otherwise
+              // checks availability against the shared squad's OWN contest
+              // (a user-created league's available_boosters is always null).
+              if (boosterRow?.booster) {
+                await sb.from('user_booster_activations').delete()
+                  .eq('squad_id', ss.id).eq('match_id', match.id);
+                const { error: sbe } = await sb.from('user_booster_activations').insert({
+                  squad_id: ss.id,
+                  match_id: match.id,
+                  booster : boosterRow.booster,
+                  snapshot: boosterRow.snapshot ?? null,
+                });
+                if (sbe) console.warn(`[lock-matches] Shared-squad booster propagate failed for ${ss.id}:`, sbe.message);
+              }
+
+              // ── Propagate the primary squad's transfer log, if any ────────
+              // Without this, a shared squad never has its own user_transfers
+              // rows (it never runs the transfer-counting block above — it
+              // has no draft to diff), so its private-league total never had
+              // any transfer penalty subtracted, even when the primary squad
+              // incurred a real one under the SL contest's own budget.
+              if (primaryXferRowsForPropagation.length) {
+                await sb.from('user_transfers').delete()
+                  .eq('squad_id', ss.id).eq('match_id', match.id);
+                const ssXferRows = primaryXferRowsForPropagation.map(r => ({ ...r, squad_id: ss.id }));
+                const { error: ste } = await sb.from('user_transfers').insert(ssXferRows);
+                if (ste) console.warn(`[lock-matches] Shared-squad transfer propagate failed for ${ss.id}:`, ste.message);
+              }
             }
           }
 
