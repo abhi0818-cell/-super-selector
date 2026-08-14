@@ -3859,7 +3859,16 @@ export function createDb(cfg = {}) {
         playoff_first_match_unlimited: opts.playoffFirstMatchUnlimited ?? true,
       };
       const { data, error } = await sb.from('contests').insert(row).select().single();
-      if (error) throw error;
+      if (error) {
+        // Postgres unique_violation (23505) on contests_private_league_name_key
+        // (migration_v48) — a private league with this name already exists in
+        // this tournament. Surface a friendly message instead of the raw
+        // constraint error.
+        if (error.code === '23505' && /contests_private_league_name_key/.test(error.message ?? '')) {
+          throw new Error(`A private league named "${opts.name.trim()}" already exists in this tournament — pick a different name.`);
+        }
+        throw error;
+      }
       return data;
     },
 
@@ -3924,7 +3933,14 @@ export function createDb(cfg = {}) {
         .maybeSingle();
       if (existing) throw new Error('You are already a member of this league.');
 
-      // Check member cap
+      // Check member cap — fast-path client-side check for a snappy error
+      // message on the common case. This alone is racy (read-then-insert):
+      // two people joining a nearly-full league at the same instant could
+      // both pass this check. migration_v48 adds a row-locking DB trigger
+      // (enforce_league_member_cap) that re-checks the same limit atomically
+      // at INSERT time and is the real backstop — it raises the identical
+      // "This league is full." message, so the catch below needs no special
+      // casing to surface it.
       if (contest.max_members) {
         const { count } = await sb
           .from('user_squads')

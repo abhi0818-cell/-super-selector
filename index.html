@@ -8511,11 +8511,10 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
           <div style="display:flex;flex-direction:column;gap:6px;">
             <div class="save-bar">
               <input id="slPlCreateName" type="text" placeholder="League name (e.g. The Office League)" style="flex:2;" />
-              <input id="slPlCreateCap" type="number" min="2" max="100" placeholder="Max members" value="5" style="width:120px;" />
               <input id="slPlCreateTeamName" type="text" placeholder="Your team name" style="flex:1;" />
               <button id="slPlCreateBtn" class="primary">Create</button>
             </div>
-            <div style="font-size:11px;color:var(--muted);">Uses tournament scoring rules. You'll get an invite code to share.</div>
+            <div style="font-size:11px;color:var(--muted);">Uses tournament scoring rules. Up to 3 members — an admin can raise this for you. You'll get an invite code to share.</div>
             <div id="slPlCreateStatus" style="font-size:11px;color:var(--muted);"></div>
           </div>
         </div>`;
@@ -8596,21 +8595,19 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       $('#slPlCreateBtn')?.addEventListener('click', async () => {
         const leagueName  = $('#slPlCreateName')?.value.trim();
         const teamName    = $('#slPlCreateTeamName')?.value.trim();
-        const maxMembersV = parseInt($('#slPlCreateCap')?.value || '', 10);
         const statusEl    = $('#slPlCreateStatus');
         const btn         = $('#slPlCreateBtn');
 
         if (!leagueName) { statusEl.textContent = 'Enter a league name.'; statusEl.style.color = 'var(--bad)'; return; }
         if (!teamName)   { statusEl.textContent = 'Enter your team name.'; statusEl.style.color = 'var(--bad)'; return; }
-        if (!Number.isFinite(maxMembersV) || maxMembersV < 2) {
-          statusEl.textContent = 'Set a member limit (minimum 2).'; statusEl.style.color = 'var(--bad)'; return;
-        }
         if (!state.db) { statusEl.textContent = 'Connect a database first.'; statusEl.style.color = 'var(--bad)'; return; }
 
         btn.disabled = true; statusEl.textContent = 'Creating…'; statusEl.style.color = 'var(--muted)';
         try {
+          // Fixed at 3 members for user-created leagues — only an admin can raise
+          // this later (Contests admin panel → Private Leagues → Member cap).
           const league = await state.db.createPrivateLeague(state.activeTournamentId, {
-            name: leagueName, maxMembers: maxMembersV, scoringRules: null,
+            name: leagueName, maxMembers: 3, scoringRules: null,
           });
 
           // A freshly created league has no custom scoring or boosters → shared XI.
@@ -8632,7 +8629,6 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
           });
           $('#slPlCreateName').value    = '';
           $('#slPlCreateTeamName').value = '';
-          $('#slPlCreateCap').value     = '';
 
           // If this is the user's first squad, make it active
           if (!state.sl.squad) {
