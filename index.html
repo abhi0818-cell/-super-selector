@@ -8613,14 +8613,25 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
           // A freshly created league has no custom scoring or boosters → shared XI.
           // Pass the creator's main SL squad id so the lock pipeline propagates XI here.
           const joinPrimaryId = isSharedXI(league) ? (mainSlSquadId ?? null) : null;
-          const { squad: newSquad, isShared: createdAsShared } =
+          const { squad: newSquad, isShared: createdAsShared, backfilledMatches, backfillError } =
             await state.db.joinLeagueByCode(league.invite_code, teamName, joinPrimaryId);
           const contests = await state.db.getContests(state.activeTournamentId);
           state.sl.contests = contests;
 
-          const sharedNote = createdAsShared
-            ? ' <span style="color:var(--accent);font-size:11px;">🔗 Your main SL XI is shared here.</span>'
-            : '';
+          // Even the creator's own history can be non-empty here — they may
+          // have already played several SL matches before creating this
+          // league, and joinLeagueByCode backfills that in (migration_v50)
+          // the same way it would for anyone joining an existing league.
+          let sharedNote = '';
+          if (createdAsShared) {
+            if (backfillError) {
+              sharedNote = ' <span style="color:var(--bad);font-size:11px;">🔗 Your main SL XI is shared here — but pulling in your past match history hit an error; it\'ll need a retry.</span>';
+            } else if (backfilledMatches > 0) {
+              sharedNote = ` <span style="color:var(--accent);font-size:11px;">🔗 Your main SL XI is shared here, including your points from ${backfilledMatches} match${backfilledMatches !== 1 ? 'es' : ''} already played.</span>`;
+            } else {
+              sharedNote = ' <span style="color:var(--accent);font-size:11px;">🔗 Your main SL XI is shared here.</span>';
+            }
+          }
           statusEl.innerHTML = `✓ League <strong>${escapeHtml(leagueName)}</strong> created! Code: <code style="color:var(--accent);font-weight:700;letter-spacing:2px;">${league.invite_code}</code> <button style="font-size:11px;padding:2px 7px;margin-left:4px;" id="slPlCopyCode">Copy</button>${sharedNote}`;
           statusEl.style.color = 'var(--good,#4ade80)';
           $('#slPlCopyCode')?.addEventListener('click', () => {
@@ -8670,16 +8681,26 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
           const joinPrimaryId = shared ? (mainSlSquadId ?? null) : null;
 
           statusEl.textContent = 'Joining…'; statusEl.style.color = 'var(--muted)';
-          const { contest, squad: newSquad, isShared: joinedAsShared } =
+          const { contest, squad: newSquad, isShared: joinedAsShared, backfilledMatches, backfillError } =
             await state.db.joinLeagueByCode(code, teamName, joinPrimaryId);
           const contests = await state.db.getContests(state.activeTournamentId);
           state.sl.contests = contests;
 
-          const sharedNote = joinedAsShared
-            ? ' 🔗 Your main SL XI will be used here automatically.'
-            : ' You\'ll need to pick your XI for this league independently.';
+          // joinLeagueByCode already blocked on backfilling this squad's
+          // history (migration_v50) before returning, so by the time we're
+          // here it's either done or it failed — nothing left to wait for.
+          let sharedNote;
+          if (!joinedAsShared) {
+            sharedNote = ' You\'ll need to pick your XI for this league independently.';
+          } else if (backfillError) {
+            sharedNote = ' 🔗 Your main SL XI will be used here — but pulling in your past match history hit an error; it\'ll need a retry.';
+          } else if (backfilledMatches > 0) {
+            sharedNote = ` 🔗 Your main SL XI will be used here automatically, including your points from ${backfilledMatches} match${backfilledMatches !== 1 ? 'es' : ''} already played.`;
+          } else {
+            sharedNote = ' 🔗 Your main SL XI will be used here automatically.';
+          }
           statusEl.innerHTML = `<span style="color:var(--good,#4ade80);">✓ Joined "${escapeHtml(contest.name)}"!</span>`
-            + ` <span style="font-size:11px;color:var(--muted);">${sharedNote}</span>`;
+            + ` <span style="font-size:11px;color:${backfillError ? 'var(--bad)' : 'var(--muted)'};">${sharedNote}</span>`;
 
           $('#slPlInviteCode').value   = '';
           $('#slPlJoinTeamName').value = '';

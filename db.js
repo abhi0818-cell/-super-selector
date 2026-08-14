@@ -3898,13 +3898,23 @@ export function createDb(cfg = {}) {
      * Look up a private league by invite code and join it (creates a squad).
      * Returns the contest + new squad, or throws if code is invalid / already a member / full.
      *
+     * For a shared (standard-rule) league, this also blocks on a one-time
+     * backfill (migration_v50's backfill_shared_squad_history) that copies
+     * every match the primary squad already has locked — XI, booster,
+     * transfers, and precomputed scores — so a member joining mid-season
+     * sees their full history from M1, not just from whichever match is
+     * next. See docs/PRIVATE_LEAGUES_DESIGN.md §4c. The backfill failing is
+     * non-fatal to the join itself (the squad row already exists by that
+     * point, and retrying the join would just hit the "already a member"
+     * check with nothing fixed) — check backfillError in the result instead.
+     *
      * @param {string}      inviteCode      6-char code shared by the league creator
      * @param {string}      squadName       the joining user's team name
      * @param {string|null} primarySquadId  if set, marks this as a shared squad that mirrors
      *                                      the primary squad's XI automatically at lock time.
      *                                      Pass the user's main SL squad id for shared leagues,
      *                                      or null for independent leagues.
-     * @returns {Promise<{contest: object, squad: object, isShared: boolean}>}
+     * @returns {Promise<{contest: object, squad: object, isShared: boolean, backfilledMatches: number, backfillError: string|null}>}
      */
     async joinLeagueByCode(inviteCode, squadName, primarySquadId = null) {
       if (!inviteCode?.trim()) throw new Error('joinLeagueByCode: invite code required');
@@ -3978,7 +3988,37 @@ export function createDb(cfg = {}) {
       }
       if (sErr) throw sErr;
 
-      return { contest, squad, isShared: !!primarySquadId };
+      // Blocking M1 backfill for a freshly-shared squad — copies every
+      // match the primary squad already has locked (XI, booster, transfers,
+      // precomputed scores; migration_v50) so the member sees their full
+      // season history immediately. Only applies to shared/standard leagues
+      // — primarySquadId is null for independent/custom leagues, which have
+      // no primary squad to backfill from (see
+      // docs/PRIVATE_LEAGUES_DESIGN.md §3 "Scope — confirmed").
+      //
+      // Non-fatal on failure: the squad row above already exists, so
+      // throwing here would strand the user mid-join with no way to retry
+      // (a second joinLeagueByCode call would just hit the "already a
+      // member" check above, unable to fix anything). Surface the failure
+      // via backfillError instead and let the caller decide how to tell the
+      // user, rather than blocking the join outright.
+      let backfilledMatches = 0;
+      let backfillError = null;
+      if (primarySquadId) {
+        try {
+          const { data: count, error: bErr } = await sb.rpc('backfill_shared_squad_history', {
+            p_new_squad_id: squad.id,
+            p_primary_squad_id: primarySquadId,
+          });
+          if (bErr) throw bErr;
+          backfilledMatches = count ?? 0;
+        } catch (e) {
+          console.warn('[joinLeagueByCode] backfill_shared_squad_history failed:', e.message);
+          backfillError = e.message;
+        }
+      }
+
+      return { contest, squad, isShared: !!primarySquadId, backfilledMatches, backfillError };
     },
 
     /**
@@ -4596,6 +4636,26 @@ export function createDb(cfg = {}) {
      * @param {string} contestId
      * @param {number|null} maxMembers
      */
+    /**
+     * Permanently delete a private league: every member's squad in it (and
+     * everything hanging off those squads — XI, scores, booster activations,
+     * transfers), then the contest row itself. Irreversible.
+     *
+     * Goes through the `delete_private_league` RPC (migration_v52), not a
+     * plain `.from('contests').delete()` — that would fail outright the
+     * moment any squad has joined (user_squads.contest_id is
+     * ON DELETE RESTRICT), and even without that, this client's RLS only
+     * covers the caller's OWN squad rows, not other members'. The RPC runs
+     * SECURITY DEFINER to clear all of it in one transaction, and refuses to
+     * touch anything that isn't `is_private = true`.
+     * @param {string} contestId
+     */
+    async deletePrivateLeague(contestId) {
+      const sb = await getClient();
+      const { error } = await sb.rpc('delete_private_league', { p_contest_id: contestId });
+      if (error) throw error;
+    },
+
     async updateContestMaxMembers(contestId, maxMembers) {
       const sb = await getClient();
       const { data, error } = await sb

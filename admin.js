@@ -813,6 +813,8 @@
                     <span style="font-size:12px; color:var(--muted);">Invite code:</span>
                     <code style="font-size:14px; font-weight:700; color:var(--accent); background:var(--panel-2); padding:3px 10px; border-radius:6px; letter-spacing:2px;">${escapeHtml(c.invite_code || '—')}</code>
                     <button class="copy-invite-btn" data-code="${escapeHtml(c.invite_code || '')}" style="font-size:11px; padding:3px 8px;">Copy</button>
+                    <button class="pl-delete-btn" data-contest="${c.id}" data-name="${escapeHtml(c.name)}" data-members="${memberCount}"
+                      style="font-size:11px; padding:3px 8px; color:var(--bad); border-color:var(--bad); background:transparent;">Delete</button>
                   </div>
                 </div>
                 <!-- Scoring info -->
@@ -1006,6 +1008,34 @@
               statusEl.textContent = 'Save failed: ' + e.message;
               statusEl.style.color = 'var(--bad)';
             } finally { btn.disabled = false; }
+          });
+        });
+
+        // ── Delete private league ─────────────────────────────────────────────
+        // Irreversible — deletes every member squad in the league (XI, scores,
+        // boosters, transfers all cascade with it) and the contest row itself.
+        // See db.js's deletePrivateLeague / migration_v52.
+        wrap.querySelectorAll('.pl-delete-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const contestId = btn.dataset.contest;
+            const name       = btn.dataset.name || 'this league';
+            const memberCount = parseInt(btn.dataset.members, 10) || 0;
+            const warn = memberCount > 0
+              ? `Delete "${name}"? This removes ${memberCount} member squad${memberCount === 1 ? '' : 's'} — their XI, scores, boosters, and transfers for this league — permanently. This cannot be undone.`
+              : `Delete "${name}"? This cannot be undone.`;
+            if (!confirm(warn)) return;
+            btn.disabled = true;
+            const originalText = btn.textContent;
+            btn.textContent = 'Deleting…';
+            try {
+              await state.db.deletePrivateLeague(contestId);
+              toast(`"${name}" deleted.`, 3000);
+              await renderContestsAdmin();
+            } catch (e) {
+              toast('Delete failed: ' + e.message, 4000);
+              btn.disabled = false;
+              btn.textContent = originalText;
+            }
           });
         });
 
