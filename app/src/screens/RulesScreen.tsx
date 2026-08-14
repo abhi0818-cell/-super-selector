@@ -368,9 +368,9 @@ export default function RulesScreen() {
             <BulletItem>Pick the tournament you want to play from the <Text style={styles.infoEmph}>Home</Text> tab.</BulletItem>
             <BulletItem><Text style={styles.infoEmph}>Season Long</Text> is the main contest — one squad, scored across the whole tournament.</BulletItem>
             <BulletItem>
-              Playing with friends? Go to <Text style={styles.infoEmph}>Home → Season Long → Leagues → Join with code</Text> to
-              enter a <Text style={styles.infoEmph}>Private League</Text>. Your XI is shared across the public contest and every
-              private league you're in — you only pick once.
+              Playing with friends? Open <Text style={styles.infoEmph}>My XI</Text> and tap <Text style={styles.infoEmph}>🔒 Create or join a private league</Text> at
+              the bottom of the contest list to enter a <Text style={styles.infoEmph}>Private League</Text> by invite code. Your XI is
+              shared across the public contest and every standard-rules private league you're in — you only pick once.
             </BulletItem>
 
             <Text style={styles.subTitle}>Draft Your Squad</Text>
@@ -538,23 +538,18 @@ export default function RulesScreen() {
             {[
               {
                 icon: '👥',
-                heading: 'Same XI, different contest',
-                body: 'Your XI is shared across the season-long contest and all private leagues you join — pick once, compete everywhere.',
+                heading: 'Standard leagues share your SL XI',
+                body: 'Most private leagues (the ones you or a friend create) use the same scoring rules and boosters as Season Long — your SL squad is mirrored in automatically, pick once, compete everywhere. Joining late still shows your full history from the first match.',
               },
               {
                 icon: '📋',
-                heading: 'Custom base rules',
-                body: 'Each private league can have its own scoring ruleset configured by the league admin — different from the public contest.',
-              },
-              {
-                icon: '⚡',
-                heading: 'Configurable boosters',
-                body: 'The league admin chooses which boosters are available. A private league may offer a different booster set than the main contest.',
+                heading: 'Custom-rules leagues are separate',
+                body: 'An admin can also set up a league with its own scoring rules and boosters, different from Season Long — that one you pick your XI for independently, every match.',
               },
               {
                 icon: '🔑',
-                heading: 'Joining',
-                body: 'Ask the league creator for the invite code. Go to Home → Season Long → Leagues → Join with code.',
+                heading: 'Creating or joining',
+                body: 'Open My XI and tap "🔒 Create or join a private league" at the bottom of the contest list. Creating makes a standard league (up to 3 members — an admin can raise that); joining just needs the invite code your friend shares.',
               },
             ].map(item => (
               <LinearGradient key={item.heading} colors={G.card} style={styles.conceptCard}>

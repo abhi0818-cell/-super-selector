@@ -53,6 +53,10 @@ export default function LeagueSelector({ visible, leagues, contestType, onSelect
                   leagueName: league.name,
                   ruleType:   league.ruleType,
                   deadline:   league.deadline,
+                  // LeagueSelector only ever lists custom-rule leagues (see
+                  // the `leagues` prop doc above) — never shared/standard
+                  // ones, so this is always false here.
+                  isShared:   false,
                 })}
               >
                 <View style={styles.leagueInfo}>

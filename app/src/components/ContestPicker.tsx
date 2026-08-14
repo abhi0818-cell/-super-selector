@@ -5,7 +5,7 @@
  * hardcoded placeholders while loading.
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -19,6 +19,7 @@ import { ContestContext, ContestType } from '../types';
 import { useContestStore, toContestContext } from '../store/contestStore';
 import { useTeamStore } from '../store/teamStore';
 import { fontSize, radius, spacing, shadow } from '../theme';
+import PrivateLeagueModal from './PrivateLeagueModal';
 
 interface Props {
   onSelect: (ctx: ContestContext) => void;
@@ -53,6 +54,7 @@ const CONTEST_SUBTITLES: Record<ContestType, string> = {
 export default function ContestPicker({ onSelect }: Props) {
   const { contests, contestsLoading, loadContests } = useContestStore();
   const tournamentId = useTeamStore(s => s.tournamentId);
+  const [leagueModalOpen, setLeagueModalOpen] = useState(false);
 
   // Load contests once we know the tournament
   useEffect(() => {
@@ -60,6 +62,15 @@ export default function ContestPicker({ onSelect }: Props) {
       loadContests(tournamentId);
     }
   }, [tournamentId]);
+
+  // After creating/joining a private league, refresh the list (so it shows
+  // up in "Your Leagues" style browsing here next time) and select it right
+  // away, same as index.html's create/join handlers do.
+  const handleLeagueJoined = (ctx: ContestContext) => {
+    setLeagueModalOpen(false);
+    if (tournamentId) loadContests(tournamentId);
+    onSelect(ctx);
+  };
 
   return (
     <View style={styles.container}>
@@ -106,7 +117,7 @@ export default function ContestPicker({ onSelect }: Props) {
                     <Text style={styles.optionName}>{contest.name}</Text>
                     <Text style={styles.optionMeta}>
                       {contest.isPrivate
-                        ? 'Private league · standard rules'
+                        ? (contest.isShared ? 'Private league · shares your SL XI' : 'Private league · custom rules')
                         : CONTEST_SUBTITLES[contest.contestType]}
                     </Text>
                   </View>
@@ -128,8 +139,26 @@ export default function ContestPicker({ onSelect }: Props) {
           {!contestsLoading && contests.length === 0 && (
             <Text style={styles.empty}>No active contests found</Text>
           )}
+
+          {/* Create/join a private league — Phase 4 of
+              docs/PRIVATE_LEAGUES_DESIGN.md. Mirrors index.html's Leagues
+              tab; previously mobile could only pick among leagues it was
+              already a member of. */}
+          <Pressable
+            style={({ pressed }) => [styles.leagueLinkWrap, pressed && styles.optionPressed]}
+            onPress={() => setLeagueModalOpen(true)}
+          >
+            <Text style={styles.leagueLinkText}>🔒 Create or join a private league</Text>
+          </Pressable>
         </ScrollView>
       )}
+
+      <PrivateLeagueModal
+        visible={leagueModalOpen}
+        tournamentId={tournamentId ?? null}
+        onDismiss={() => setLeagueModalOpen(false)}
+        onJoined={handleLeagueJoined}
+      />
     </View>
   );
 }
@@ -217,5 +246,20 @@ const styles = StyleSheet.create({
     fontSize:   fontSize.base,
     textAlign:  'center',
     marginTop:  spacing.xxl,
+  },
+
+  leagueLinkWrap: {
+    marginTop:         spacing.md,
+    paddingVertical:   spacing.md,
+    alignItems:        'center',
+    borderWidth:       1,
+    borderStyle:       'dashed',
+    borderColor:       C.border,
+    borderRadius:      radius.lg,
+  },
+  leagueLinkText: {
+    color:      C.gold,
+    fontSize:   fontSize.sm,
+    fontWeight: '700',
   },
 });

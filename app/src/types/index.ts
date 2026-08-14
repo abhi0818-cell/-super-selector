@@ -107,6 +107,17 @@ export type ContestType    = 'daily' | 'sl' | 'private';
 export type LeagueRuleType = 'standard' | 'custom';
 // 'standard' = same rules/boosters as the main SL contest
 // 'custom'   = league has its own rule set (different from SL)
+//
+// NOTE: this is the RULES axis only — whether a league uses SL's own
+// scoring_rules/available_boosters or its own. It's a separate thing from
+// whether the SQUAD is shared (web's primary_squad_id / "shared XI"
+// mechanism, migration_v13): a standard-rules league's squad literally IS
+// the member's main SL squad, mirrored at lock time; that's the isShared
+// flag below, not ruleType. Confirmed while building Phase 4 (mobile
+// parity) that ContestContext previously had no field for this at all, and
+// toContestContext() hardcoded ruleType: 'standard' for every contest
+// regardless of its actual scoring_rules/available_boosters — see
+// contestStore.ts's RealContest/toContestContext for the real derivation.
 
 export interface PrivateLeague {
   id:         string;
@@ -125,6 +136,11 @@ export interface ContestContext {
   leagueName:   string;
   ruleType:     LeagueRuleType;
   deadline:     string;
+  // Shared-XI league: this squad mirrors the member's own main SL squad
+  // (user_squads.primary_squad_id set), propagated automatically at lock
+  // time and kept in sync by migration_v51's trigger. Always false for
+  // 'daily'/'sl' contestType — only meaningful for 'private'.
+  isShared:     boolean;
 }
 
 // ─── Navigation types ─────────────────────────────────────────────────────────
