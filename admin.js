@@ -776,7 +776,24 @@
             // Fetch live member counts for all private leagues in one query
             const memberCounts = await state.db.getMemberCountsForContests(privateLeagues.map(c => c.id)).catch(() => ({}));
             return privateLeagues.map(c => {
-              const hasCustomRules = c.scoring_rules && Object.keys(c.scoring_rules).length > 0;
+              const hasCustomRules    = c.scoring_rules     && Object.keys(c.scoring_rules).length     > 0;
+              const hasCustomBoosters = c.available_boosters && Object.keys(c.available_boosters).length > 0;
+              // Mirrors isSharedXI() in index.html exactly. A league with
+              // neither override is a "standard" league — every member's
+              // XI, boosters, and transfers are mirrored live from their own
+              // main Season Long squad (db.js propagateXIToSharedSquads /
+              // lock-matches). There's nothing contest-specific to configure
+              // here beyond the member cap: boosters aren't a second,
+              // independently-tracked pool for a standard league — setting
+              // them here wouldn't even take effect for existing members,
+              // since migration_v49's trigger resolves a shared squad's
+              // booster availability through its PRIMARY squad's contest,
+              // ignoring whatever's set on this one. Showing an editable
+              // booster grid here was misleading (and, if saved, would
+              // quietly reclassify the league for any NEW joiner from
+              // "standard/shared" to "independent" without touching existing
+              // members at all — a split-personality league).
+              const isStandard     = !hasCustomRules && !hasCustomBoosters;
               const memberCount    = memberCounts[c.id] ?? 0;
               const cap            = c.max_members;
               const capDisplay     = cap ? `${memberCount} / ${cap}` : `${memberCount} members`;
@@ -787,7 +804,9 @@
                 <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
                   <div style="display:flex; align-items:center; gap:8px;">
                     <strong style="font-size:13px;">${escapeHtml(c.name)}</strong>
-                    ${hasCustomRules ? `<span style="font-size:10px; background:rgba(166,124,0,0.15); color:var(--accent-2); padding:2px 6px; border-radius:8px;">custom rules</span>` : ''}
+                    ${isStandard
+                      ? `<span style="font-size:10px; background:rgba(120,120,120,0.15); color:var(--muted); padding:2px 6px; border-radius:8px;">standard — mirrors Season Long</span>`
+                      : `<span style="font-size:10px; background:rgba(166,124,0,0.15); color:var(--accent-2); padding:2px 6px; border-radius:8px;">custom rules</span>`}
                     <span style="font-size:11px; color:${capFull ? 'var(--bad)' : 'var(--muted)'};">${capDisplay}${capFull ? ' · full' : ''}</span>
                   </div>
                   <div style="display:flex; align-items:center; gap:8px;">
@@ -800,7 +819,7 @@
                 <div style="font-size:11px; color:var(--muted); margin-top:6px;">
                   ${hasCustomRules ? `Custom scoring: ${Object.keys(c.scoring_rules).join(', ')} format(s) overridden` : 'Uses tournament scoring rules'}
                 </div>
-                <!-- Admin: editable member cap -->
+                <!-- Admin: editable member cap — the one thing admin controls for every private league, standard or custom -->
                 <div style="display:flex; align-items:center; gap:8px; margin-top:10px; padding-top:10px; border-top:1px dashed var(--border);">
                   <span style="font-size:12px; color:var(--muted); flex-shrink:0;">Member cap:</span>
                   <input type="number" min="2" max="500"
@@ -812,7 +831,11 @@
                   <button class="primary pl-cap-save" data-contest="${c.id}" style="font-size:12px; padding:4px 10px;">Save</button>
                   <span class="pl-cap-status" data-contest="${c.id}" style="font-size:11px; color:var(--muted);"></span>
                 </div>
-                ${buildBoosterConfigHtml(c.id, c.available_boosters)}
+                ${isStandard
+                  ? `<div style="font-size:11px; color:var(--muted); margin-top:10px; padding-top:10px; border-top:1px dashed var(--border);">
+                       Standard league — every member's XI, boosters, and transfers mirror their own main Season Long squad automatically. Nothing to configure here besides the member cap above; boosters/scoring follow the main Season Long contest, not a per-league setting.
+                     </div>`
+                  : buildBoosterConfigHtml(c.id, c.available_boosters)}
               </div>`;
             }).join('');
           })()}
