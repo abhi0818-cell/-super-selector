@@ -1,9 +1,11 @@
 /**
  * PrivateLeagueModal
  *
- * Mobile parity for the web app's "Create a private league" / "Join a
- * private league" panel (index.html's Leagues tab) — Phase 4 of
- * docs/PRIVATE_LEAGUES_DESIGN.md. Opened from ContestPicker's footer link.
+ * Mobile parity for the web app's Leagues tab (index.html's
+ * renderSlLeaguesTab — "Your Leagues" list + "Create a private league" +
+ * "Join a private league", all in one panel) — Phase 4 of
+ * docs/PRIVATE_LEAGUES_DESIGN.md, with the "Your Leagues" list added as a
+ * follow-up polish pass. Opened from ContestPicker's footer link.
  *
  * Same rules as web:
  *  - Creating from here always makes a standard/shared league (no custom
@@ -14,6 +16,9 @@
  *    belong to a genuinely independent (custom-rules) league — otherwise it
  *    mirrors your SL squad's name the same way.
  *  - Fixed at 3 members on create; only an admin can raise it later.
+ *  - "Your Leagues" shows every contest you have a squad in (public + private),
+ *    with the same shared-XI vs custom-rules badge ContestPicker's rows use,
+ *    and switches active context on tap — same as web's per-row Switch button.
  */
 
 import React, { useEffect, useState } from 'react';
@@ -23,13 +28,14 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
 import { fontSize, radius, spacing, shadow } from '../theme';
-import { useContestStore, toContestContext } from '../store/contestStore';
+import { useContestStore, toContestContext, MyLeagueEntry } from '../store/contestStore';
 import { ContestContext } from '../types';
 
 const C = {
@@ -49,13 +55,14 @@ interface Props {
   onJoined:     (ctx: ContestContext) => void;
 }
 
-type Mode = 'create' | 'join';
+type Mode = 'mine' | 'create' | 'join';
 
 export default function PrivateLeagueModal({ visible, tournamentId, onDismiss, onJoined }: Props) {
-  const { getMainSlSquad, previewLeagueByCode, createPrivateLeague, joinLeagueByCode } = useContestStore();
+  const { activeContext, getMyLeagues, getMainSlSquad, previewLeagueByCode, createPrivateLeague, joinLeagueByCode } = useContestStore();
 
-  const [mode, setMode]           = useState<Mode>('create');
+  const [mode, setMode]           = useState<Mode>('mine');
   const [mainSquad, setMainSquad] = useState<{ id: string; name: string } | null | undefined>(undefined); // undefined = not loaded yet
+  const [myLeagues, setMyLeagues] = useState<MyLeagueEntry[] | undefined>(undefined); // undefined = loading
 
   const [leagueName, setLeagueName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
@@ -67,12 +74,18 @@ export default function PrivateLeagueModal({ visible, tournamentId, onDismiss, o
 
   useEffect(() => {
     if (!visible || !tournamentId) return;
-    setMode('create');
+    setMode('mine');
     setLeagueName(''); setInviteCode(''); setJoinTeamName('');
     setError(null); setNotice(null);
     setMainSquad(undefined);
+    setMyLeagues(undefined);
     getMainSlSquad(tournamentId).then(setMainSquad).catch(() => setMainSquad(null));
+    getMyLeagues(tournamentId).then(setMyLeagues).catch(() => setMyLeagues([]));
   }, [visible, tournamentId]);
+
+  const handleSwitch = (entry: MyLeagueEntry) => {
+    onJoined(toContestContext(entry.contest));
+  };
 
   const closeSoon = (ctx: ContestContext, note: string) => {
     setNotice(note);
@@ -164,16 +177,57 @@ export default function PrivateLeagueModal({ visible, tournamentId, onDismiss, o
           <Text style={styles.title}>Private Leagues</Text>
 
           <View style={styles.tabs}>
+            <Pressable style={[styles.tab, mode === 'mine' && styles.tabActive]} onPress={() => { setMode('mine'); setError(null); }}>
+              <Text style={[styles.tabText, mode === 'mine' && styles.tabTextActive]}>Your Leagues</Text>
+            </Pressable>
             <Pressable style={[styles.tab, mode === 'create' && styles.tabActive]} onPress={() => { setMode('create'); setError(null); }}>
               <Text style={[styles.tabText, mode === 'create' && styles.tabTextActive]}>Create</Text>
             </Pressable>
             <Pressable style={[styles.tab, mode === 'join' && styles.tabActive]} onPress={() => { setMode('join'); setError(null); }}>
-              <Text style={[styles.tabText, mode === 'join' && styles.tabTextActive]}>Join by code</Text>
+              <Text style={[styles.tabText, mode === 'join' && styles.tabTextActive]}>Join</Text>
             </Pressable>
           </View>
 
           {notice ? (
             <Text style={styles.notice}>{notice}</Text>
+          ) : mode === 'mine' ? (
+            <ScrollView style={styles.myLeaguesScroll} contentContainerStyle={{ gap: spacing.sm }}>
+              {myLeagues === undefined && (
+                <ActivityIndicator color={C.accent} style={{ marginVertical: spacing.lg }} />
+              )}
+              {myLeagues && myLeagues.length === 0 && (
+                <Text style={styles.subtitle}>You haven't joined any leagues yet. Create or join one below.</Text>
+              )}
+              {myLeagues?.map(entry => {
+                const isActive = activeContext?.contestId === entry.contest.id;
+                const badge = entry.contest.isPrivate
+                  ? (entry.contest.isShared ? '🔗 Shared XI' : '⚙️ Custom rules')
+                  : null;
+                return (
+                  <Pressable
+                    key={entry.contest.id}
+                    style={[styles.leagueRow, isActive && styles.leagueRowActive]}
+                    onPress={() => handleSwitch(entry)}
+                    disabled={isActive}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.leagueRowName}>
+                        {entry.contest.isPrivate ? '🔒 ' : '🌐 '}{entry.contest.name}
+                      </Text>
+                      <Text style={styles.leagueRowMeta}>
+                        {entry.squadName}{badge ? ` · ${badge}` : ''}
+                      </Text>
+                      {entry.contest.isPrivate && entry.contest.inviteCode && (
+                        <Text style={styles.leagueRowCode} selectable>Code: {entry.contest.inviteCode}</Text>
+                      )}
+                    </View>
+                    {isActive
+                      ? <Text style={styles.activePill}>Active</Text>
+                      : <Text style={styles.switchPill}>Switch</Text>}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
           ) : mode === 'create' ? (
             <>
               <Text style={styles.subtitle}>
@@ -239,7 +293,7 @@ export default function PrivateLeagueModal({ visible, tournamentId, onDismiss, o
           )}
 
           <Pressable style={styles.cancelBtn} onPress={onDismiss}>
-            <Text style={styles.cancelText}>{notice ? 'Close' : 'Cancel'}</Text>
+            <Text style={styles.cancelText}>{notice || mode === 'mine' ? 'Close' : 'Cancel'}</Text>
           </Pressable>
         </View>
       </KeyboardAvoidingView>
@@ -288,6 +342,47 @@ const styles = StyleSheet.create({
   tabActive: { backgroundColor: '#1C1F26' },
   tabText: { color: C.muted, fontSize: fontSize.sm, fontWeight: '700' },
   tabTextActive: { color: '#fff' },
+
+  myLeaguesScroll: {
+    maxHeight: 320,
+  },
+  leagueRow: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:                spacing.sm,
+    padding:            spacing.md,
+    backgroundColor:    'rgba(255,255,255,0.7)',
+    borderRadius:       radius.lg,
+    borderWidth:        1,
+    borderColor:        C.border,
+  },
+  leagueRowActive: {
+    borderColor:      C.accent,
+    backgroundColor:  'rgba(201,168,76,0.12)',
+  },
+  leagueRowName: { color: C.text, fontSize: fontSize.sm, fontWeight: '700' },
+  leagueRowMeta: { color: C.muted, fontSize: fontSize.xs, marginTop: 2 },
+  leagueRowCode: { color: C.gold, fontSize: fontSize.xs, fontWeight: '700', marginTop: 2, letterSpacing: 1 },
+  activePill: {
+    color:             C.accent,
+    fontSize:          fontSize.xs,
+    fontWeight:        '700',
+    borderWidth:       1,
+    borderColor:       C.accent,
+    borderRadius:      radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical:   3,
+  },
+  switchPill: {
+    color:             C.muted,
+    fontSize:          fontSize.xs,
+    fontWeight:        '700',
+    borderWidth:       1,
+    borderColor:       C.border,
+    borderRadius:      radius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical:   3,
+  },
   subtitle: {
     color:      C.muted,
     fontSize:   fontSize.xs,

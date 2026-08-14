@@ -79,6 +79,13 @@ export type CreateLeagueResult = {
   contest?: RealContest;
 };
 
+export type MyLeagueEntry = {
+  squadId:       string;
+  squadName:     string;
+  isSharedSquad: boolean;  // this squad's own primary_squad_id is set
+  contest:       RealContest;
+};
+
 interface ContestState {
   activeContext:   ContestContext | null;
   contests:        RealContest[];         // loaded from Supabase
@@ -89,6 +96,13 @@ interface ContestState {
   loadContests:  (tournamentId: string) => Promise<void>;
 
   // ── Private leagues (Phase 4 — mirrors db.js) ──────────────────────────────
+  // Every contest the caller has a squad in, for "Your Leagues" browsing
+  // (Phase 4 polish — mirrors index.html's renderSlLeaguesTab list). Mirrors
+  // db.js's getUserSquads two-query shape (fetch squads, then fetch their
+  // contests by id) rather than an embedded relational select — no
+  // precedent for that syntax anywhere else in this codebase, on either
+  // client, so not introducing it here either.
+  getMyLeagues:         (tournamentId: string) => Promise<MyLeagueEntry[]>;
   // Find the caller's own main Season Long squad (public season_long contest,
   // not private) for a tournament — the source a standard/shared private
   // league mirrors. Returns null if the tournament has no public SL contest,
@@ -160,6 +174,37 @@ export const useContestStore = create<ContestState>((set) => ({
     } finally {
       set({ contestsLoading: false });
     }
+  },
+
+  getMyLeagues: async (tournamentId) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return [];
+
+    const { data: squads } = await supabase
+      .from('user_squads')
+      .select('id, name, contest_id, primary_squad_id')
+      .eq('user_id', user.id);
+    if (!squads?.length) return [];
+
+    const contestIds = [...new Set(squads.map(s => s.contest_id))];
+    const { data: contestRows } = await supabase
+      .from('contests')
+      .select('id, name, contest_type, is_private, invite_code, is_active, scoring_rules, available_boosters')
+      .in('id', contestIds)
+      .eq('tournament_id', tournamentId)
+      .eq('is_active', true);
+    const contestMap = new Map((contestRows ?? []).map((c: any) => [c.id, c]));
+
+    return squads
+      .filter(s => contestMap.has(s.contest_id))
+      .map(s => ({
+        squadId:       s.id,
+        squadName:     s.name,
+        isSharedSquad: !!s.primary_squad_id,
+        contest:       mapRealContest(contestMap.get(s.contest_id), '2099-01-01T00:00:00Z'),
+      }))
+      // Public contests first, then private — same ordering as loadContests.
+      .sort((a, b) => Number(a.contest.isPrivate) - Number(b.contest.isPrivate));
   },
 
   getMainSlSquad: async (tournamentId) => {

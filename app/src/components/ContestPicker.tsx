@@ -140,15 +140,15 @@ export default function ContestPicker({ onSelect }: Props) {
             <Text style={styles.empty}>No active contests found</Text>
           )}
 
-          {/* Create/join a private league — Phase 4 of
+          {/* Private leagues hub (browse/switch + create + join) — Phase 4 of
               docs/PRIVATE_LEAGUES_DESIGN.md. Mirrors index.html's Leagues
               tab; previously mobile could only pick among leagues it was
-              already a member of. */}
+              already a member of, with no way to see, create, or join more. */}
           <Pressable
             style={({ pressed }) => [styles.leagueLinkWrap, pressed && styles.optionPressed]}
             onPress={() => setLeagueModalOpen(true)}
           >
-            <Text style={styles.leagueLinkText}>🔒 Create or join a private league</Text>
+            <Text style={styles.leagueLinkText}>🔒 Private Leagues</Text>
           </Pressable>
         </ScrollView>
       )}
