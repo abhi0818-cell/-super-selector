@@ -8445,6 +8445,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       // The user's main SL squad: non-private contest, same tournament.
       const mainSlEntry   = userSquads.find(u => !u.contest.is_private && u.contest.contest_type === 'season_long');
       const mainSlSquadId = mainSlEntry?.squad?.id ?? null;
+      const mainSlSquadName = mainSlEntry?.squad?.name ?? null;
 
       // The default public Season Long contest for this tournament, if one
       // exists — used below to offer a direct "join the main league" card to
@@ -8505,27 +8506,42 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       }
 
       // ── 2. Create private league ────────────────────────────────────────
+      // No "team name" input here — a league created from this screen always
+      // uses the tournament's own scoring rules (createPrivateLeague below
+      // passes scoringRules: null, no boosters), which makes it a shared/
+      // standard league by definition (isSharedXI). A shared league's squad
+      // IS your main SL squad, just mirrored into another league's
+      // leaderboard — so it takes your existing SL team name automatically
+      // rather than asking you to type a second one for "the same team."
       const createHtml = `
         <div style="border-top:1px solid var(--border);padding-top:14px;margin-bottom:14px;">
           <div style="font-size:12px;font-weight:600;margin-bottom:8px;">Create a private league</div>
           <div style="display:flex;flex-direction:column;gap:6px;">
             <div class="save-bar">
-              <input id="slPlCreateName" type="text" placeholder="League name (e.g. The Office League)" style="flex:2;" />
-              <input id="slPlCreateTeamName" type="text" placeholder="Your team name" style="flex:1;" />
+              <input id="slPlCreateName" type="text" placeholder="League name (e.g. The Office League)" style="flex:1;" />
               <button id="slPlCreateBtn" class="primary">Create</button>
             </div>
-            <div style="font-size:11px;color:var(--muted);">Uses tournament scoring rules. Up to 3 members — an admin can raise this for you. You'll get an invite code to share.</div>
+            <div style="font-size:11px;color:var(--muted);">
+              Uses tournament scoring rules — your team here is the same as your Season Long team${mainSlSquadName ? `, <strong>${escapeHtml(mainSlSquadName)}</strong>` : ''}, just showing up in this league's leaderboard too. Up to 3 members — an admin can raise this for you. You'll get an invite code to share.
+            </div>
             <div id="slPlCreateStatus" style="font-size:11px;color:var(--muted);"></div>
           </div>
         </div>`;
 
       // ── 3. Join league by invite code ────────────────────────────────────
+      // "Your team name" is only actually needed for a custom-rules league
+      // (independent squad, picked separately) — a standard league mirrors
+      // your main SL squad, name included, same as the create flow above.
+      // Which kind this is isn't known until the code is checked, so the
+      // field stays visible but optional; the click handler below only
+      // enforces it once it knows the league is independent, and otherwise
+      // ignores it in favor of your existing SL team name.
       const joinHtml = `
         <div style="border-top:1px solid var(--border);padding-top:14px;">
           <div style="font-size:12px;font-weight:600;margin-bottom:8px;">Join a private league</div>
           <div class="save-bar">
             <input id="slPlInviteCode" type="text" placeholder="Invite code (e.g. SUPER7X)" maxlength="8" style="text-transform:uppercase;letter-spacing:2px;font-weight:600;" />
-            <input id="slPlJoinTeamName" type="text" placeholder="Your team name" />
+            <input id="slPlJoinTeamName" type="text" placeholder="Team name (only needed for custom-rules leagues)" />
             <button id="slPlJoinBtn">Join</button>
           </div>
           <div id="slPlJoinStatus" style="font-size:11px;margin-top:6px;color:var(--muted);"></div>
@@ -8594,12 +8610,15 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       // ── Create league handler ────────────────────────────────────────────
       $('#slPlCreateBtn')?.addEventListener('click', async () => {
         const leagueName  = $('#slPlCreateName')?.value.trim();
-        const teamName    = $('#slPlCreateTeamName')?.value.trim();
+        // Always a shared/standard league from this screen (see createHtml's
+        // comment above) — the squad here IS the main SL squad, so it takes
+        // that squad's name rather than a separately-typed one.
+        const teamName    = mainSlSquadName;
         const statusEl    = $('#slPlCreateStatus');
         const btn         = $('#slPlCreateBtn');
 
         if (!leagueName) { statusEl.textContent = 'Enter a league name.'; statusEl.style.color = 'var(--bad)'; return; }
-        if (!teamName)   { statusEl.textContent = 'Enter your team name.'; statusEl.style.color = 'var(--bad)'; return; }
+        if (!teamName)   { statusEl.textContent = 'Join the main Season Long league first — a private league here mirrors that team, so there\'s nothing to mirror yet.'; statusEl.style.color = 'var(--bad)'; return; }
         if (!state.db) { statusEl.textContent = 'Connect a database first.'; statusEl.style.color = 'var(--bad)'; return; }
 
         btn.disabled = true; statusEl.textContent = 'Creating…'; statusEl.style.color = 'var(--muted)';
@@ -8639,7 +8658,6 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
             $('#slPlCopyCode').textContent = 'Copied!';
           });
           $('#slPlCreateName').value    = '';
-          $('#slPlCreateTeamName').value = '';
 
           // If this is the user's first squad, make it active
           if (!state.sl.squad) {
@@ -8659,12 +8677,11 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
 
       // ── Join league handler ──────────────────────────────────────────────
       $('#slPlJoinBtn')?.addEventListener('click', async () => {
-        const code      = $('#slPlInviteCode')?.value.trim().toUpperCase();
-        const teamName  = $('#slPlJoinTeamName')?.value.trim();
-        const statusEl  = $('#slPlJoinStatus');
-        const btn       = $('#slPlJoinBtn');
+        const code            = $('#slPlInviteCode')?.value.trim().toUpperCase();
+        const typedTeamName   = $('#slPlJoinTeamName')?.value.trim();
+        const statusEl        = $('#slPlJoinStatus');
+        const btn             = $('#slPlJoinBtn');
         if (!code)     { statusEl.textContent = 'Enter an invite code.'; statusEl.style.color = 'var(--bad)'; return; }
-        if (!teamName) { statusEl.textContent = 'Enter a team name.';    statusEl.style.color = 'var(--bad)'; return; }
         if (!state.db) { statusEl.textContent = 'Connect a database first.'; statusEl.style.color = 'var(--bad)'; return; }
         btn.disabled = true; statusEl.textContent = 'Checking league…'; statusEl.style.color = 'var(--muted)';
         try {
@@ -8679,6 +8696,29 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
           const shared       = isSharedXI(previewContest);
           // For shared leagues, mirror from the main SL squad; for independent, no link.
           const joinPrimaryId = shared ? (mainSlSquadId ?? null) : null;
+
+          // Shared league → this IS your main SL squad, just showing up in
+          // another league's leaderboard, so it takes that squad's real name
+          // rather than whatever (if anything) was typed above. Independent
+          // (custom-rules) league → a genuinely separate squad, so a team
+          // name is actually required here.
+          let teamName;
+          if (shared && mainSlSquadName) {
+            teamName = mainSlSquadName;
+          } else if (shared) {
+            // Edge case: joining a standard league before joining the main
+            // SL league at all — nothing to mirror a name from yet. Fall
+            // back to whatever was typed, or joinLeagueByCode's own default.
+            teamName = typedTeamName || null;
+          } else {
+            if (!typedTeamName) {
+              statusEl.textContent = 'This is a custom-rules league — enter a team name.';
+              statusEl.style.color = 'var(--bad)';
+              btn.disabled = false;
+              return;
+            }
+            teamName = typedTeamName;
+          }
 
           statusEl.textContent = 'Joining…'; statusEl.style.color = 'var(--muted)';
           const { contest, squad: newSquad, isShared: joinedAsShared, backfilledMatches, backfillError } =
