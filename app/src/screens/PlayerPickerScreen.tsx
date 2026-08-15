@@ -1261,7 +1261,11 @@ const styles = StyleSheet.create({
     shadowOffset:     { width: -4, height: 0 },
     shadowOpacity:    0.18,
     shadowRadius:     12,
-    elevation:        12,
+    // elevation dropped for the same reason as myxiDrawer above — an
+    // elevated view's Android compositing layer isn't bounded by an
+    // ancestor's overflow:hidden or its own transform, so it's a latent
+    // version of the same "escapes off the top of the screen" bug even
+    // though this one slides horizontally and hasn't been reported yet.
   },
   scheduleDrawerHeader: {
     flexDirection:      'row',
@@ -1363,7 +1367,19 @@ const styles = StyleSheet.create({
     shadowOffset:    { width: 0, height: 6 },
     shadowOpacity:   0.18,
     shadowRadius:    14,
-    elevation:       12,
+    // No `elevation` here (Android's shadow prop) — Android promotes any
+    // elevated view onto its own hardware compositing layer, which is
+    // drawn by Z-order rather than clipped by an ancestor's
+    // `overflow:'hidden'` or bounded by its own animated transform. That's
+    // what was still slipping out above the status bar even after the
+    // first overlap fix (anchoring inside listContainer with
+    // overflow:hidden) — the slide-to-hidden position was correct, but the
+    // elevated layer could still paint through at the very top of the
+    // window regardless of translateY. Dropping elevation loses the
+    // drop-shadow on Android (shadowColor/Offset/Opacity/Radius above are
+    // iOS-only and now no-ops there), but borderWidth/borderColor still
+    // read as a clear edge, and it's a fair trade for the drawer actually
+    // staying fully hidden when closed.
     overflow:        'hidden',
   },
   myxiPitchWrap: {
