@@ -716,7 +716,7 @@ export default function LeaderboardScreen({ route }: Props) {
               end={{ x: 1, y: 0 }}
             >
               <Text style={styles.tabIcon}>{tab.icon}</Text>
-              <Text style={[styles.tabLabel, styles.tabLabelActive]}>{tab.label}</Text>
+              <Text style={[styles.tabLabel, styles.tabLabelActive]} numberOfLines={1}>{tab.label}</Text>
             </LinearGradient>
           ) : (
             <Pressable
@@ -725,7 +725,7 @@ export default function LeaderboardScreen({ route }: Props) {
               onPress={() => setActiveTab(tab.id)}
             >
               <Text style={styles.tabIcon}>{tab.icon}</Text>
-              <Text style={styles.tabLabel}>{tab.label}</Text>
+              <Text style={styles.tabLabel} numberOfLines={1}>{tab.label}</Text>
             </Pressable>
           )
         ))}

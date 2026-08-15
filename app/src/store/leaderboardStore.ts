@@ -13,7 +13,7 @@ import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { isMatchLocked, findNextUnlockedMatch } from '../lib/matchLock';
 import { resolvePersonName } from '../lib/profileUtils';
-import { resolveBudgetWindow, MatchLite } from '../lib/transferCap';
+import { resolveBudgetWindow, resolveContestBudgetConfig, MatchLite } from '../lib/transferCap';
 
 /**
  * PostgREST/Supabase caps a single .select() at 1000 rows by default. Any
@@ -150,11 +150,10 @@ export const useLeaderboardStore = create<LeaderboardState>((set, get) => ({
       // playoff match resolves to fully unlimited (null cap). Previously this
       // always used the flat season total, so it kept counting down from the
       // league-stage figure straight through the playoff opener.
-      const { data: contestRow } = await supabase
-        .from('contests')
-        .select('tournament_id, available_boosters, total_transfers_allowed, start_match_number, playoff_start_match_number, playoff_transfers_allowed, playoff_first_match_unlimited')
-        .eq('id', contestId)
-        .maybeSingle();
+      // Falls back to the main SL contest's own budget when this is a
+      // shared/standard private league that never had its own budget columns
+      // configured — see resolveContestBudgetConfig's doc comment.
+      const contestRow = await resolveContestBudgetConfig(contestId);
       const boosterAllowed = contestRow?.available_boosters
         ? Object.values(contestRow.available_boosters as Record<string, number>)
             .reduce((sum: number, n) => sum + Number(n || 0), 0)

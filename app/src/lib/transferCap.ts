@@ -94,6 +94,98 @@ export async function fetchTournamentMatches(tournamentId: string): Promise<Matc
   return data ?? [];
 }
 
+// ─── Booster/Xfer budget resolution (display only) ─────────────────────────
+
+export interface ContestBudgetConfig {
+  tournament_id:                 string | null;
+  available_boosters:            Record<string, number> | null;
+  total_transfers_allowed:       number | null;
+  start_match_number:            number | null;
+  playoff_start_match_number:    number | null;
+  playoff_transfers_allowed:     number | null;
+  playoff_first_match_unlimited: boolean;
+}
+
+/**
+ * Resolve the effective Booster/Xfer budget config for a contest, falling
+ * back to the tournament's main Season Long contest when this is a
+ * shared/standard private league (migration_v13's isSharedXI concept: a
+ * private contest with no custom scoring_rules/available_boosters of its
+ * own) whose own budget columns were never explicitly configured.
+ *
+ * createPrivateLeague (both here and web's db.js) never sets
+ * total_transfers_allowed / start_match_number / playoff_* / available_boosters
+ * for a user-created "same rules" league — those columns stay null forever
+ * on that contest row, since copying real values onto available_boosters
+ * would flip hasCustomBoosters and break isShared detection. Without this
+ * fallback, leaderboardStore/seasonHistory read those nulls straight off the
+ * private league's own row and showed "unlimited transfers" (∞) / "no
+ * booster budget" (—) for a shared league even though the shared squad's
+ * actual usage (copied over by migration_v51's resync trigger) was being
+ * counted correctly the whole time — the cap just wasn't. Mirrors db.js's
+ * resolveContestBudgetConfig; keep the two in sync.
+ *
+ * Not used by fetchContestTransferConfig above — that one's for the actual
+ * save-time cap ENFORCEMENT, which a shared squad never hits directly (its
+ * XI is only ever written by the resync trigger, never picked in MyXI), so
+ * only the display-only paths (leaderboardStore, seasonHistory) need this.
+ */
+export async function resolveContestBudgetConfig(contestId: string): Promise<ContestBudgetConfig> {
+  const empty: ContestBudgetConfig = {
+    tournament_id: null, available_boosters: null, total_transfers_allowed: null,
+    start_match_number: null, playoff_start_match_number: null,
+    playoff_transfers_allowed: null, playoff_first_match_unlimited: false,
+  };
+
+  const { data: row } = await supabase
+    .from('contests')
+    .select('tournament_id, is_private, scoring_rules, available_boosters, total_transfers_allowed, start_match_number, playoff_start_match_number, playoff_transfers_allowed, playoff_first_match_unlimited')
+    .eq('id', contestId)
+    .maybeSingle();
+  if (!row) return empty;
+
+  const hasCustomRules    = !!(row.scoring_rules && Object.keys(row.scoring_rules).length > 0);
+  const hasCustomBoosters = !!(row.available_boosters && Object.keys(row.available_boosters).length > 0);
+  const isShared = Boolean(row.is_private) && !hasCustomRules && !hasCustomBoosters;
+
+  const ownBudgetUnset = row.total_transfers_allowed == null
+    && row.start_match_number == null
+    && row.playoff_start_match_number == null
+    && row.playoff_transfers_allowed == null
+    && !hasCustomBoosters;
+
+  if (isShared && ownBudgetUnset && row.tournament_id) {
+    const { data: slRow } = await supabase
+      .from('contests')
+      .select('available_boosters, total_transfers_allowed, start_match_number, playoff_start_match_number, playoff_transfers_allowed, playoff_first_match_unlimited')
+      .eq('tournament_id', row.tournament_id)
+      .eq('contest_type', 'season_long')
+      .eq('is_private', false)
+      .maybeSingle();
+    if (slRow) {
+      return {
+        tournament_id: row.tournament_id,
+        available_boosters:            slRow.available_boosters            ?? null,
+        total_transfers_allowed:       slRow.total_transfers_allowed       ?? null,
+        start_match_number:            slRow.start_match_number            ?? null,
+        playoff_start_match_number:    slRow.playoff_start_match_number    ?? null,
+        playoff_transfers_allowed:     slRow.playoff_transfers_allowed     ?? null,
+        playoff_first_match_unlimited: slRow.playoff_first_match_unlimited ?? false,
+      };
+    }
+  }
+
+  return {
+    tournament_id: row.tournament_id ?? null,
+    available_boosters:            row.available_boosters            ?? null,
+    total_transfers_allowed:       row.total_transfers_allowed       ?? null,
+    start_match_number:            row.start_match_number            ?? null,
+    playoff_start_match_number:    row.playoff_start_match_number    ?? null,
+    playoff_transfers_allowed:     row.playoff_transfers_allowed     ?? null,
+    playoff_first_match_unlimited: row.playoff_first_match_unlimited ?? false,
+  };
+}
+
 // ─── Free Hit snapshot ──────────────────────────────────────────────────────
 
 /** Pre-free-hit baseline stored on a squad's free_hit activation for a match, if any. */

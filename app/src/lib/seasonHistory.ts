@@ -33,7 +33,7 @@ import { MatchFormat, PlayerRole, CaptaincyRole } from '../types';
 import { getBoosterMeta } from '../store/boosterStore';
 import { isMatchPlayed } from './matchLock';
 import { resolveEffectiveRules } from './scoringUtils';
-import { resolveBudgetWindow, MatchLite } from './transferCap';
+import { resolveBudgetWindow, resolveContestBudgetConfig, MatchLite } from './transferCap';
 
 export type MatchWeek = { id: string; label: string; match: string; date: string };
 
@@ -145,21 +145,32 @@ export async function getSquadSeasonHistory(squadId: string): Promise<{
   let seasonBoosterAllowed = 0;
   let tournamentMatches: MatchLite[] = [];
   if (squadRow?.contest_id) {
-    const { data: contestRow } = await supabase
-      .from('contests')
-      .select('scoring_rules, tournament_id, available_boosters, total_transfers_allowed, start_match_number, playoff_start_match_number, playoff_transfers_allowed, playoff_first_match_unlimited')
-      .eq('id', squadRow.contest_id).maybeSingle();
-    contestScoringRules       = contestRow?.scoring_rules ?? null;
-    seasonXferAllowedFlat     = contestRow?.total_transfers_allowed ?? null;
-    startMatchNumber          = contestRow?.start_match_number ?? null;
-    playoffStartMN            = contestRow?.playoff_start_match_number ?? null;
-    playoffXferAllowed        = contestRow?.playoff_transfers_allowed ?? null;
-    playoffFirstMatchUnlimited = contestRow?.playoff_first_match_unlimited ?? false;
-    seasonBoosterAllowed = contestRow?.available_boosters
-      ? Object.values(contestRow.available_boosters as Record<string, number>)
+    // scoring_rules stays a direct, un-fallback-ed read of THIS contest's own
+    // row — a custom-rules league's own rules must win here, unlike the
+    // budget fields below. (A shared league's own scoring_rules is always
+    // null by construction, so contestScoringRules correctly stays null for
+    // those too, falling through to the tournament default further down.)
+    const { data: rulesRow } = await supabase
+      .from('contests').select('scoring_rules').eq('id', squadRow.contest_id).maybeSingle();
+    contestScoringRules = rulesRow?.scoring_rules ?? null;
+
+    // Booster/transfer budget — falls back to the main SL contest's own
+    // budget when this is a shared/standard private league that never had
+    // its own budget columns configured (see resolveContestBudgetConfig's
+    // doc comment) — without this, a shared league's season stat tiles
+    // showed "unlimited transfers" (∞) / no booster budget (—) instead of
+    // the real, shared SL figures.
+    const contestRow = await resolveContestBudgetConfig(squadRow.contest_id);
+    seasonXferAllowedFlat     = contestRow.total_transfers_allowed;
+    startMatchNumber          = contestRow.start_match_number;
+    playoffStartMN            = contestRow.playoff_start_match_number;
+    playoffXferAllowed        = contestRow.playoff_transfers_allowed;
+    playoffFirstMatchUnlimited = contestRow.playoff_first_match_unlimited;
+    seasonBoosterAllowed = contestRow.available_boosters
+      ? Object.values(contestRow.available_boosters)
           .reduce((sum: number, n) => sum + Number(n || 0), 0)
       : 0;
-    if (contestRow?.tournament_id) {
+    if (contestRow.tournament_id) {
       const { data: tMatches } = await supabase
         .from('matches').select('id, match_number, status').eq('tournament_id', contestRow.tournament_id);
       tournamentMatches = (tMatches || []) as MatchLite[];
