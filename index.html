@@ -3551,32 +3551,37 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
 
     /**
      * Renders the SL season-by-season detail panel into `cell`.
-     * `contestId` resolves this squad's transfer rules (free_transfers_per_match /
-     * playoff_first_match_unlimited) from state.sl.contests, so the Xfer column
-     * can tell a real capped transfer apart from one made in a match where every
-     * transfer is free — see the Xfer-column comment below for why that matters.
+     * `contestId` resolves the playoff-opener carve-out (playoff_first_match_unlimited)
+     * from state.sl.contests for the Xfer column below — see its comment for
+     * what "free"/uncounted means there now.
      */
     async function loadSLDetailInto(cell, squadId, detailIdPrefix, el, contestId) {
       cell.innerHTML = '<div style="padding:10px 8px;color:var(--muted);font-size:12px;">Loading…</div>';
       try {
         const season = await state.db.getSquadSeason(squadId);
 
-        // Transfer-rules context for this squad's contest — resolves whether a
-        // given match's transfers are capped or unlimited. free_transfers_per_match
-        // === null means EVERY match in this contest is unlimited (only the season
-        // total caps anything); playoff_first_match_unlimited carves out just the
-        // playoff opener as its own unlimited, uncapped window even when the rest
-        // of the contest has per-match caps. Mirrors the same fields/logic already
-        // used for the "Xfers Left" countdown in the My Squad season view.
-        const contest         = (state.sl?.contests || []).find(c => c.id === contestId) || {};
-        const freePerMatch    = contest.free_transfers_per_match ?? null;
-        const playoffStartMN  = contest.playoff_start_match_number ?? null;
+        // Transfer-bypass boosters (Wildcard/Free Hit) make a match's swaps
+        // free of any point penalty and — because checkAndLogTransfers skips
+        // writing user_transfers rows entirely under bypassTransfers — never
+        // even get logged, so the raw count would misleadingly read "0" even
+        // when the whole XI changed. Mirrors mobile's TeamStatTiles
+        // isUnlimitedXfer check (LeaderboardScreen.tsx).
+        const XFER_BYPASS_BOOSTERS = new Set(['wildcard', 'free_hit']);
+
+        // The playoff opener, when playoff_first_match_unlimited is set, is a
+        // genuinely uncapped/uncounted window on its own (resolvePhaseWindow
+        // resolves its activeCap to null) — distinct from every other match,
+        // where a null free_transfers_per_match only waives the POINT penalty
+        // and the transfer still deducts from total_transfers_allowed (see the
+        // season "Xfers Left" pill). Previously this column hid the count for
+        // ANY match whenever free_transfers_per_match was null for the whole
+        // contest — the common pooled-cap-only case — making every match's
+        // Xfer cell read '-' even as the season total visibly ticked down.
+        const contest           = (state.sl?.contests || []).find(c => c.id === contestId) || {};
+        const playoffStartMN    = contest.playoff_start_match_number ?? null;
         const playoffFirstUnlim = !!contest.playoff_first_match_unlimited;
-        const isUnlimitedMatch = (matchNumber) => {
-          if (freePerMatch === null) return true; // whole contest is unlimited per match
-          const isPlayoffMatch = playoffStartMN !== null && (matchNumber ?? 0) >= playoffStartMN;
-          return isPlayoffMatch && playoffFirstUnlim && matchNumber === playoffStartMN;
-        };
+        const isUnlimitedFirstPlayoffMatch = (matchNumber) =>
+          playoffStartMN !== null && playoffFirstUnlim && matchNumber === playoffStartMN;
 
         // Only show matches that have actually locked (started). user_match_xi/
         // user_transfers/user_booster_activations can all have rows for a match
@@ -3677,13 +3682,12 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
               ? boosters.map(b => `<span title="${escapeHtml(getBoosterMeta(b)?.label || b)}">${iconHtml(getBoosterMeta(b)?.icon, getBoosterMeta(b)?.label) || '★'}</span>`).join('')
               : '<span style="color:var(--muted);">—</span>';
             const xferCount   = xferCountByMatch[m.match_id] || 0;
-            // Show '-' for matches where every transfer is free/unlimited (whole
-            // contest, or the playoff opener under playoff_first_match_unlimited) —
-            // a raw count there reads like a real capped transfer was spent when
-            // none was, e.g. M31 in a contest with free_transfers_per_match=null
-            // showing "×7 xfer" even though nothing was actually charged. Matches
-            // how the "Xfers Left" countdown already renders '-' for these windows.
-            const xferCell    = isUnlimitedMatch(m.match_number)
+            // Show '-' only when this match's transfers are genuinely
+            // free-and-uncounted (Wildcard/Free Hit active, or the unlimited
+            // playoff opener) — see the comments above. Otherwise show the
+            // real count, since it still deducts from the season total even
+            // when free_transfers_per_match makes it point-cost-free.
+            const xferCell    = (boosters.some(b => XFER_BYPASS_BOOSTERS.has(b)) || isUnlimitedFirstPlayoffMatch(m.match_number))
               ? '<span style="color:var(--muted);">-</span>'
               : (xferCount || '<span style="color:var(--muted);">0</span>');
 
