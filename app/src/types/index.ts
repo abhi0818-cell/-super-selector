@@ -154,7 +154,7 @@ export type RootStackParamList = {
 export type RootTabParamList = {
   Home:        undefined;
   MyXI:        { openPicker?: boolean } | undefined;
-  Leaderboard: undefined;
+  Leaderboard: { contestId?: string } | undefined;
   Rules:       undefined;
   Admin:       undefined;
 };

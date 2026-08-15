@@ -492,7 +492,9 @@ function NestedLeagueRow({ contest, onPress }: { contest: RealContest; onPress: 
         <Text style={styles.nestedIcon}>🔒</Text>
         <View style={styles.nestedInfo}>
           <Text style={styles.nestedName}>{contest.name}</Text>
-          <Text style={styles.nestedMeta}>Private league</Text>
+          <Text style={styles.nestedMeta}>
+            {contest.isShared ? 'Private league · shares your SL XI' : 'Private league · custom rules'}
+          </Text>
         </View>
         <Text style={styles.nestedArrow}>›</Text>
       </LinearGradient>
@@ -752,6 +754,20 @@ export default function HomeScreen() {
     pickForContext(toContestContext(contest));
   };
 
+  // Tapping a private league on Home: a shared/standard-rules league's XI
+  // IS the member's main SL squad (mirrored automatically), so there's
+  // nothing to pick — jump straight to its leaderboard instead. Only
+  // custom-rules leagues (their own scoring_rules/boosters) still need
+  // MyXI's picker for an actual, distinct XI.
+  const handleTapPrivateLeague = (contest: RealContest) => {
+    if (contest.isShared) {
+      setContext(toContestContext(contest));
+      navigation.navigate('Leaderboard', { contestId: contest.id });
+    } else {
+      handlePickContest(contest);
+    }
+  };
+
   const handlePickPrivate = () => {
     if (privateContests.length === 1) {
       pickForContext(toContestContext(privateContests[0]));
@@ -939,7 +955,7 @@ export default function HomeScreen() {
                   <View style={styles.dividerLine} />
                 </View>
                 {privateContests.map(c => (
-                  <NestedLeagueRow key={c.id} contest={c} onPress={() => handlePickContest(c)} />
+                  <NestedLeagueRow key={c.id} contest={c} onPress={() => handleTapPrivateLeague(c)} />
                 ))}
               </>
             )}

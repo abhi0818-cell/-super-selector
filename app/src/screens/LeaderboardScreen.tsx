@@ -21,7 +21,8 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { PlayerRole, CaptaincyRole } from '../types';
+import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
+import { PlayerRole, CaptaincyRole, RootTabParamList } from '../types';
 import { fontSize, radius, spacing, shadow } from '../theme';
 import { useContestStore } from '../store/contestStore';
 import { useLeaderboardStore, LBEntry } from '../store/leaderboardStore';
@@ -529,7 +530,9 @@ function EntryRow({ entry, onPress, showSlCols }: EntryRowProps) {
 
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
-export default function LeaderboardScreen() {
+type Props = BottomTabScreenProps<RootTabParamList, 'Leaderboard'>;
+
+export default function LeaderboardScreen({ route }: Props) {
   const { user }                                         = useAuthStore();
   const { contests }                                     = useContestStore();
   const { entries: sbEntries, loading,
@@ -573,12 +576,20 @@ export default function LeaderboardScreen() {
   // user doesn't have to manually swipe right to see the active selection.
   const dailyChipsScrollRef = useRef<ScrollView>(null);
 
-  // Sync active tab when contests load for the first time
+  // Sync active tab when contests load for the first time, or jump straight
+  // to a specific contest's tab when navigated here with a contestId (e.g.
+  // tapping a shared private league on Home routes directly to its
+  // leaderboard instead of MyXI's picker — see HomeScreen's NestedLeagueRow).
   useEffect(() => {
+    const requestedId = route.params?.contestId;
+    if (requestedId && tabs.find(t => t.id === requestedId)) {
+      if (activeTab !== requestedId) setActiveTab(requestedId);
+      return;
+    }
     if (tabs.length > 0 && !tabs.find(t => t.id === activeTab)) {
       setActiveTab(tabs[0].id);
     }
-  }, [tabs]);
+  }, [tabs, route.params?.contestId]);
 
   // Keep the store aware of who's logged in so it can flag isCurrentUser
   useEffect(() => {
