@@ -32,6 +32,7 @@ import { useNotificationsStore, isTickerActive } from '../store/notificationsSto
 import LeagueSelector from '../components/LeagueSelector';
 import MyLiveTeamModal from '../components/MyLiveTeamModal';
 import NotificationTicker from '../components/NotificationTicker';
+import PrivateLeagueModal from '../components/PrivateLeagueModal';
 import NotificationsModal from '../components/NotificationsModal';
 import { useLiveMatch, useLiveScore, formatLiveScoreLine } from '../lib/liveScore';
 import { fontSize, radius, spacing, shadow } from '../theme';
@@ -639,6 +640,18 @@ export default function HomeScreen() {
   const [selectorContests, setSelectorContests] = useState<RealContest[]>([]);
   const [liveModalVisible, setLiveModalVisible] = useState(false);
   const [notifModalVisible, setNotifModalVisible] = useState(false);
+  // Always-reachable entry point for create/join — previously the ONLY way
+  // back to this was MyXI's "▾" context chip (clears activeContext, which
+  // re-shows ContestPicker's footer link), or the empty first-launch state
+  // before any contest was picked. Once a user picked an XI (their very
+  // first action, typically) and had zero private leagues of their own yet,
+  // there was no route back to Join at all — this section didn't even
+  // render (gated on privateContests.length > 0 below), and RulesScreen's
+  // instructions pointed at the same now-unreachable MyXI path. Opening the
+  // same PrivateLeagueModal ContestPicker uses, directly from Home (always
+  // visible once the SL tile is expanded, regardless of XI/context state),
+  // fixes that dead end.
+  const [leagueModalOpen, setLeagueModalOpen] = useState(false);
   // Session-local — closing the ticker just hides it for this app session;
   // it isn't a server-side "read," so it'll reappear (still within its
   // ticker_hours window) if the app is fully restarted.
@@ -766,6 +779,15 @@ export default function HomeScreen() {
     } else {
       handlePickContest(contest);
     }
+  };
+
+  // After creating/joining from the Home-screen modal, refresh the contest
+  // list (so the new league shows up under SL right away) and switch to it
+  // — mirrors ContestPicker's handleLeagueJoined.
+  const handleLeagueJoined = (ctx: ContestContext) => {
+    setLeagueModalOpen(false);
+    if (selectedTournamentId) loadContests(selectedTournamentId);
+    setContext(ctx);
   };
 
   const handlePickPrivate = () => {
@@ -946,19 +968,31 @@ export default function HomeScreen() {
               onOpenLiveScore={() => setLiveModalVisible(true)}
             />
 
-            {/* Private leagues nested under SL */}
-            {privateContests.length > 0 && (
-              <>
-                <View style={styles.nestedDivider}>
-                  <View style={styles.dividerLine} />
-                  <Text style={styles.dividerLabel}>Private Leagues</Text>
-                  <View style={styles.dividerLine} />
-                </View>
-                {privateContests.map(c => (
-                  <NestedLeagueRow key={c.id} contest={c} onPress={() => handleTapPrivateLeague(c)} />
-                ))}
-              </>
-            )}
+            {/* Private leagues nested under SL — always shown (not gated on
+                privateContests.length), with a persistent Create/Join row, so
+                there's always a way back here even with zero leagues yet or
+                once activeContext/XI is already populated (previously the
+                only route back was MyXI's "▾" chip, which doesn't exist for
+                someone who hasn't picked a contest to begin with). */}
+            <View style={styles.nestedDivider}>
+              <View style={styles.dividerLine} />
+              <Text style={styles.dividerLabel}>Private Leagues</Text>
+              <View style={styles.dividerLine} />
+            </View>
+            {privateContests.map(c => (
+              <NestedLeagueRow key={c.id} contest={c} onPress={() => handleTapPrivateLeague(c)} />
+            ))}
+            <Pressable
+              style={({ pressed }) => [styles.nestedRow, styles.nestedAddRow, pressed && { opacity: 0.8 }]}
+              onPress={() => setLeagueModalOpen(true)}
+            >
+              <Text style={styles.nestedIcon}>➕</Text>
+              <View style={styles.nestedInfo}>
+                <Text style={styles.nestedName}>Create or Join</Text>
+                <Text style={styles.nestedMeta}>Start a league or enter a friend's invite code</Text>
+              </View>
+              <Text style={styles.nestedArrow}>›</Text>
+            </Pressable>
           </ContestTile>
         )}
 
@@ -998,6 +1032,13 @@ export default function HomeScreen() {
         items={notifications}
         loading={notifLoading}
         onClose={() => setNotifModalVisible(false)}
+      />
+
+      <PrivateLeagueModal
+        visible={leagueModalOpen}
+        tournamentId={selectedTournamentId ?? null}
+        onDismiss={() => setLeagueModalOpen(false)}
+        onJoined={handleLeagueJoined}
       />
     </SafeAreaView>
   );
@@ -1117,4 +1158,5 @@ const styles = StyleSheet.create({
   nestedName:  { color: C.text, fontSize: fontSize.base, fontWeight: '600' },
   nestedMeta:  { color: C.muted, fontSize: fontSize.sm },
   nestedArrow: { color: C.muted, fontSize: 20 },
+  nestedAddRow: { borderStyle: 'dashed', borderColor: 'rgba(28,31,38,0.2)', backgroundColor: 'transparent' },
 });

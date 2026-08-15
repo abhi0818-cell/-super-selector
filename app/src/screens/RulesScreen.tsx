@@ -368,9 +368,9 @@ export default function RulesScreen() {
             <BulletItem>Pick the tournament you want to play from the <Text style={styles.infoEmph}>Home</Text> tab.</BulletItem>
             <BulletItem><Text style={styles.infoEmph}>Season Long</Text> is the main contest — one squad, scored across the whole tournament.</BulletItem>
             <BulletItem>
-              Playing with friends? Open <Text style={styles.infoEmph}>My XI</Text> and tap <Text style={styles.infoEmph}>🔒 Private Leagues</Text> at
-              the bottom of the contest list to see leagues you're in, create one, or join one by invite code. Your XI is
-              shared across the public contest and every standard-rules private league you're in — you only pick once.
+              Playing with friends? On <Text style={styles.infoEmph}>Home</Text>, open the <Text style={styles.infoEmph}>Season Long</Text> tile
+              and tap <Text style={styles.infoEmph}>➕ Create or Join</Text> under Private Leagues to see leagues you're in, create one, or join one
+              by invite code. Your XI is shared across the public contest and every standard-rules private league you're in — you only pick once.
             </BulletItem>
 
             <Text style={styles.subTitle}>Draft Your Squad</Text>
@@ -549,7 +549,7 @@ export default function RulesScreen() {
               {
                 icon: '🔑',
                 heading: 'Creating or joining',
-                body: 'Open My XI and tap "🔒 Private Leagues" at the bottom of the contest list to see leagues you\'re in, create one, or join one. Creating makes a standard league (up to 3 members — an admin can raise that); joining just needs the invite code your friend shares.',
+                body: 'On Home, open the Season Long tile and tap "➕ Create or Join" under Private Leagues to see leagues you\'re in, create one, or join one. Creating makes a standard league (up to 3 members — an admin can raise that); joining just needs the invite code your friend shares.',
               },
             ].map(item => (
               <LinearGradient key={item.heading} colors={G.card} style={styles.conceptCard}>
