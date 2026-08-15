@@ -205,6 +205,13 @@ export default function MyXIScreen({ route }: Props) {
   // Owned here (not inside PlayerPickerScreen) so closing/reopening the
   // picker always starts with the drawer collapsed.
   const [scheduleOpen, setScheduleOpen]   = useState(false);
+  // "My XI" preview drawer — same idea as scheduleOpen above, but shows the
+  // already-picked XI as a pitch map instead of upcoming fixtures, so it can
+  // be checked/trimmed inside the picker without fighting whatever pool
+  // filters are currently narrowing the list. Mutually exclusive with
+  // scheduleOpen (see handleToggleMyXI/handleToggleSchedule below) — only
+  // one of the two header drawers is ever open at once.
+  const [myXIOpen, setMyXIOpen]           = useState(false);
   const [confirmOpen, setConfirmOpen]     = useState(false);
   const [snapshot, setSnapshot]           = useState<SelectedPlayer[]>([]);
   const autoOpenHandled = useRef(false);
@@ -234,6 +241,18 @@ export default function MyXIScreen({ route }: Props) {
     setPickerOpen(true);
   };
 
+  // Header toggles for the two picker drawers (My XI / Schedule) — mutually
+  // exclusive: pressing one while the other is open switches to it instead
+  // of stacking both; pressing the already-open one just closes it.
+  const handleToggleMyXI = () => {
+    if (scheduleOpen) { setScheduleOpen(false); setMyXIOpen(true); }
+    else setMyXIOpen(o => !o);
+  };
+  const handleToggleSchedule = () => {
+    if (myXIOpen) { setMyXIOpen(false); setScheduleOpen(true); }
+    else setScheduleOpen(o => !o);
+  };
+
   const handlePickerDone = () => {
     // Only advance to the Captain/Vice-Captain + Save summary once the XI is
     // actually full — previously this always advanced regardless of count,
@@ -253,6 +272,7 @@ export default function MyXIScreen({ route }: Props) {
     }
     setPickerOpen(false);
     setScheduleOpen(false);
+    setMyXIOpen(false);
     setConfirmOpen(true);
   };
 
@@ -342,6 +362,7 @@ export default function MyXIScreen({ route }: Props) {
   const handlePickerCancel = useCallback(async () => {
     setPickerOpen(false);
     setScheduleOpen(false);
+    setMyXIOpen(false);
     await revertXI();
   }, [revertXI]);
 
@@ -1034,14 +1055,6 @@ export default function MyXIScreen({ route }: Props) {
                     </Text>
                   )}
                 </View>
-                <Pressable
-                  onPress={() => setScheduleOpen(o => !o)}
-                  style={[styles.scheduleBtn, scheduleOpen && styles.scheduleBtnActive]}
-                >
-                  <Text style={[styles.scheduleBtnText, scheduleOpen && styles.scheduleBtnTextActive]}>
-                    📅 Schedule
-                  </Text>
-                </Pressable>
                 <Pressable onPress={handlePickerDone} style={styles.doneBtnWrap}>
                   <LinearGradient colors={G.doneBtn} style={styles.doneBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
                     <Text style={styles.doneBtnText}>Next  →</Text>
@@ -1049,10 +1062,20 @@ export default function MyXIScreen({ route }: Props) {
                 </Pressable>
               </LinearGradient>
 
-              {/* Picker content */}
+              {/* Picker content — the "My XI" / Schedule toggle buttons now
+                  render inside PlayerPickerScreen itself, on its own context
+                  banner row ("M8 · JK vs TKR" etc.) instead of up here next
+                  to Cancel/Title/Next. That row had room for them without
+                  squeezing the title down to "Make Tra…"; this one didn't.
+                  Open/close state and the mutual-exclusivity toggle logic
+                  stay owned here regardless — only the buttons moved. */}
               <PlayerPickerScreen
                 scheduleOpen={scheduleOpen}
                 onCloseSchedule={() => setScheduleOpen(false)}
+                onToggleSchedule={handleToggleSchedule}
+                myXIOpen={myXIOpen}
+                onCloseMyXI={() => setMyXIOpen(false)}
+                onToggleMyXI={handleToggleMyXI}
               />
             </SafeAreaView>
           </View>
@@ -1333,26 +1356,8 @@ const styles = StyleSheet.create({
     paddingVertical:   spacing.sm,
   },
   doneBtnText: { color: '#fff', fontSize: fontSize.base, fontWeight: '700' },
-  scheduleBtn: {
-    borderRadius:      radius.md,
-    paddingHorizontal: spacing.sm + 2,
-    paddingVertical:   spacing.sm,
-    backgroundColor:   'rgba(201,168,76,0.12)',
-    borderWidth:       1,
-    borderColor:       C.accent,
-    marginRight:       spacing.sm,
-  },
-  scheduleBtnActive: {
-    backgroundColor: C.accent,
-  },
-  scheduleBtnText: {
-    color:      C.gold,
-    fontSize:   fontSize.xs,
-    fontWeight: '700',
-  },
-  scheduleBtnTextActive: {
-    color: C.text,
-  },
+  // scheduleBtn/myxiBtn styles moved to PlayerPickerScreen.tsx — the buttons
+  // themselves now render on its context banner row, not this header.
 
   // Info strip (countdown + transfers) — wraps when there are 4+ pills
   infoStrip: {

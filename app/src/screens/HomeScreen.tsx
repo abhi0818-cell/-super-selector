@@ -714,6 +714,23 @@ export default function HomeScreen() {
     if (selectedTournamentId) loadContests(selectedTournamentId);
   }, [selectedTournamentId]);
 
+  // Re-fetch on every focus too, not just when the tournament changes — same
+  // staleness problem as the leaderboard fetch just below: Home stays
+  // mounted across tab switches, so a mount-only fetch here never notices
+  // when a contest's scoring_rules/available_boosters get edited in Admin
+  // mid-session. Those two columns drive both the "Custom rules" badge and
+  // isShared (mapRealContest in contestStore.ts) — a stale `contests` array
+  // meant a league's badge (and its actual routing: independent Player
+  // Picker vs. mirrored-XI straight to Leaderboard) could disagree with
+  // Admin's live view of the exact same row until the app was fully
+  // restarted. This closes that gap the same way leaderboard/notifications
+  // already do below.
+  useFocusEffect(
+    useCallback(() => {
+      if (selectedTournamentId) loadContests(selectedTournamentId);
+    }, [selectedTournamentId])
+  );
+
   // Load leaderboard on every focus, not just once when the SL contest is
   // first known — Home stays mounted across tab switches, so a mount-only
   // fetch goes stale the moment a match gets scored later in the session.

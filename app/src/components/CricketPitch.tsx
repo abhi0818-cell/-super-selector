@@ -334,9 +334,15 @@ interface Props {
   onSetCaptaincy: (id: string, role: CaptaincyRole) => void;
   onRemove:       (id: string) => void;
   readOnly?:      boolean;
+  // When true, the tap-to-open action sheet offers Remove only — Captain /
+  // Vice-Captain are left out. Used by the Player Picker's "My XI" preview
+  // drawer, where the XI can still change (players swapped in/out), so
+  // captaincy stays exclusively the guided step on the Review & Save screen
+  // (ConfirmXIModal's CaptainStep) rather than being settable in two places.
+  hideCaptaincy?: boolean;
 }
 
-export default function CricketPitch({ players, onSetCaptaincy, onRemove, readOnly }: Props) {
+export default function CricketPitch({ players, onSetCaptaincy, onRemove, readOnly, hideCaptaincy }: Props) {
   const wk   = players.filter(p => p.role === 'wk');
   const bat  = players.filter(p => p.role === 'bat');
   const ar   = players.filter(p => p.role === 'ar');
@@ -374,12 +380,16 @@ export default function CricketPitch({ players, onSetCaptaincy, onRemove, readOn
             <Text style={styles.sheetPlayerName}>{activePlayer?.name}</Text>
             <Text style={styles.sheetMeta}>{activePlayer?.team} · {activePlayer?.role.toUpperCase()}</Text>
             <View style={styles.sheetDivider} />
-            <TouchableOpacity style={styles.sheetBtn} onPress={() => { if (activePlayer) onSetCaptaincy(activePlayer.id, 'captain'); setActivePlayer(null); }}>
-              <Text style={styles.sheetBtnText}>{isCap ? '★ Captain (set)' : 'Set Captain (C)'}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.sheetBtn} onPress={() => { if (activePlayer) onSetCaptaincy(activePlayer.id, 'vice_captain'); setActivePlayer(null); }}>
-              <Text style={styles.sheetBtnText}>{isVC ? '★ Vice-Captain (set)' : 'Set Vice-Captain (VC)'}</Text>
-            </TouchableOpacity>
+            {!hideCaptaincy && (
+              <>
+                <TouchableOpacity style={styles.sheetBtn} onPress={() => { if (activePlayer) onSetCaptaincy(activePlayer.id, 'captain'); setActivePlayer(null); }}>
+                  <Text style={styles.sheetBtnText}>{isCap ? '★ Captain (set)' : 'Set Captain (C)'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.sheetBtn} onPress={() => { if (activePlayer) onSetCaptaincy(activePlayer.id, 'vice_captain'); setActivePlayer(null); }}>
+                  <Text style={styles.sheetBtnText}>{isVC ? '★ Vice-Captain (set)' : 'Set Vice-Captain (VC)'}</Text>
+                </TouchableOpacity>
+              </>
+            )}
             <TouchableOpacity style={styles.sheetBtn} onPress={() => { if (activePlayer) onRemove(activePlayer.id); setActivePlayer(null); }}>
               <Text style={[styles.sheetBtnText, styles.sheetBtnRemove]}>Remove</Text>
             </TouchableOpacity>

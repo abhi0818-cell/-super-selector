@@ -27,6 +27,7 @@ import { useContestStore } from '../store/contestStore';
 import { supabase } from '../lib/supabase';
 import PlayerCard from '../components/PlayerCard';
 import PlayerStatsModal from '../components/PlayerStatsModal';
+import CricketPitch from '../components/CricketPitch';
 import BudgetBar from '../components/BudgetBar';
 import RoleStats from '../components/RoleStats';
 import Jersey from '../components/Jersey';
@@ -99,21 +100,35 @@ const byMatchNumberAsc = (
 };
 
 const SCREEN_W  = Dimensions.get('window').width;
+const SCREEN_H  = Dimensions.get('window').height;
 const DRAWER_W  = Math.min(340, Math.round(SCREEN_W * 0.84));
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 interface PlayerPickerScreenProps {
-  // Controlled from MyXIScreen's modal header (the "📅 Schedule" button sits
-  // there, next to Next →) — the drawer itself lives here since this is
-  // where the already-fetched `matches` + `players` (for team colors) are.
-  scheduleOpen?:     boolean;
-  onCloseSchedule?:  () => void;
+  // Open/close state stays owned by MyXIScreen (mutual exclusivity between
+  // the two lives there — see handleToggleMyXI/handleToggleSchedule) — only
+  // the toggle *buttons* live here now, in the context banner row, so
+  // MyXIScreen's own modal header row is just Cancel/Title/Next.
+  scheduleOpen?:      boolean;
+  onCloseSchedule?:   () => void;
+  onToggleSchedule?:  () => void;
+  // "My XI" preview — same pattern as scheduleOpen above, but shows the
+  // already-picked XI as a pitch map instead of upcoming fixtures, so it
+  // can be checked or trimmed without losing whatever pool filters are
+  // currently narrowing the list underneath.
+  myXIOpen?:          boolean;
+  onCloseMyXI?:       () => void;
+  onToggleMyXI?:      () => void;
 }
 
 export default function PlayerPickerScreen({
   scheduleOpen = false,
   onCloseSchedule,
+  onToggleSchedule,
+  myXIOpen = false,
+  onCloseMyXI,
+  onToggleMyXI,
 }: PlayerPickerScreenProps = {}) {
   const {
     players,
@@ -122,6 +137,7 @@ export default function PlayerPickerScreen({
     creditsLeft,
     roleCounts,
     togglePlayer,
+    removePlayer,
     tournamentId,
     currentMatchId,
     format,
@@ -383,6 +399,28 @@ export default function PlayerPickerScreen({
     outputRange: [DRAWER_W + spacing.lg, 0],
   });
 
+  // ── My XI preview drawer ────────────────────────────────────────────────────
+  // Anchored (top:0/left/right/bottom, see styles.myxiDrawer) inside
+  // listContainer rather than given a hardcoded height, so its real height
+  // always matches whatever space listContainer actually has below the
+  // search/filter bar on this device — that bar's own height varies (OS
+  // counter row, expanded filter panels), so a height computed once from
+  // window dimensions could either overshoot past the header above it or
+  // leave the drawer short. The hidden position just needs to clear a full
+  // screen height off the top, regardless of the drawer's real height.
+  const myxiAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(myxiAnim, {
+      toValue:      myXIOpen ? 1 : 0,
+      duration:     240,
+      useNativeDriver: true,
+    }).start();
+  }, [myXIOpen, myxiAnim]);
+  const myxiTranslateY = myxiAnim.interpolate({
+    inputRange:  [0, 1],
+    outputRange: [-SCREEN_H, 0],
+  });
+
   const formatMatchWhen = (iso: string | null): string => {
     if (!iso) return '—';
     const d = new Date(iso);
@@ -410,11 +448,38 @@ export default function PlayerPickerScreen({
               </Text>
             )}
           </View>
-          {activeContext?.ruleType === 'custom' && (
-            <View style={styles.customBadge}>
-              <Text style={styles.customBadgeText}>Custom rules</Text>
+
+          {/* "My XI" / Schedule toggles — moved down here (off MyXIScreen's
+              modal header row) so Cancel/Title/Next have the top row to
+              themselves and the title stops truncating. This row has the
+              room they need since it's just icon + match/league label
+              (flex-shrinkable) + these two buttons — no Cancel/Next
+              competing for space here the way there was up top. Took the
+              "Custom rules" badge's old spot (dropped from this screen per
+              request — the underlying custom scoring/boosters still apply
+              to the contest, this just isn't the place to surface it). */}
+          <Pressable
+            onPress={onToggleMyXI}
+            style={[styles.myxiBtn, myXIOpen && styles.myxiBtnActive]}
+          >
+            <Text style={[styles.myxiBtnText, myXIOpen && styles.myxiBtnTextActive]}>
+              🏏 My XI
+            </Text>
+            <View style={[styles.myxiBtnCount, myXIOpen && styles.myxiBtnCountActive]}>
+              <Text style={[styles.myxiBtnCountText, myXIOpen && styles.myxiBtnCountTextActive]}>
+                {selected.length}/{RULES.total}
+              </Text>
             </View>
-          )}
+          </Pressable>
+          <Pressable
+            onPress={onToggleSchedule}
+            style={[styles.scheduleBtn, scheduleOpen && styles.scheduleBtnActive]}
+            accessibilityLabel="Schedule"
+          >
+            <Text style={[styles.scheduleBtnText, scheduleOpen && styles.scheduleBtnTextActive]}>
+              📅
+            </Text>
+          </Pressable>
         </View>
       )}
 
@@ -695,6 +760,73 @@ export default function PlayerPickerScreen({
           maxToRenderPerBatch={10}
           windowSize={5}
         />
+
+        {/* "My XI" preview drawer — same mechanics as the Schedule drawer
+            below (scrim + slide, opened from MyXIScreen's modal header,
+            mutually exclusive with Schedule there), but anchored to
+            listContainer (not the whole screen) and sized from top/bottom
+            insets rather than a hardcoded height, so it can never overshoot
+            upward past its own header or get clipped against the modal's
+            header above — it only ever covers the list, leaving the
+            search/filter bar above it visible and untouched. Shows the full
+            `selected` list regardless of role/team/match/credits filters or
+            search, so the XI can never hide behind a filter — tap a player
+            to remove (captaincy stays off this sheet; see hideCaptaincy on
+            CricketPitch). Re-tapping "My XI" (or the ✕, or the scrim)
+            closes it and returns to the pool exactly where it was left. */}
+        {myXIOpen && (
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={onCloseMyXI}
+            accessibilityLabel="Close My XI preview"
+          >
+            <View style={styles.scheduleScrim} />
+          </Pressable>
+        )}
+        <Animated.View
+          style={[
+            styles.myxiDrawer,
+            { transform: [{ translateY: myxiTranslateY }] },
+          ]}
+          pointerEvents={myXIOpen ? 'auto' : 'none'}
+        >
+          <View style={styles.scheduleDrawerHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.scheduleDrawerTitle}>Your XI</Text>
+              <Text style={styles.scheduleDrawerSub}>
+                {selected.length} of {RULES.total} picked · tap a player to remove
+              </Text>
+            </View>
+            <Pressable
+              onPress={onCloseMyXI}
+              style={styles.scheduleCloseBtn}
+              accessibilityLabel="Close My XI preview"
+            >
+              <Text style={styles.scheduleCloseBtnText}>✕</Text>
+            </Pressable>
+          </View>
+
+          {selected.length === 0 ? (
+            <View style={styles.myxiEmpty}>
+              <Text style={styles.myxiEmptyText}>
+                No players picked yet — close this and tap players below to start building your XI.
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.myxiPitchWrap}>
+              <CricketPitch
+                players={selected}
+                onSetCaptaincy={() => {}}
+                onRemove={(id) => removePlayer(id)}
+                hideCaptaincy
+              />
+            </View>
+          )}
+
+          <Text style={styles.myxiHint}>
+            Filters above are untouched — tap 🏏 My XI again to go back to picking.
+          </Text>
+        </Animated.View>
       </View>
 
       <PlayerStatsModal
@@ -797,15 +929,69 @@ const styles = StyleSheet.create({
   contextIcon: { fontSize: 14 },
   contextText: { color: C.muted, fontSize: fontSize.sm, flex: 1 },
   contextName: { color: C.text, fontWeight: '700' },
-  customBadge: {
+
+  // "My XI" / Schedule toggle buttons — moved here from MyXIScreen's modal
+  // header (see the context banner JSX above). Same look as before, just
+  // relocated; styles copied rather than shared across files since RN
+  // StyleSheet objects don't cross component boundaries.
+  myxiBtn: {
+    flexDirection:     'row',
+    alignItems:        'center',
+    gap:               4,
+    borderRadius:      radius.md,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical:   spacing.xs + 2,
     backgroundColor:   'rgba(201,168,76,0.12)',
-    borderRadius:      radius.full,
-    paddingHorizontal: spacing.sm,
-    paddingVertical:   2,
     borderWidth:       1,
-    borderColor:       'rgba(201,168,76,0.28)',
+    borderColor:       C.accent,
   },
-  customBadgeText: { color: C.gold, fontSize: fontSize.xs, fontWeight: '700' },
+  myxiBtnActive: {
+    backgroundColor: C.accent,
+  },
+  myxiBtnText: {
+    color:      C.gold,
+    fontSize:   fontSize.xs,
+    fontWeight: '700',
+  },
+  myxiBtnTextActive: {
+    color: C.text,
+  },
+  myxiBtnCount: {
+    borderRadius:      radius.full,
+    paddingHorizontal: 5,
+    paddingVertical:   1,
+    backgroundColor:   'rgba(28,31,38,0.08)',
+  },
+  myxiBtnCountActive: {
+    backgroundColor: 'rgba(255,255,255,0.28)',
+  },
+  myxiBtnCountText: {
+    color:      C.gold,
+    fontSize:   10,
+    fontWeight: '800',
+  },
+  myxiBtnCountTextActive: {
+    color: C.text,
+  },
+  scheduleBtn: {
+    borderRadius:      radius.md,
+    paddingHorizontal: spacing.sm + 2,
+    paddingVertical:   spacing.xs + 2,
+    backgroundColor:   'rgba(201,168,76,0.12)',
+    borderWidth:       1,
+    borderColor:       C.accent,
+  },
+  scheduleBtnActive: {
+    backgroundColor: C.accent,
+  },
+  scheduleBtnText: {
+    color:      C.gold,
+    fontSize:   fontSize.xs,
+    fontWeight: '700',
+  },
+  scheduleBtnTextActive: {
+    color: C.text,
+  },
 
   // OS counter row
   osRow: {
@@ -1153,5 +1339,58 @@ const styles = StyleSheet.create({
     color:     C.muted,
     fontSize:  fontSize.xs,
     textAlign: 'center',
+  },
+
+  // "My XI" preview drawer — reuses scheduleScrim/scheduleDrawerHeader/
+  // scheduleCloseBtn styles above (same visual language), just its own
+  // panel shape (top sheet vs. side panel). Anchored on all four sides
+  // within listContainer (not given an explicit height) so it always fills
+  // exactly the space available below the search/filter bar on this
+  // device — it can't overshoot past the header above or get clipped
+  // against the modal chrome below, whatever this device's actual layout
+  // works out to.
+  myxiDrawer: {
+    position:        'absolute',
+    left:            8,
+    right:           8,
+    top:             8,
+    bottom:          8,
+    backgroundColor: '#F5F0E0',
+    borderRadius:    18,
+    borderWidth:     1,
+    borderColor:     C.border,
+    shadowColor:     '#000',
+    shadowOffset:    { width: 0, height: 6 },
+    shadowOpacity:   0.18,
+    shadowRadius:    14,
+    elevation:       12,
+    overflow:        'hidden',
+  },
+  myxiPitchWrap: {
+    flex:              1,
+    marginHorizontal:  spacing.md,
+    marginTop:          spacing.xs,
+    marginBottom:       spacing.xs,
+    borderRadius:       14,
+    overflow:           'hidden',
+  },
+  myxiEmpty: {
+    flex:              1,
+    alignItems:        'center',
+    justifyContent:    'center',
+    paddingHorizontal: spacing.xl,
+  },
+  myxiEmptyText: {
+    color:      C.muted,
+    fontSize:   fontSize.sm,
+    textAlign:  'center',
+    lineHeight: 20,
+  },
+  myxiHint: {
+    textAlign:         'center',
+    color:             C.muted,
+    fontSize:          fontSize.xs,
+    paddingHorizontal: spacing.lg,
+    paddingBottom:     spacing.sm,
   },
 });
