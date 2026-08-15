@@ -716,7 +716,7 @@ export default function LeaderboardScreen({ route }: Props) {
               end={{ x: 1, y: 0 }}
             >
               <Text style={styles.tabIcon}>{tab.icon}</Text>
-              <Text style={[styles.tabLabel, styles.tabLabelActive]} numberOfLines={1}>{tab.label}</Text>
+              <Text style={[styles.tabLabel, styles.tabLabelActive]}>{tab.label}</Text>
             </LinearGradient>
           ) : (
             <Pressable
@@ -725,7 +725,7 @@ export default function LeaderboardScreen({ route }: Props) {
               onPress={() => setActiveTab(tab.id)}
             >
               <Text style={styles.tabIcon}>{tab.icon}</Text>
-              <Text style={styles.tabLabel} numberOfLines={1}>{tab.label}</Text>
+              <Text style={styles.tabLabel}>{tab.label}</Text>
             </Pressable>
           )
         ))}
@@ -923,12 +923,13 @@ const styles = StyleSheet.create({
     flexDirection:     'row',
     alignItems:        'center',
     gap:               spacing.xs,
+    height:            36, // fixed — clips instead of growing if a label is long
     paddingHorizontal: spacing.md,
-    paddingVertical:   spacing.sm,
     borderRadius:      radius.full,
     backgroundColor:   'rgba(0,0,0,0.04)',
     borderWidth:       1,
     borderColor:       C.border,
+    overflow:          'hidden',
   },
   tabActive: {
     borderColor: 'transparent',
