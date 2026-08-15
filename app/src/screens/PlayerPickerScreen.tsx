@@ -386,13 +386,30 @@ export default function PlayerPickerScreen({
       .sort(byMatchNumberAsc);
   }, [matches]);
 
-  const scheduleAnim = useRef(new Animated.Value(0)).current;
+  // Both drawers below are mounted lazily (schedule/myxiMounted) rather than
+  // always being in the tree with visibility left purely to the animated
+  // transform. Reason: Animated transforms driven by useNativeDriver need a
+  // round-trip to the native side before they actually apply — for the
+  // first frame or two after this screen mounts, a view that's "always
+  // rendered, hidden only via transform" briefly paints at its raw,
+  // untransformed layout position (top:8 inside listContainer) before the
+  // off-screen offset takes effect. That's what surfaced as a pitch sliver
+  // over the status bar the instant the picker opened, before My XI was
+  // ever tapped — nothing to do with elevation (that was a red herring;
+  // reverted below). Not rendering the drawer at all until it's actually
+  // been opened removes any possibility of that flash; the mounted flag
+  // only clears again once the close animation finishes, so the slide-out
+  // still plays normally.
+  const [scheduleMounted, setScheduleMounted] = useState(scheduleOpen);
+  const scheduleAnim = useRef(new Animated.Value(scheduleOpen ? 1 : 0)).current;
   useEffect(() => {
-    Animated.timing(scheduleAnim, {
-      toValue:      scheduleOpen ? 1 : 0,
-      duration:     240,
-      useNativeDriver: true,
-    }).start();
+    if (scheduleOpen) {
+      setScheduleMounted(true);
+      Animated.timing(scheduleAnim, { toValue: 1, duration: 240, useNativeDriver: true }).start();
+    } else {
+      Animated.timing(scheduleAnim, { toValue: 0, duration: 240, useNativeDriver: true })
+        .start(({ finished }) => { if (finished) setScheduleMounted(false); });
+    }
   }, [scheduleOpen, scheduleAnim]);
   const drawerTranslateX = scheduleAnim.interpolate({
     inputRange:  [0, 1],
@@ -408,13 +425,16 @@ export default function PlayerPickerScreen({
   // window dimensions could either overshoot past the header above it or
   // leave the drawer short. The hidden position just needs to clear a full
   // screen height off the top, regardless of the drawer's real height.
-  const myxiAnim = useRef(new Animated.Value(0)).current;
+  const [myxiMounted, setMyxiMounted] = useState(myXIOpen);
+  const myxiAnim = useRef(new Animated.Value(myXIOpen ? 1 : 0)).current;
   useEffect(() => {
-    Animated.timing(myxiAnim, {
-      toValue:      myXIOpen ? 1 : 0,
-      duration:     240,
-      useNativeDriver: true,
-    }).start();
+    if (myXIOpen) {
+      setMyxiMounted(true);
+      Animated.timing(myxiAnim, { toValue: 1, duration: 240, useNativeDriver: true }).start();
+    } else {
+      Animated.timing(myxiAnim, { toValue: 0, duration: 240, useNativeDriver: true })
+        .start(({ finished }) => { if (finished) setMyxiMounted(false); });
+    }
   }, [myXIOpen, myxiAnim]);
   const myxiTranslateY = myxiAnim.interpolate({
     inputRange:  [0, 1],
@@ -774,59 +794,63 @@ export default function PlayerPickerScreen({
             to remove (captaincy stays off this sheet; see hideCaptaincy on
             CricketPitch). Re-tapping "My XI" (or the ✕, or the scrim)
             closes it and returns to the pool exactly where it was left. */}
-        {myXIOpen && (
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={onCloseMyXI}
-            accessibilityLabel="Close My XI preview"
-          >
-            <View style={styles.scheduleScrim} />
-          </Pressable>
-        )}
-        <Animated.View
-          style={[
-            styles.myxiDrawer,
-            { transform: [{ translateY: myxiTranslateY }] },
-          ]}
-          pointerEvents={myXIOpen ? 'auto' : 'none'}
-        >
-          <View style={styles.scheduleDrawerHeader}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.scheduleDrawerTitle}>Your XI</Text>
-              <Text style={styles.scheduleDrawerSub}>
-                {selected.length} of {RULES.total} picked · tap a player to remove
-              </Text>
-            </View>
-            <Pressable
-              onPress={onCloseMyXI}
-              style={styles.scheduleCloseBtn}
-              accessibilityLabel="Close My XI preview"
+        {myxiMounted && (
+          <>
+            {myXIOpen && (
+              <Pressable
+                style={StyleSheet.absoluteFill}
+                onPress={onCloseMyXI}
+                accessibilityLabel="Close My XI preview"
+              >
+                <View style={styles.scheduleScrim} />
+              </Pressable>
+            )}
+            <Animated.View
+              style={[
+                styles.myxiDrawer,
+                { transform: [{ translateY: myxiTranslateY }] },
+              ]}
+              pointerEvents={myXIOpen ? 'auto' : 'none'}
             >
-              <Text style={styles.scheduleCloseBtnText}>✕</Text>
-            </Pressable>
-          </View>
+              <View style={styles.scheduleDrawerHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.scheduleDrawerTitle}>Your XI</Text>
+                  <Text style={styles.scheduleDrawerSub}>
+                    {selected.length} of {RULES.total} picked · tap a player to remove
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={onCloseMyXI}
+                  style={styles.scheduleCloseBtn}
+                  accessibilityLabel="Close My XI preview"
+                >
+                  <Text style={styles.scheduleCloseBtnText}>✕</Text>
+                </Pressable>
+              </View>
 
-          {selected.length === 0 ? (
-            <View style={styles.myxiEmpty}>
-              <Text style={styles.myxiEmptyText}>
-                No players picked yet — close this and tap players below to start building your XI.
+              {selected.length === 0 ? (
+                <View style={styles.myxiEmpty}>
+                  <Text style={styles.myxiEmptyText}>
+                    No players picked yet — close this and tap players below to start building your XI.
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.myxiPitchWrap}>
+                  <CricketPitch
+                    players={selected}
+                    onSetCaptaincy={() => {}}
+                    onRemove={(id) => removePlayer(id)}
+                    hideCaptaincy
+                  />
+                </View>
+              )}
+
+              <Text style={styles.myxiHint}>
+                Filters above are untouched — tap 🏏 My XI again to go back to picking.
               </Text>
-            </View>
-          ) : (
-            <View style={styles.myxiPitchWrap}>
-              <CricketPitch
-                players={selected}
-                onSetCaptaincy={() => {}}
-                onRemove={(id) => removePlayer(id)}
-                hideCaptaincy
-              />
-            </View>
-          )}
-
-          <Text style={styles.myxiHint}>
-            Filters above are untouched — tap 🏏 My XI again to go back to picking.
-          </Text>
-        </Animated.View>
+            </Animated.View>
+          </>
+        )}
       </View>
 
       <PlayerStatsModal
@@ -840,63 +864,67 @@ export default function PlayerPickerScreen({
           list. Opened via the "📅 Schedule" button in MyXIScreen's modal
           header; closing (✕ or the scrim) collapses it back to team
           selection without losing any in-progress picks underneath. */}
-      {scheduleOpen && (
-        <Pressable
-          style={StyleSheet.absoluteFill}
-          onPress={onCloseSchedule}
-          accessibilityLabel="Close schedule preview"
-        >
-          <View style={styles.scheduleScrim} />
-        </Pressable>
-      )}
-      <Animated.View
-        style={[
-          styles.scheduleDrawer,
-          { width: DRAWER_W, transform: [{ translateX: drawerTranslateX }] },
-        ]}
-        pointerEvents={scheduleOpen ? 'auto' : 'none'}
-      >
-        <View style={styles.scheduleDrawerHeader}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.scheduleDrawerTitle}>Upcoming matches</Text>
-            <Text style={styles.scheduleDrawerSub}>
-              {upcomingMatches.length} fixture{upcomingMatches.length !== 1 ? 's' : ''}
-            </Text>
-          </View>
-          <Pressable
-            onPress={onCloseSchedule}
-            style={styles.scheduleCloseBtn}
-            accessibilityLabel="Close schedule preview"
-          >
-            <Text style={styles.scheduleCloseBtnText}>✕</Text>
-          </Pressable>
-        </View>
-
-        <ScrollView
-          contentContainerStyle={styles.scheduleDrawerList}
-          showsVerticalScrollIndicator={false}
-        >
-          {upcomingMatches.length === 0 ? (
-            <Text style={styles.scheduleEmptyText}>No upcoming matches scheduled.</Text>
-          ) : (
-            upcomingMatches.map(m => {
-              const home = teamColorMap.get(m.homeTeamId);
-              const away = teamColorMap.get(m.awayTeamId);
-              return (
-                <View key={m.id} style={styles.schedCard}>
-                  <Text style={styles.schedNum}>M{m.matchNumber ?? '?'}</Text>
-                  <View style={styles.schedVsRow}>
-                    <Jersey code={m.homeTeamId} color1={home?.color1} color2={home?.color2} jerseySvg={home?.jerseySvg} size={32} variant="pool" />
-                    <Text style={styles.schedVsLabel}>vs</Text>
-                    <Jersey code={m.awayTeamId} color1={away?.color1} color2={away?.color2} jerseySvg={away?.jerseySvg} size={32} variant="pool" />
-                  </View>
-                  <Text style={styles.schedTime}>{formatMatchWhen(m.startTime)}</Text>
-                </View>
-              );
-            })
+      {scheduleMounted && (
+        <>
+          {scheduleOpen && (
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={onCloseSchedule}
+              accessibilityLabel="Close schedule preview"
+            >
+              <View style={styles.scheduleScrim} />
+            </Pressable>
           )}
-        </ScrollView>
-      </Animated.View>
+          <Animated.View
+            style={[
+              styles.scheduleDrawer,
+              { width: DRAWER_W, transform: [{ translateX: drawerTranslateX }] },
+            ]}
+            pointerEvents={scheduleOpen ? 'auto' : 'none'}
+          >
+            <View style={styles.scheduleDrawerHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.scheduleDrawerTitle}>Upcoming matches</Text>
+                <Text style={styles.scheduleDrawerSub}>
+                  {upcomingMatches.length} fixture{upcomingMatches.length !== 1 ? 's' : ''}
+                </Text>
+              </View>
+              <Pressable
+                onPress={onCloseSchedule}
+                style={styles.scheduleCloseBtn}
+                accessibilityLabel="Close schedule preview"
+              >
+                <Text style={styles.scheduleCloseBtnText}>✕</Text>
+              </Pressable>
+            </View>
+
+            <ScrollView
+              contentContainerStyle={styles.scheduleDrawerList}
+              showsVerticalScrollIndicator={false}
+            >
+              {upcomingMatches.length === 0 ? (
+                <Text style={styles.scheduleEmptyText}>No upcoming matches scheduled.</Text>
+              ) : (
+                upcomingMatches.map(m => {
+                  const home = teamColorMap.get(m.homeTeamId);
+                  const away = teamColorMap.get(m.awayTeamId);
+                  return (
+                    <View key={m.id} style={styles.schedCard}>
+                      <Text style={styles.schedNum}>M{m.matchNumber ?? '?'}</Text>
+                      <View style={styles.schedVsRow}>
+                        <Jersey code={m.homeTeamId} color1={home?.color1} color2={home?.color2} jerseySvg={home?.jerseySvg} size={32} variant="pool" />
+                        <Text style={styles.schedVsLabel}>vs</Text>
+                        <Jersey code={m.awayTeamId} color1={away?.color1} color2={away?.color2} jerseySvg={away?.jerseySvg} size={32} variant="pool" />
+                      </View>
+                      <Text style={styles.schedTime}>{formatMatchWhen(m.startTime)}</Text>
+                    </View>
+                  );
+                })
+              )}
+            </ScrollView>
+          </Animated.View>
+        </>
+      )}
     </View>
   );
 }
@@ -1261,11 +1289,7 @@ const styles = StyleSheet.create({
     shadowOffset:     { width: -4, height: 0 },
     shadowOpacity:    0.18,
     shadowRadius:     12,
-    // elevation dropped for the same reason as myxiDrawer above — an
-    // elevated view's Android compositing layer isn't bounded by an
-    // ancestor's overflow:hidden or its own transform, so it's a latent
-    // version of the same "escapes off the top of the screen" bug even
-    // though this one slides horizontally and hasn't been reported yet.
+    elevation:        12,
   },
   scheduleDrawerHeader: {
     flexDirection:      'row',
@@ -1367,19 +1391,7 @@ const styles = StyleSheet.create({
     shadowOffset:    { width: 0, height: 6 },
     shadowOpacity:   0.18,
     shadowRadius:    14,
-    // No `elevation` here (Android's shadow prop) — Android promotes any
-    // elevated view onto its own hardware compositing layer, which is
-    // drawn by Z-order rather than clipped by an ancestor's
-    // `overflow:'hidden'` or bounded by its own animated transform. That's
-    // what was still slipping out above the status bar even after the
-    // first overlap fix (anchoring inside listContainer with
-    // overflow:hidden) — the slide-to-hidden position was correct, but the
-    // elevated layer could still paint through at the very top of the
-    // window regardless of translateY. Dropping elevation loses the
-    // drop-shadow on Android (shadowColor/Offset/Opacity/Radius above are
-    // iOS-only and now no-ops there), but borderWidth/borderColor still
-    // read as a clear edge, and it's a fair trade for the drawer actually
-    // staying fully hidden when closed.
+    elevation:       12,
     overflow:        'hidden',
   },
   myxiPitchWrap: {
