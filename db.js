@@ -3959,12 +3959,15 @@ export function createDb(cfg = {}) {
     async getContestByInviteCode(inviteCode) {
       if (!inviteCode?.trim()) throw new Error('getContestByInviteCode: invite code required');
       const sb = await getClient();
+      // A raw `.from('contests').select()` here would go through the
+      // contests SELECT policy (migration_v53), which only allows reading a
+      // private contest you already have a user_squads row in — exactly NOT
+      // true for someone about to join by code for the first time. This RPC
+      // (migration_v54) does its own narrow, exact-match lookup instead,
+      // bypassing that policy without reopening it — see that migration's
+      // comment for the full story.
       const { data, error } = await sb
-        .from('contests')
-        .select('*')
-        .eq('invite_code', inviteCode.trim().toUpperCase())
-        .eq('is_private', true)
-        .eq('is_active', true)
+        .rpc('get_contest_by_invite_code', { p_invite_code: inviteCode.trim().toUpperCase() })
         .maybeSingle();
       if (error) throw error;
       if (!data) throw new Error('Invalid invite code — no active league found.');
@@ -4000,13 +4003,10 @@ export function createDb(cfg = {}) {
       const uid = user?.id;
       if (!uid) throw new Error('joinLeagueByCode: must be signed in');
 
-      // Find the contest
+      // Find the contest — via the RPC (migration_v54), not a raw select;
+      // same reasoning as getContestByInviteCode just above.
       const { data: contest, error: cErr } = await sb
-        .from('contests')
-        .select('*')
-        .eq('invite_code', inviteCode.trim().toUpperCase())
-        .eq('is_private', true)
-        .eq('is_active', true)
+        .rpc('get_contest_by_invite_code', { p_invite_code: inviteCode.trim().toUpperCase() })
         .maybeSingle();
       if (cErr) throw cErr;
       if (!contest) throw new Error('Invalid invite code — no active league found.');

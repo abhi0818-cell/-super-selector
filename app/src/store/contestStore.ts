@@ -230,12 +230,15 @@ export const useContestStore = create<ContestState>((set) => ({
   previewLeagueByCode: async (inviteCode) => {
     const code = inviteCode?.trim().toUpperCase();
     if (!code) return { error: 'Enter an invite code.' };
+    // A raw `.from('contests').select()` here would go through the contests
+    // SELECT policy (migration_v53), which only allows reading a private
+    // contest you already have a user_squads row in — exactly NOT true for
+    // someone about to join by code for the first time. This RPC
+    // (migration_v54) does its own narrow, exact-match lookup instead,
+    // bypassing that policy without reopening it — mirrors db.js's identical
+    // fix for the same bug.
     const { data, error } = await supabase
-      .from('contests')
-      .select('id, name, contest_type, is_private, invite_code, is_active, scoring_rules, available_boosters')
-      .eq('invite_code', code)
-      .eq('is_private', true)
-      .eq('is_active', true)
+      .rpc('get_contest_by_invite_code', { p_invite_code: code })
       .maybeSingle();
     if (error) return { error: error.message };
     if (!data) return { error: 'Invalid invite code — no active league found.' };
@@ -293,13 +296,13 @@ export const useContestStore = create<ContestState>((set) => ({
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return { error: 'Not signed in.' };
 
+    // Via the RPC (migration_v54), not a raw select — same reasoning as
+    // previewLeagueByCode above. Cast to any: this custom RPC has no
+    // generated return-type mapping, so TS would otherwise infer `{}` and
+    // reject the .id/.max_members property access below.
     const { data: contestRow, error: cErr } = await supabase
-      .from('contests')
-      .select('id, name, contest_type, is_private, invite_code, is_active, scoring_rules, available_boosters, max_members')
-      .eq('invite_code', code)
-      .eq('is_private', true)
-      .eq('is_active', true)
-      .maybeSingle();
+      .rpc('get_contest_by_invite_code', { p_invite_code: code })
+      .maybeSingle() as { data: any; error: any };
     if (cErr)      return { error: cErr.message };
     if (!contestRow) return { error: 'Invalid invite code — no active league found.' };
 
