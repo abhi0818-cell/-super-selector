@@ -850,38 +850,74 @@
               <div style="display:flex; gap:6px; align-items:center;">
                 <input id="plMaxMembers" type="number" min="2" max="100" placeholder="Max members (optional)" style="font-size:13px; flex:1;" />
               </div>
-              <!-- Boosters for new league -->
+
+              <!-- Follow standard SL rules: Y/N — the UI represents the choice directly
+                   instead of deriving "standard vs custom" from whether other fields
+                   happen to be empty. Y = today's minimal form. N reveals cap, booster,
+                   and scoring options in that order, mirroring the main SL contest's own
+                   fields (see numRow usage on the public-contest card above). -->
               <div style="border:1px solid var(--border); border-radius:6px; padding:10px; margin-top:2px;">
-                <div style="font-size:12px; font-weight:600; margin-bottom:8px; color:var(--muted);">⚡ Boosters <span style="font-weight:400;">(check to enable, set how many uses each member gets)</span></div>
-                <div id="plBoostersGrid">
-                  ${Object.entries(BOOSTER_META).map(([key, rawMeta]) => { const meta = getBoosterMeta ? (getBoosterMeta(key) ?? rawMeta) : rawMeta; return `
-                    <div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);">
-                      <input type="checkbox" id="plBoost_${key}" data-booster="${key}" class="pl-new-boost-chk" style="flex-shrink:0;" />
-                      <label for="plBoost_${key}" style="font-size:12px;flex:1;cursor:pointer;">
-                        ${iconHtml ? iconHtml(meta.icon, meta.label) : meta.icon} <strong>${meta.label}</strong>
-                        <span style="color:var(--muted);font-size:11px;margin-left:4px;">${meta.desc}</span>
-                      </label>
-                      <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
-                        <span style="font-size:11px;color:var(--muted);">Uses:</span>
-                        <input type="number" min="1" max="10" value="1" id="plBoost_${key}_count"
-                          style="width:50px;font-size:12px;padding:3px 6px;" disabled />
-                      </div>
-                    </div>`; }).join('')}
+                <div style="font-size:12px; font-weight:600; margin-bottom:8px; color:var(--muted);">Follow standard Season Long rules?</div>
+                <div style="display:flex; gap:16px; flex-wrap:wrap;">
+                  <label style="font-size:12px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+                    <input type="radio" name="plStandard" id="plStandardYes" value="Y" checked />
+                    Yes — mirrors the main Season Long contest (transfers, boosters, scoring). Just a name and member cap.
+                  </label>
+                  <label style="font-size:12px; display:flex; align-items:center; gap:6px; cursor:pointer;">
+                    <input type="radio" name="plStandard" id="plStandardNo" value="N" />
+                    No — this league gets its own transfer caps, boosters, and scoring.
+                  </label>
                 </div>
               </div>
-              <label style="font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; cursor:pointer;">
-                <input type="checkbox" id="plCustomRules" />
-                Use custom scoring rules for this league
-              </label>
-              <div id="plRulesSection" style="display:none; border:1px solid var(--border); border-radius:6px; padding:10px; margin-top:2px;">
-                <div style="font-size:11px; color:var(--muted); margin-bottom:8px;">Overrides tournament rules for this league only. Leave unchanged to inherit the tournament default.</div>
-                <div class="rules-tabs" style="margin-bottom:10px;" id="plRulesTabs">
-                  <span class="tab active" data-plfmt="T20">T20</span>
-                  <span class="tab" data-plfmt="ODI">ODI</span>
-                  <span class="tab" data-plfmt="TEST">Test</span>
+
+              <!-- Custom league options — shown only when "No" is selected -->
+              <div id="plCustomSection" style="display:none; flex-direction:column; gap:8px;">
+                <!-- Transfer / phase caps -->
+                <div style="border:1px solid var(--border); border-radius:6px; padding:10px; margin-top:2px;">
+                  <div style="font-size:12px; font-weight:600; margin-bottom:8px; color:var(--muted);">🔁 Transfer &amp; phase caps</div>
+                  ${numRow('Season transfer budget','Total player changes allowed across the whole season. Leave blank for unlimited.','plXferBudget','','Unlimited',false)}
+                  ${numRow('Season start match number','Season-long scoring and transfers only apply from this match number onward. Leave blank to include all matches.','plStartMN','','All matches',false)}
+                  ${numRow('Playoff start match number','Match number where the playoff phase begins (uses a separate transfer budget). Leave blank if no playoff phase.','plPlayoffStartMN','','No playoffs',false)}
+                  ${numRow('Playoff transfer budget','Separate transfer allowance for the playoff phase. Leave blank for unlimited playoff transfers.','plPlayoffBudget','','Unlimited',false)}
+                  <label style="font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; cursor:pointer;">
+                    <input type="checkbox" id="plPlayoffFirstUnlimited" checked />
+                    First playoff match unlimited
+                    <span style="font-size:10px;">(excludes it from the playoff budget above — the rest of the playoff matches share that budget)</span>
+                  </label>
                 </div>
-                <div id="plRulesEditor"></div>
+
+                <!-- Boosters for new league -->
+                <div style="border:1px solid var(--border); border-radius:6px; padding:10px; margin-top:2px;">
+                  <div style="font-size:12px; font-weight:600; margin-bottom:8px; color:var(--muted);">⚡ Boosters <span style="font-weight:400;">(check to enable, set how many uses each member gets)</span></div>
+                  <div id="plBoostersGrid">
+                    ${Object.entries(BOOSTER_META).map(([key, rawMeta]) => { const meta = getBoosterMeta ? (getBoosterMeta(key) ?? rawMeta) : rawMeta; return `
+                      <div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);">
+                        <input type="checkbox" id="plBoost_${key}" data-booster="${key}" class="pl-new-boost-chk" style="flex-shrink:0;" />
+                        <label for="plBoost_${key}" style="font-size:12px;flex:1;cursor:pointer;">
+                          ${iconHtml ? iconHtml(meta.icon, meta.label) : meta.icon} <strong>${meta.label}</strong>
+                          <span style="color:var(--muted);font-size:11px;margin-left:4px;">${meta.desc}</span>
+                        </label>
+                        <div style="display:flex;align-items:center;gap:4px;flex-shrink:0;">
+                          <span style="font-size:11px;color:var(--muted);">Uses:</span>
+                          <input type="number" min="1" max="10" value="1" id="plBoost_${key}_count"
+                            style="width:50px;font-size:12px;padding:3px 6px;" disabled />
+                        </div>
+                      </div>`; }).join('')}
+                  </div>
+                </div>
+
+                <!-- Scoring rules for new league -->
+                <div style="border:1px solid var(--border); border-radius:6px; padding:10px; margin-top:2px;">
+                  <div style="font-size:12px; font-weight:600; margin-bottom:8px; color:var(--muted);">📊 Scoring rules <span style="font-weight:400;">(overrides tournament defaults for this league only — leave unchanged to inherit them)</span></div>
+                  <div class="rules-tabs" style="margin-bottom:10px;" id="plRulesTabs">
+                    <span class="tab active" data-plfmt="T20">T20</span>
+                    <span class="tab" data-plfmt="ODI">ODI</span>
+                    <span class="tab" data-plfmt="TEST">Test</span>
+                  </div>
+                  <div id="plRulesEditor"></div>
+                </div>
               </div>
+
               <button id="plCreateBtn" class="primary" style="align-self:flex-start; font-size:12px; padding:6px 14px;">Create league</button>
               <span id="plStatus" style="font-size:11px; color:var(--muted);"></span>
             </div>
@@ -1113,12 +1149,18 @@
           });
         }
 
-        $('#plCustomRules')?.addEventListener('change', e => {
-          plUseCustom = e.target.checked;
-          const section = $('#plRulesSection');
-          if (section) section.style.display = plUseCustom ? 'block' : 'none';
+        // "Follow standard SL rules: Y/N" toggle — the top-level choice, not a
+        // derivation. Y (default) hides caps/boosters/scoring entirely: just
+        // name + member cap, same as today's standard-league behavior. N
+        // reveals the custom section (caps, then boosters, then scoring).
+        function updatePlStandardVisibility() {
+          plUseCustom = !$('#plStandardYes')?.checked;
+          const section = $('#plCustomSection');
+          if (section) section.style.display = plUseCustom ? 'flex' : 'none';
           if (plUseCustom) renderPlRulesEditor();
-        });
+        }
+        wrap.querySelectorAll('input[name="plStandard"]').forEach(r => r.addEventListener('change', updatePlStandardVisibility));
+        updatePlStandardVisibility();
 
         wrap.querySelectorAll('#plRulesTabs .tab').forEach(t => {
           t.addEventListener('click', () => {
@@ -1136,9 +1178,11 @@
           const btn = $('#plCreateBtn');
           btn.disabled = true; statusEl.textContent = 'Creating…'; statusEl.style.color = 'var(--muted)';
           try {
+            const isStandard = !plUseCustom;
+
             // Only save formats that have at least one value changed from tournament defaults
             let scoringRules = null;
-            if (plUseCustom) {
+            if (!isStandard) {
               const changed = {};
               ['T20', 'ODI', 'TEST'].forEach(f => {
                 const def = SCORING_RULES[f]; // current tournament rules = baseline
@@ -1150,22 +1194,43 @@
               });
               if (Object.keys(changed).length) scoringRules = changed;
             }
-            // Collect enabled boosters from the new-league booster grid
-            const newLeagueBoosters = {};
-            wrap.querySelectorAll('.pl-new-boost-chk').forEach(chk => {
-              if (chk.checked) {
-                const key      = chk.dataset.booster;
-                const countInp = document.getElementById(`plBoost_${key}_count`);
-                const count    = parseInt(countInp?.value || '1', 10);
-                newLeagueBoosters[key] = Number.isFinite(count) && count >= 1 ? count : 1;
-              }
-            });
+
+            // Boosters and transfer/phase caps only apply to a custom league — a
+            // standard league mirrors the main Season Long contest's settings, so
+            // setting them here wouldn't take effect anyway (same reasoning as the
+            // "standard" badge note on existing private leagues above).
+            let newLeagueBoosters = null;
+            let totalTransfersAllowed = null, startMatchNumber = null, playoffStartMatchNumber = null,
+                playoffTransfersAllowed = null, playoffFirstMatchUnlimited = true;
+            if (!isStandard) {
+              const boosters = {};
+              wrap.querySelectorAll('.pl-new-boost-chk').forEach(chk => {
+                if (chk.checked) {
+                  const key      = chk.dataset.booster;
+                  const countInp = document.getElementById(`plBoost_${key}_count`);
+                  const count    = parseInt(countInp?.value || '1', 10);
+                  boosters[key]  = Number.isFinite(count) && count >= 1 ? count : 1;
+                }
+              });
+              newLeagueBoosters = Object.keys(boosters).length ? boosters : null;
+
+              totalTransfersAllowed      = parseIntOrNull($('#plXferBudget')?.value || '');
+              startMatchNumber           = parseIntOrNull($('#plStartMN')?.value || '');
+              playoffStartMatchNumber    = parseIntOrNull($('#plPlayoffStartMN')?.value || '');
+              playoffTransfersAllowed    = parseIntOrNull($('#plPlayoffBudget')?.value || '');
+              playoffFirstMatchUnlimited = !!$('#plPlayoffFirstUnlimited')?.checked;
+            }
 
             const league = await state.db.createPrivateLeague(state.activeTournamentId, {
               name,
               scoringRules,
               maxMembers      : Number.isFinite(maxM) && maxM >= 2 ? maxM : null,
-              availableBoosters: Object.keys(newLeagueBoosters).length ? newLeagueBoosters : null,
+              availableBoosters: newLeagueBoosters,
+              totalTransfersAllowed,
+              startMatchNumber,
+              playoffStartMatchNumber,
+              playoffTransfersAllowed,
+              playoffFirstMatchUnlimited,
             });
             statusEl.textContent = `✓ League created — invite code: ${league.invite_code}`;
             statusEl.style.color = 'var(--good,#4ade80)';
