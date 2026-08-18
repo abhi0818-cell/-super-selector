@@ -12178,6 +12178,36 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       // Closing the pool should also collapse the schedule preview — it has
       // no reason to stay open once there's no player list to peek behind.
       if (!open) setScheduleOpen(false);
+      // Discard any unsaved SL picker edits on close — mirrors mobile's
+      // ConfirmXIModal onCancel (MyXIScreen.tsx revertXI()), which always
+      // resets back to the last saved draft (or last locked XI if no draft)
+      // rather than leaving a dirty, unsaved composition sitting in
+      // state.sl.xiPlayers. Without this, renderSlXferInfoBar() — which diffs
+      // the LIVE state.sl.xiPlayers against prevXI, not the DB draft — kept
+      // showing "N pending transfers ... Counts when M<x> starts" for an edit
+      // that was never persisted and would just vanish on refresh, wrongly
+      // implying it was guaranteed to lock in. Scoped to SL/private (daily
+      // has no transfer/draft concept); harmless no-op when there's nothing
+      // to revert (lastSavedXI unset, or xiPlayers already matches it — e.g.
+      // the post-Save-XI close at line ~7936, where lastSavedXI was just
+      // updated to equal the current selection).
+      if (!open && state.mode === 'season_long' && state.sl.lastSavedXI?.playerIds?.length) {
+        const stillDirty = !slXiEquals(
+          { playerIds: state.sl.xiPlayers, captainId: state.sl.xiCaptain, vcId: state.sl.xiVc },
+          state.sl.lastSavedXI
+        );
+        if (stillDirty) {
+          state.sl.xiPlayers = [...state.sl.lastSavedXI.playerIds];
+          state.sl.xiCaptain = state.sl.lastSavedXI.captainId ?? null;
+          state.sl.xiVc      = state.sl.lastSavedXI.vcId      ?? null;
+          // Drop any staged-but-unsaved booster pick too — same reasoning as
+          // the Revert to Saved button (it was never written to the DB, so
+          // there's nothing to undo there, just stop showing it as chosen).
+          state.sl.pendingBooster        = null;
+          state.sl.pendingBoosterMatchId = null;
+          state.sl.pendingBoosterViewKey = null;
+        }
+      }
       // SL uses "Make Transfers" (matches mobile's terminology for season-long/
       // private squads — composition changes here are transfers). Daily keeps
       // "Edit Team" since it has no transfer concept.
