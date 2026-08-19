@@ -2,11 +2,15 @@
  * Notifications Store — Zustand
  *
  * In-app inbox for admin-sent push notifications (migration_v36/v37).
- * notifications_log is the shared broadcast history (all users read the same
- * rows — every send today targets 'all'); notification_reads tracks each
- * user's own read state so the HomeScreen bell badge shows an accurate
- * unread count. A notification with no matching notification_reads row for
- * the current user is unread.
+ * notifications_log holds both broadcast rows (target='all') and admin-only
+ * rows (target='admin', e.g. check-toss's delay alerts — migration_v55/v56).
+ * This query itself applies no target filter — it relies entirely on RLS
+ * (migration_v57) to only return rows the current user is actually allowed
+ * to see: 'all' rows to everyone, 'admin' rows only when is_admin() is true
+ * for the requester. Don't assume every row here is meant for every user.
+ * notification_reads tracks each user's own read state so the HomeScreen
+ * bell badge shows an accurate unread count. A notification with no matching
+ * notification_reads row for the current user is unread.
  */
 
 import { create } from 'zustand';

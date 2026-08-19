@@ -14,8 +14,16 @@
 -- squads already locked for a match are skipped — so running it every
 -- minute is cheap and safe.
 --
--- Replace the placeholder service_role key below with the same one used in
--- migration_v22_scraper_cron.sql / migration_v25_cricapi_cron.sql.
+-- Replace the placeholder service_role key below with the current key from
+-- Supabase dashboard → Settings → API → "Secret keys" (format sb_secret_...)
+-- when you run this — do NOT commit the real value to git.
+--
+-- NOTE (2026-08-18): this job's Authorization key had gone stale after the
+-- project rotated from the old legacy JWT-format service_role key to the
+-- current sb_secret_... format, silently 401'ing this job on every run. If
+-- you rotate the key again, update it directly via cron.alter_job (or
+-- re-run this file's unschedule/schedule pair with the new value) — editing
+-- this file alone doesn't touch an already-scheduled job.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- Remove any previous version of this job
@@ -34,7 +42,7 @@ SELECT cron.schedule(
     url     := 'https://gepltclaeczgtruvekci.supabase.co/functions/v1/lock-matches',
     headers := jsonb_build_object(
       'Content-Type',  'application/json',
-      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdlcGx0Y2xhZWN6Z3RydXZla2NpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODUxNzk1NSwiZXhwIjoyMDk0MDkzOTU1fQ.0C77Zg63Pk58raq_5bzzCjFxmkGOpj8R6tbgnMwMISo'
+      'Authorization', 'Bearer YOUR_SERVICE_ROLE_KEY'
     ),
     body    := '{}'::jsonb
   )
