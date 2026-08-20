@@ -28,6 +28,7 @@
  */
 
 import { supabase } from './supabase';
+import { perfStart, perfMark } from './perf';
 
 export interface MatchLite {
   id: string;
@@ -63,11 +64,13 @@ export type SeasonPhase = 'pre_season' | 'regular' | 'playoff';
 export async function fetchContestTransferConfig(
   contestId: string,
 ): Promise<{ config: ContestTransferConfig; tournamentId: string | null }> {
+  const __t0 = perfStart();
   const { data, error } = await supabase
     .from('contests')
     .select('tournament_id, start_match_number, playoff_start_match_number, total_transfers_allowed, playoff_transfers_allowed, playoff_first_match_unlimited, free_transfers_per_match, extra_transfer_point_cost')
     .eq('id', contestId)
     .single();
+  perfMark('  [transferCap] fetchContestTransferConfig', __t0);
   if (error) throw error;
 
   return {
@@ -86,10 +89,12 @@ export async function fetchContestTransferConfig(
 
 /** All matches for a tournament (any status — needed for phase windows and baseline lookups). */
 export async function fetchTournamentMatches(tournamentId: string): Promise<MatchLite[]> {
+  const __t0 = perfStart();
   const { data, error } = await supabase
     .from('matches')
     .select('id, match_number, status')
     .eq('tournament_id', tournamentId);
+  perfMark('  [transferCap] fetchTournamentMatches', __t0);
   if (error) throw error;
   return data ?? [];
 }
@@ -193,6 +198,7 @@ export async function getFreeHitSnapshotForMatch(
   squadId: string,
   matchId: string,
 ): Promise<PreviousXI | null> {
+  const __t0 = perfStart();
   const { data, error } = await supabase
     .from('user_booster_activations')
     .select('snapshot')
@@ -200,6 +206,7 @@ export async function getFreeHitSnapshotForMatch(
     .eq('match_id', matchId)
     .eq('booster', 'free_hit')
     .maybeSingle();
+  perfMark('    [transferCap] getFreeHitSnapshotForMatch', __t0);
   if (error) throw error;
   const snap = data?.snapshot as { playerIds?: string[]; captainId?: string | null; vcId?: string | null } | null;
   if (!snap?.playerIds?.length) return null;
@@ -222,6 +229,7 @@ export async function getPreviousMatchXI(
   allMatches: MatchLite[],
   startMatchNumber: number | null = null,
 ): Promise<PreviousXI> {
+  const __getPrevT0 = perfStart();
   const current = allMatches.find(m => m.id === currentMatchId);
   if (!current) return { playerIds: [], captainId: null, vcId: null };
 
@@ -235,11 +243,13 @@ export async function getPreviousMatchXI(
     .map(m => m.id);
   if (!prevMatchIds.length) return { playerIds: [], captainId: null, vcId: null };
 
+  let __t = perfStart();
   const { data: prevXI, error } = await supabase
     .from('user_match_xi')
     .select('player_id, is_captain, is_vc, match_id')
     .eq('squad_id', squadId)
     .in('match_id', prevMatchIds);
+  __t = perfMark('    [transferCap] getPreviousMatchXI: user_match_xi select', __t);
   if (error) throw error;
   if (!prevXI?.length) return { playerIds: [], captainId: null, vcId: null };
 
@@ -255,12 +265,16 @@ export async function getPreviousMatchXI(
   // snapshot (the pre-free-hit baseline) supersedes its literal locked XI.
   try {
     const snapshot = await getFreeHitSnapshotForMatch(squadId, latestMatchId);
-    if (snapshot) return { ...snapshot, matchId: latestMatchId };
+    if (snapshot) {
+      perfMark('  [transferCap] getPreviousMatchXI TOTAL', __getPrevT0);
+      return { ...snapshot, matchId: latestMatchId };
+    }
   } catch (e) {
     console.warn('[transferCap] free_hit snapshot lookup failed (non-fatal):', e);
   }
 
   const xi = prevXI.filter(r => r.match_id === latestMatchId);
+  perfMark('  [transferCap] getPreviousMatchXI TOTAL', __getPrevT0);
   return {
     playerIds: xi.map(r => r.player_id as string),
     captainId: xi.find(r => r.is_captain)?.player_id ?? null,
@@ -446,6 +460,7 @@ export interface TransferResult {
  * BEFORE that write so a thrown cap error leaves no partial state behind.
  */
 export async function checkAndLogTransfers(opts: CheckAndLogTransfersOpts): Promise<TransferResult> {
+  const __checkT0 = perfStart();
   const { squadId, matchId, playerIds, previousPlayerIds, config, allMatches, bypassTransfers } = opts;
 
   const startMatchNumber = config.start_match_number         ?? null;
@@ -471,7 +486,11 @@ export async function checkAndLogTransfers(opts: CheckAndLogTransfersOpts): Prom
   // "used" count even though the booster makes those rows moot. This is
   // exactly what made "Revert to Locked" disappear after applying Free
   // Hit on a squad that already had a real (non-boosted) transfer saved.
-  await supabase.from('user_transfers').delete().eq('squad_id', squadId).eq('match_id', matchId);
+  {
+    const __t0 = perfStart();
+    await supabase.from('user_transfers').delete().eq('squad_id', squadId).eq('match_id', matchId);
+    perfMark('  [transferCap] checkAndLogTransfers: delete prior log', __t0);
+  }
 
   if (!bypassTransfers && previousPlayerIds.length > 0) {
     const prevSet = new Set(previousPlayerIds);
@@ -491,7 +510,9 @@ export async function checkAndLogTransfers(opts: CheckAndLogTransfersOpts): Prom
           const ids = [...phaseIds].filter(id => id !== matchId);
           usedQuery = usedQuery.in('match_id', ids.length ? ids : ['__none__']);
         }
+        const __usedT0 = perfStart();
         const { count: usedElsewhere } = await usedQuery;
+        perfMark('  [transferCap] checkAndLogTransfers: used-elsewhere count', __usedT0);
         const used      = usedElsewhere ?? 0;
         const remaining = activeCap - used;
         const phaseLabel = phase === 'playoff' ? 'Playoff transfer' : 'Season transfer';
@@ -524,7 +545,9 @@ export async function checkAndLogTransfers(opts: CheckAndLogTransfersOpts): Prom
         };
       });
 
+      const __insT0 = perfStart();
       const { error: xe } = await supabase.from('user_transfers').insert(xferRows);
+      perfMark('  [transferCap] checkAndLogTransfers: insert transfer log', __insT0);
       if (xe) console.warn('[transferCap] transfer log insert failed (non-fatal):', xe.message);
     }
   }
@@ -539,9 +562,12 @@ export async function checkAndLogTransfers(opts: CheckAndLogTransfersOpts): Prom
       const ids = [...phaseIds];
       countQuery = countQuery.in('match_id', ids.length ? ids : ['__none__']);
     }
+    const __countT0 = perfStart();
     const { count } = await countQuery;
+    perfMark('  [transferCap] checkAndLogTransfers: season count', __countT0);
     seasonXferCount = count ?? 0;
   }
 
+  perfMark('  [transferCap] checkAndLogTransfers TOTAL', __checkT0);
   return { transfersMade, seasonXferCount, seasonCap: activeCap, phase };
 }

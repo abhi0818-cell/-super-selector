@@ -6,8 +6,10 @@
  * Requires: expo-linear-gradient
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  Animated,
+  Easing,
   Modal,
   Pressable,
   ScrollView,
@@ -181,12 +183,76 @@ function CaptainStep({ players, onAssign }: CaptainStepProps) {
   );
 }
 
+// ─── Save-in-flight loader: a ball rolling along a mini pitch ─────────────────
+// Shown on the Save button in place of its normal label while saveXI is in
+// flight (see SummaryStep below). Picked over a plain spinner so the wait
+// still feels like part of the app rather than a generic loading state.
+
+const PITCH_TRACK_WIDTH = 96;
+const PITCH_INSET       = 4;
+const PITCH_BALL_SIZE   = 12;
+const PITCH_TRAVEL       = PITCH_TRACK_WIDTH - PITCH_BALL_SIZE - PITCH_INSET * 2;
+
+function RollingBallLoader() {
+  const progress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(progress, {
+          toValue:        1,
+          duration:       800,
+          easing:         Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(progress, {
+          toValue:        0,
+          duration:       800,
+          easing:         Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    // Stop cleanly on unmount (this only ever renders while saving=true, so
+    // it unmounts as soon as the save resolves either way) — otherwise the
+    // Animated loop keeps ticking on a detached node.
+    return () => loop.stop();
+  }, [progress]);
+
+  const translateX = progress.interpolate({
+    inputRange:  [0, 1],
+    outputRange: [0, PITCH_TRAVEL],
+  });
+  const rotate = progress.interpolate({
+    inputRange:  [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  return (
+    <View style={styles.pitchTrack}>
+      <View style={styles.pitchLine} />
+      <View style={[styles.crease, styles.creaseLeft]} />
+      <View style={[styles.crease, styles.creaseRight]} />
+      <Animated.View style={[styles.pitchBall, { transform: [{ translateX }, { rotate }] }]}>
+        <LinearGradient
+          colors={['#C43A2E', '#6E1414']}
+          style={styles.pitchBallInner}
+          start={{ x: 0.3, y: 0.3 }}
+          end={{ x: 1, y: 1 }}
+        />
+      </Animated.View>
+    </View>
+  );
+}
+
 // ─── Step 2: Summary ──────────────────────────────────────────────────────────
 
 interface SummaryStepProps {
   current:        SelectedPlayer[];
   previous:       SelectedPlayer[];
   activeBoosterId?: string | null;
+  saving?:        boolean;
   onBack:         () => void;
   onSave:         () => void;
   onCancel:       () => void;
@@ -194,7 +260,7 @@ interface SummaryStepProps {
   onRemove:       (id: string) => void;
 }
 
-function SummaryStep({ current, previous, activeBoosterId, onBack, onSave, onCancel, onSetCaptaincy, onRemove }: SummaryStepProps) {
+function SummaryStep({ current, previous, activeBoosterId, saving = false, onBack, onSave, onCancel, onSetCaptaincy, onRemove }: SummaryStepProps) {
   const added      = current.filter(p => !previous.find(b => b.id === p.id));
   const removed    = previous.filter(b => !current.find(p => p.id === b.id));
   const hasChanges = added.length > 0 || removed.length > 0;
@@ -279,12 +345,25 @@ function SummaryStep({ current, previous, activeBoosterId, onBack, onSave, onCan
 
       {/* Footer */}
       <LinearGradient colors={G.footer} style={styles.footer}>
-        <Pressable style={styles.saveBtnWrap} onPress={onSave}>
-          <LinearGradient colors={G.nextBtn} style={styles.saveBtn} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
-            <Text style={styles.saveBtnText}>Save XI  ✓</Text>
+        <Pressable style={styles.saveBtnWrap} onPress={saving ? undefined : onSave} disabled={saving}>
+          <LinearGradient
+            colors={G.nextBtn}
+            style={styles.saveBtn}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+          >
+            {saving ? (
+              <RollingBallLoader />
+            ) : (
+              <Text style={styles.saveBtnText}>Save XI  ✓</Text>
+            )}
           </LinearGradient>
         </Pressable>
-        <Pressable style={styles.cancelBtnWrap} onPress={onCancel}>
+        <Pressable
+          style={[styles.cancelBtnWrap, saving && styles.cancelBtnWrapDisabled]}
+          onPress={saving ? undefined : onCancel}
+          disabled={saving}
+        >
           <Text style={styles.cancelBtnText}>Cancel</Text>
         </Pressable>
       </LinearGradient>
@@ -302,6 +381,14 @@ interface Props {
   /** Effective (pending-or-committed) booster for this match, or null/undefined
    *  on Daily contests (no boosters). Shown as a banner on the Review & Save step. */
   activeBoosterId?: string | null;
+  /** True while onConfirm's save is actually in flight. Keeps the modal open
+   *  with a loading state instead of closing immediately on tap — the caller
+   *  (MyXIScreen) used to dismiss this modal the instant Save was pressed,
+   *  landing the user back on My XI with nothing to show for several
+   *  seconds until the success/failure message finally arrived. Staying
+   *  open with a spinner keeps the whole "tap → wait → confirmed" sequence
+   *  on one screen instead of splitting it across a screen transition. */
+  saving?:        boolean;
   onSetCaptaincy: (id: string, role: CaptaincyRole) => void;
   onRemove:       (id: string) => void;
   onConfirm:      () => void;
@@ -310,7 +397,7 @@ interface Props {
 }
 
 export default function ConfirmXIModal({
-  visible, contestName, current, previous, activeBoosterId,
+  visible, contestName, current, previous, activeBoosterId, saving = false,
   onSetCaptaincy, onRemove, onConfirm, onEditMore, onCancel,
 }: Props) {
   const [step, setStep] = useState<'captain' | 'summary'>('captain');
@@ -329,7 +416,12 @@ export default function ConfirmXIModal({
       visible={visible}
       animationType="none"
       presentationStyle="pageSheet"
-      onRequestClose={step === 'summary' ? () => setStep('captain') : onEditMore}
+      // While a save is in flight, block the hardware-back/swipe dismissal
+      // too — same reasoning as disabling the header back button below:
+      // navigating away mid-save leaves the user unsure whether it actually
+      // went through, and (on the summary step) would tear down this screen
+      // while saveXI is still writing.
+      onRequestClose={saving ? () => {} : step === 'summary' ? () => setStep('captain') : onEditMore}
     >
       <View style={styles.root}>
         <LinearGradient colors={G.bg} style={StyleSheet.absoluteFill} />
@@ -340,9 +432,10 @@ export default function ConfirmXIModal({
           <LinearGradient colors={G.header} style={styles.header}>
             <Pressable
               style={styles.headerBack}
-              onPress={step === 'summary' ? () => setStep('captain') : onEditMore}
+              onPress={saving ? undefined : (step === 'summary' ? () => setStep('captain') : onEditMore)}
+              disabled={saving}
             >
-              <Text style={styles.headerBackText}>←</Text>
+              <Text style={[styles.headerBackText, saving && styles.headerBackTextDisabled]}>←</Text>
             </Pressable>
             <View style={styles.headerCenter}>
               <Text style={styles.headerTitle}>{stepLabel}</Text>
@@ -385,6 +478,7 @@ export default function ConfirmXIModal({
               current={current}
               previous={previous}
               activeBoosterId={activeBoosterId}
+              saving={saving}
               onBack={() => setStep('captain')}
               onSave={onConfirm}
               onCancel={onCancel}
@@ -431,6 +525,7 @@ const styles = StyleSheet.create({
     borderColor:     C.border,
   },
   headerBackText: { color: C.text, fontSize: 18, fontWeight: '700' },
+  headerBackTextDisabled: { opacity: 0.3 },
   headerCenter:   { flex: 1, gap: 1, alignItems: 'center' },
   headerTitle:    { color: C.text, fontSize: fontSize.lg, fontWeight: '800', textAlign: 'center' },
   headerSub:      { color: C.muted, fontSize: fontSize.xs, textAlign: 'center' },
@@ -697,6 +792,45 @@ const styles = StyleSheet.create({
   },
   saveBtnText: { color: '#fff', fontSize: fontSize.base, fontWeight: '800' },
 
+  // RollingBallLoader (shown on the Save button while saving)
+  pitchTrack: {
+    width:          PITCH_TRACK_WIDTH,
+    height:         18,
+    justifyContent: 'center',
+  },
+  pitchLine: {
+    position:        'absolute',
+    left:            PITCH_INSET,
+    right:           PITCH_INSET,
+    top:             '50%',
+    height:          2,
+    marginTop:       -1,
+    backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  crease: {
+    position:        'absolute',
+    top:             '50%',
+    width:           2,
+    height:          10,
+    marginTop:       -5,
+    backgroundColor: 'rgba(255,255,255,0.5)',
+  },
+  creaseLeft:  { left: PITCH_INSET },
+  creaseRight: { right: PITCH_INSET },
+  pitchBall: {
+    position:  'absolute',
+    left:      PITCH_INSET,
+    top:       '50%',
+    width:     PITCH_BALL_SIZE,
+    height:    PITCH_BALL_SIZE,
+    marginTop: -(PITCH_BALL_SIZE / 2),
+  },
+  pitchBallInner: {
+    width:        PITCH_BALL_SIZE,
+    height:       PITCH_BALL_SIZE,
+    borderRadius: PITCH_BALL_SIZE / 2,
+  },
+
   // Cancel button (summary step)
   cancelBtnWrap: {
     alignItems:        'center',
@@ -705,6 +839,7 @@ const styles = StyleSheet.create({
     borderWidth:       1,
     borderColor:       'rgba(28,31,38,0.2)',
   },
+  cancelBtnWrapDisabled: { opacity: 0.4 },
   cancelBtnText: { color: C.muted, fontSize: fontSize.base, fontWeight: '700' },
 
   // Header Next button (captain step)

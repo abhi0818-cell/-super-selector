@@ -213,6 +213,13 @@ export default function MyXIScreen({ route }: Props) {
   // one of the two header drawers is ever open at once.
   const [myXIOpen, setMyXIOpen]           = useState(false);
   const [confirmOpen, setConfirmOpen]     = useState(false);
+  // True while handleConfirm's saveXI() call is actually in flight. Keeps
+  // ConfirmXIModal open (with its own spinner) instead of dismissing it the
+  // instant Save is tapped — previously the modal closed immediately,
+  // dropping the user back onto My XI with no visible sign anything was
+  // happening until the success toast/failure alert showed up 1-3+ seconds
+  // later. See ConfirmXIModal's `saving` prop.
+  const [confirmSaving, setConfirmSaving] = useState(false);
   const [snapshot, setSnapshot]           = useState<SelectedPlayer[]>([]);
   const autoOpenHandled = useRef(false);
   // Baseline for "Revert to Saved" no-op detection — whatever's actually
@@ -509,7 +516,6 @@ export default function MyXIScreen({ route }: Props) {
   }
 
   const handleConfirm = async () => {
-    setConfirmOpen(false);
     if (!activeContext) return;
 
     if (!currentMatchId) {
@@ -517,44 +523,63 @@ export default function MyXIScreen({ route }: Props) {
       return;
     }
 
-    const saveResult = await saveXI({
-      matchId:     currentMatchId,
-      contestId:   activeContext.contestId,
-      contestType: activeContext.contestType,
-    });
-
-    if (saveResult.error) {
-      Alert.alert('Save Failed', saveResult.error);
-      return;
-    }
-
-    // What was just saved IS now the saved baseline — re-arm "Revert to
-    // Saved" as a no-op (greyed) until the user edits again.
-    setSavedSnapshot(snapshotFromSelected(selected));
-
-    // Commit any staged booster pick now that the XI save succeeded — this
-    // is the one place a booster choice actually gets written to
-    // user_booster_activations (mirrors web's saveSlXiHandler step 2b).
-    // Picking a booster pill never wrote to the DB directly; see
-    // boosterStore.selectBooster.
-    //
-    // IMPORTANT: pass saveResult.squadId/matchId — the REAL ids saveXI just
-    // used, after any internal redirect (to the next unlocked match) or
-    // squad creation (first-ever save) — instead of letting commitPending
-    // fall back to boosterStore's own cached _squadId/_matchId. Those can be
-    // stale relative to what was just actually saved; trusting them instead
-    // of the fresh result is exactly what silently dropped ShooterXI's Team
-    // Double booster (looked picked, "XI saved" toast showed, nothing ever
-    // written to user_booster_activations for the match that really locked).
-    let boosterNote = '';
+    // Stay on the confirm modal (with its own spinner — see `saving` prop)
+    // for the whole save instead of dismissing it up front. It used to close
+    // immediately on tap, dropping the user back onto My XI to stare at an
+    // unchanged screen for however long saveXI took, with no indication
+    // anything was happening until the toast/alert finally arrived. Now the
+    // modal only closes once we actually know whether the save succeeded,
+    // so the screen transition and the result land together.
+    setConfirmSaving(true);
     try {
-      const result = await commitPending(saveResult.squadId ?? undefined, saveResult.matchId ?? undefined);
-      if (result?.changed) boosterNote = ` ${result.message}`;
-    } catch (e: any) {
-      Alert.alert('Booster save failed', e?.message ?? 'Please try again.');
-    }
+      const saveResult = await saveXI({
+        matchId:     currentMatchId,
+        contestId:   activeContext.contestId,
+        contestType: activeContext.contestType,
+      });
 
-    showToast(`✓  XI saved for ${activeContext.leagueName}${boosterNote}`);
+      if (saveResult.error) {
+        // Leave the modal open so the user can see what happened and retry
+        // right away — the C/VC picks and summary they already made are
+        // still right there instead of having to reopen the whole flow.
+        Alert.alert('Save Failed', saveResult.error);
+        return;
+      }
+
+      // Save succeeded — now it's safe to close the confirm modal and land
+      // back on My XI together with the confirmation, instead of before it.
+      setConfirmOpen(false);
+
+      // What was just saved IS now the saved baseline — re-arm "Revert to
+      // Saved" as a no-op (greyed) until the user edits again.
+      setSavedSnapshot(snapshotFromSelected(selected));
+
+      // Commit any staged booster pick now that the XI save succeeded — this
+      // is the one place a booster choice actually gets written to
+      // user_booster_activations (mirrors web's saveSlXiHandler step 2b).
+      // Picking a booster pill never wrote to the DB directly; see
+      // boosterStore.selectBooster.
+      //
+      // IMPORTANT: pass saveResult.squadId/matchId — the REAL ids saveXI just
+      // used, after any internal redirect (to the next unlocked match) or
+      // squad creation (first-ever save) — instead of letting commitPending
+      // fall back to boosterStore's own cached _squadId/_matchId. Those can be
+      // stale relative to what was just actually saved; trusting them instead
+      // of the fresh result is exactly what silently dropped ShooterXI's Team
+      // Double booster (looked picked, "XI saved" toast showed, nothing ever
+      // written to user_booster_activations for the match that really locked).
+      let boosterNote = '';
+      try {
+        const result = await commitPending(saveResult.squadId ?? undefined, saveResult.matchId ?? undefined);
+        if (result?.changed) boosterNote = ` ${result.message}`;
+      } catch (e: any) {
+        Alert.alert('Booster save failed', e?.message ?? 'Please try again.');
+      }
+
+      showToast(`✓  XI saved for ${activeContext.leagueName}${boosterNote}`);
+    } finally {
+      setConfirmSaving(false);
+    }
     // Re-load transfers + boosters — first save creates the squad, so
     // squadId wasn't set yet; this picks it up and refreshes booster state.
     loadTransfers();
@@ -1012,6 +1037,7 @@ export default function MyXIScreen({ route }: Props) {
             // single-source-of-truth lookup CricketPitch uses, so the Review
             // & Save banner always agrees with what the pitch/stat tile show.
             activeBoosterId={boosters.find(b => b.status === 'active' || b.status === 'pending')?.id ?? null}
+            saving={confirmSaving}
             onSetCaptaincy={(id, role) => setCaptaincy(id, role)}
             onRemove={(id) => removePlayer(id)}
             onConfirm={handleConfirm}

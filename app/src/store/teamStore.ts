@@ -30,6 +30,7 @@ import {
   checkAndLogTransfers,
 } from '../lib/transferCap';
 import { useBoosterStore } from './boosterStore';
+import { perfStart, perfMark } from '../lib/perf';
 
 // ─── Rules (defaults; maxOverseas overridden per-tournament from DB) ──────────
 
@@ -241,7 +242,7 @@ interface TeamState {
   restoreXI:     (players: SelectedPlayer[]) => void;
   loadSavedXI:   (matchId: string, contestId: string, contestType?: 'daily' | 'sl' | 'private') => Promise<string | null>;
   saveXI:        (opts: SaveXIOpts) => Promise<SaveXIResult>;
-  ensureSquad:   (contestId: string, name?: string | null) => Promise<string | null>;
+  ensureSquad:   (contestId: string, name?: string | null, knownUserId?: string) => Promise<string | null>;
 }
 
 interface SaveXIOpts {
@@ -290,13 +291,16 @@ async function mirrorToUserTeams(opts: {
   const { contestType, squadId, matchId, userId, playerIds, captainId, viceCaptainId, format } = opts;
   const isDaily = contestType === 'daily';
   let teamId: string | null = null;
+  const __mirrorT0 = perfStart();
 
   if (isDaily) {
     // One daily team per (user, match) — squad_id IS NULL distinguishes it from
     // SL rows (see migration_v6's partial unique indexes). Clear any existing
     // row first so re-saves don't collide with that constraint.
+    let __t = perfStart();
     await supabase.from('user_teams').delete()
       .eq('match_id', matchId).eq('user_id', userId).is('squad_id', null);
+    __t = perfMark('    [teamStore] mirrorToUserTeams: delete existing daily row', __t);
 
     // Match web's own default name exactly (index.html's autoXIName():
     // `M{number} · {home} vs {away}`) — previously this hardcoded 'My XI'
@@ -308,6 +312,7 @@ async function mirrorToUserTeams(opts: {
       .select('match_number, home_team_id, away_team_id')
       .eq('id', matchId)
       .maybeSingle();
+    __t = perfMark('    [teamStore] mirrorToUserTeams: match name lookup', __t);
     const name = m
       ? `M${m.match_number ?? '?'} · ${m.home_team_id || '—'} vs ${m.away_team_id || '—'}`
       : 'My XI';
@@ -317,22 +322,27 @@ async function mirrorToUserTeams(opts: {
       captain_id: captainId, vice_captain_id: viceCaptainId,
       match_id: matchId, squad_id: null, user_id: userId,
     }).select('id').single();
+    perfMark('    [teamStore] mirrorToUserTeams: insert daily user_teams row', __t);
     if (error) throw error;
     teamId = ut?.id ?? null;
   } else {
     // One SL team per (squad, match) — update in place if it already exists
     // (mirrors db.js's upsertSlTeam exactly).
+    let __t = perfStart();
     const { data: existing } = await supabase.from('user_teams')
       .select('id').eq('squad_id', squadId).eq('match_id', matchId).limit(1);
+    __t = perfMark('    [teamStore] mirrorToUserTeams: lookup existing sl row', __t);
 
     if (existing?.length) {
       teamId = existing[0].id;
       const { error: updErr } = await supabase.from('user_teams')
         .update({ captain_id: captainId, vice_captain_id: viceCaptainId })
         .eq('id', teamId);
+      __t = perfMark('    [teamStore] mirrorToUserTeams: update sl user_teams row', __t);
       if (updErr) throw updErr;
       const { error: delErr } = await supabase.from('user_team_players')
         .delete().eq('user_team_id', teamId);
+      perfMark('    [teamStore] mirrorToUserTeams: delete old sl players', __t);
       if (delErr) throw delErr;
     } else {
       const { data: ut, error } = await supabase.from('user_teams').insert({
@@ -340,15 +350,19 @@ async function mirrorToUserTeams(opts: {
         captain_id: captainId, vice_captain_id: viceCaptainId,
         match_id: matchId, squad_id: squadId, user_id: userId,
       }).select('id').single();
+      perfMark('    [teamStore] mirrorToUserTeams: insert sl user_teams row', __t);
       if (error) throw error;
       teamId = ut?.id ?? null;
     }
   }
 
   if (!teamId) return;
+  const __insPlayersT0 = perfStart();
   const rows = playerIds.map(pid => ({ user_team_id: teamId as string, player_id: pid }));
   const { error: insErr } = await supabase.from('user_team_players').insert(rows);
+  perfMark('    [teamStore] mirrorToUserTeams: insert user_team_players', __insPlayersT0);
   if (insErr) throw insErr;
+  perfMark('  [teamStore] mirrorToUserTeams TOTAL', __mirrorT0);
 }
 
 // ─── Store ────────────────────────────────────────────────────────────────────
@@ -777,30 +791,52 @@ export const useTeamStore = create<TeamState>((set, get) => ({
   // to the literal 'My Squad' if no name is supplied, which only happens for
   // a save that somehow bypassed the "name your squad" prompt shown right
   // after picking a contest.
-  ensureSquad: async (contestId, name) => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return null;
+  //
+  // `knownUserId` lets a caller that has *already* resolved the current user
+  // (e.g. saveXI, which needs it for other steps anyway) skip re-fetching it
+  // here — auth.getUser() is a real network round trip, not a cache read, so
+  // calling it twice per save was pure waste. Callers that don't already have
+  // it (e.g. MyXIScreen's "name your squad" flow) just omit it and this
+  // fetches it itself exactly as before.
+  ensureSquad: async (contestId, name, knownUserId) => {
+    const __ensureT0 = perfStart();
+    let __t = perfStart();
+    let userId = knownUserId;
+    if (!userId) {
+      const { data: { user } } = await supabase.auth.getUser();
+      __t = perfMark('  [teamStore] ensureSquad: auth.getUser', __t);
+      if (!user) return null;
+      userId = user.id;
+    } else {
+      perfMark('  [teamStore] ensureSquad: auth.getUser SKIPPED (caller already had it)', __t);
+    }
 
     const { data: existing } = await supabase
       .from('user_squads')
       .select('id')
       .eq('contest_id', contestId)
-      .eq('user_id',    user.id)
+      .eq('user_id',    userId)
       .maybeSingle();
+    __t = perfMark('  [teamStore] ensureSquad: lookup existing squad', __t);
 
-    if (existing?.id) return existing.id;
+    if (existing?.id) {
+      perfMark('  [teamStore] ensureSquad TOTAL', __ensureT0);
+      return existing.id;
+    }
 
     const { data: newSquad, error: insertErr } = await supabase
       .from('user_squads')
       .insert({
         contest_id:               contestId,
-        user_id:                  user.id,
+        user_id:                  userId,
         name:                     name?.trim() || 'My Squad',
         budget_remaining:         RULES.budget,
         free_transfers_available: 1,
       })
       .select('id')
       .single();
+    perfMark('  [teamStore] ensureSquad: insert new squad', __t);
+    perfMark('  [teamStore] ensureSquad TOTAL', __ensureT0);
 
     if (insertErr) {
       console.warn('[teamStore] ensureSquad insert failed:', insertErr);
@@ -814,45 +850,73 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     const { selected } = get();
     set({ saveError: null });
 
+    const __saveStart = perfStart();
+    let __t = __saveStart;
+    console.log(`[PERF] ===== saveXI START (contestType=${contestType}) =====`);
+
     const { data: { user } } = await supabase.auth.getUser();
+    __t = perfMark('saveXI: auth.getUser', __t);
     if (!user) return { error: 'Not signed in', squadId: null, matchId: null };
 
     try {
-      // 0a. Guard against matchId/contestId pointing at two different
-      // tournaments. matchId here comes from teamStore.currentMatchId, which
-      // is set by loadTournamentContext(tournamentId) for whichever tournament
-      // was *globally* selected at that time — it isn't re-derived from the
-      // contestId this save actually targets. If the user switches the
-      // tournament picker while activeContext still references a contest from
-      // the previous tournament (e.g. opening MyXI for a season-long contest
-      // right as the Home tournament selector flips to a different
-      // tournament), this function used to trust matchId blindly and write a
-      // real user_match_xi row for the wrong contest's squad against a match
-      // from a completely unrelated tournament — confirmed in production data:
-      // a season-long squad ended up with a full saved XI for an ENG-W vs
-      // SL-W (Women's T20 WC) match even though its contest belongs to a
-      // different tournament entirely. Re-resolve matchId against the
-      // contest's OWN tournament_id before trusting it for anything.
-      const { data: contestRow } = await supabase
-        .from('contests')
-        .select('tournament_id')
-        .eq('id', contestId)
-        .maybeSingle();
-      const contestTournamentId = contestRow?.tournament_id ?? null;
+      const isDailyContest = contestType === 'daily';
 
-      // 0b. Guard against saving into an already-locked match. Unlike web's
-      // saveTargetMatch() (index.html), this save path had no lock-time check
-      // at all — a stale screen (e.g. currentMatchId loaded before this match's
-      // lock_time passed) could silently write a real user_teams/user_match_xi
-      // row straight into an already-started match. Mirror web's behavior:
-      // redirect to the next not-yet-started match in the same tournament
-      // instead of writing into the locked one.
-      const { data: targetMatch } = await supabase
-        .from('matches')
-        .select('id, tournament_id, lock_time, start_time, status')
-        .eq('id', matchId)
-        .maybeSingle();
+      // 0/3a, run concurrently — none of these three actually depend on each
+      // other's result, they were just written sequentially before:
+      //  - 0a. contestTournamentId (+ full transfer-cap config for sl/private,
+      //    fetched once HERE and reused below instead of being fetched again
+      //    inside the transfer-cap block — that used to be two separate
+      //    round trips to the same `contests` row).
+      //  - 0b's own lookup: the target match's lock/tournament state.
+      //  - 3a. ensureSquad — it only ever reads/writes by contestId, never
+      //    touches matchId, so it has no real dependency on the match-lock
+      //    guard below and can safely run alongside it. (In the rare case
+      //    the guard below can't find any match to redirect to and the save
+      //    fails outright, this may have already get-or-created an empty
+      //    squad row — harmless; that's the same row the "name your squad"
+      //    prompt would create on the next attempt anyway.)
+      const __parallelT0 = perfStart();
+      const [contestInfo, targetMatch, squadId] = await Promise.all([
+        isDailyContest
+          ? supabase.from('contests').select('tournament_id').eq('id', contestId).maybeSingle()
+              .then(({ data }) => ({ tournamentId: (data?.tournament_id as string | undefined) ?? null, config: null as Awaited<ReturnType<typeof fetchContestTransferConfig>>['config'] | null }))
+          : fetchContestTransferConfig(contestId).then(({ config, tournamentId }) => ({ tournamentId, config })),
+        supabase.from('matches')
+          .select('id, tournament_id, lock_time, start_time, status')
+          .eq('id', matchId)
+          .maybeSingle()
+          .then(({ data }) => data ?? null),
+        get().ensureSquad(contestId, undefined, user.id),
+      ]);
+      __t = perfMark('saveXI: 0/3a parallel — contest+config, match lookup, ensureSquad', __t);
 
+      const contestTournamentId = contestInfo.tournamentId;
+
+      if (!squadId) return { error: 'Could not create squad', squadId: null, matchId: null };
+
+      // 0a/0b guard against matchId/contestId pointing at two different
+      // tournaments, or at an already-locked match. matchId here comes from
+      // teamStore.currentMatchId, which is set by loadTournamentContext(tournamentId)
+      // for whichever tournament was *globally* selected at that time — it
+      // isn't re-derived from the contestId this save actually targets. If
+      // the user switches the tournament picker while activeContext still
+      // references a contest from the previous tournament (e.g. opening
+      // MyXI for a season-long contest right as the Home tournament selector
+      // flips to a different tournament), this function used to trust
+      // matchId blindly and write a real user_match_xi row for the wrong
+      // contest's squad against a match from a completely unrelated
+      // tournament — confirmed in production data: a season-long squad ended
+      // up with a full saved XI for an ENG-W vs SL-W (Women's T20 WC) match
+      // even though its contest belongs to a different tournament entirely.
+      // Re-resolve matchId against the contest's OWN tournament_id before
+      // trusting it for anything.
+      //
+      // Unlike web's saveTargetMatch() (index.html), this save path had no
+      // lock-time check at all — a stale screen (e.g. currentMatchId loaded
+      // before this match's lock_time passed) could silently write a real
+      // user_teams/user_match_xi row straight into an already-started match.
+      // Mirror web's behavior: redirect to the next not-yet-started match in
+      // the same tournament instead of writing into the locked one.
       const wrongTournament = Boolean(
         contestTournamentId && targetMatch?.tournament_id &&
         targetMatch.tournament_id !== contestTournamentId
@@ -868,6 +932,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
             .select('id, match_number, lock_time, start_time, status')
             .eq('tournament_id', tournamentId)
             .neq('status', 'completed');
+          __t = perfMark('saveXI: 0b redirect — candidate matches lookup', __t);
 
           nextMatchId = findNextUnlockedMatch(candidates ?? [])?.id ?? null;
         }
@@ -883,15 +948,6 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         matchId = nextMatchId;
       }
 
-      // 3a. Get or create the user's squad for this contest. Normally this
-      // is already created by the "name your squad" prompt shown right after
-      // picking a contest (see ContestPicker/NameSquadModal flow in
-      // MyXIScreen) — this is just a fallback for any path that reaches
-      // Save XI without going through that prompt (e.g. old cached context).
-      const squadId = await get().ensureSquad(contestId);
-
-      if (!squadId) return { error: 'Could not create squad', squadId: null, matchId: null };
-
       // 3a-bis. Season transfer-cap check (sl/private only). Mobile has no
       // separate draft/lock step — this save IS the lock — so the cap must be
       // checked here, before any row is written, rather than at a later
@@ -899,10 +955,11 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       // from web's unattended auto-lock cron, which swallows the throw after
       // user_match_xi has already been written — fine there, wrong order to
       // copy for a path the user's Save button calls directly).
-      if (contestType !== 'daily') {
+      if (!isDailyContest && contestInfo.config) {
+        const __capT0 = perfStart();
         try {
-          const { config, tournamentId } = await fetchContestTransferConfig(contestId);
-          const allMatches = tournamentId ? await fetchTournamentMatches(tournamentId) : [];
+          const config = contestInfo.config;
+          const allMatches = contestTournamentId ? await fetchTournamentMatches(contestTournamentId) : [];
           const prev = await getPreviousMatchXI(squadId, matchId, allMatches, config.start_match_number);
           const isFirstActiveLock = await computeIsFirstActiveLock(squadId, prev, allMatches);
           const baselinePlayerIds = isFirstActiveLock ? [] : prev.playerIds;
@@ -928,6 +985,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
           set({ saveError: msg });
           return { error: msg, squadId: null, matchId: null };
         }
+        __t = perfMark('saveXI: 3a-bis transfer-cap block (total, see breakdown above)', __capT0);
       }
 
       // 3b. Delete this match's existing XI rows then re-insert
@@ -936,6 +994,7 @@ export const useTeamStore = create<TeamState>((set, get) => ({
         .delete()
         .eq('squad_id', squadId)
         .eq('match_id', matchId);
+      __t = perfMark('saveXI: 3b delete existing XI rows', __t);
 
       if (delErr) throw delErr;
 
@@ -953,33 +1012,27 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       const { error: insertErr } = await supabase
         .from('user_match_xi')
         .insert(rows);
+      __t = perfMark('saveXI: 3c insert new XI rows', __t);
 
       if (insertErr) throw insertErr;
 
+      // 3d + 3e. Two independent best-effort mirrors, run concurrently. Both
+      // run only AFTER 3b/3c's real user_match_xi write has already
+      // succeeded (never in parallel WITH it) — each is already individually
+      // tolerant of its own failure (caught below, save still succeeds), but
+      // if the real write itself failed partway through while a mirror had
+      // already gone out, web would show a "saved" team with no actual saved
+      // XI behind it. Once the real write is done, though, these two don't
+      // depend on each other or on anything else, so there's no reason to
+      // make one wait on the other.
+      //
       // 3d. Mirror into user_teams + user_team_players. Web's "my team" reads
       // (db.js getUserTeamForMatch/getAllDailyTeamsForMatch/listUserTeams) check
       // user_teams FIRST and only fall back to user_match_xi if no complete row
       // exists there — without this, a mobile-only save is invisible to web and
       // it keeps showing the last team saved there. Best-effort: a failure here
       // must not fail the save the user actually asked for.
-      const captainId     = selected.find(p => p.captaincy === 'captain')?.id;
-      const viceCaptainId = selected.find(p => p.captaincy === 'vice_captain')?.id;
-
-      if (selected.length === 11 && captainId && viceCaptainId) {
-        try {
-          await mirrorToUserTeams({
-            contestType, squadId, matchId, userId: user.id,
-            playerIds: selected.map(p => p.id),
-            captainId, viceCaptainId,
-            format: get().format,
-          });
-        } catch (mirrorErr) {
-          console.warn('[teamStore] user_teams mirror failed (non-fatal, web may show a stale team):', mirrorErr);
-        }
-      } else {
-        console.warn('[teamStore] saveXI: skipped user_teams mirror (XI incomplete or missing C/VC)');
-      }
-
+      //
       // 3e. Mirror into squad_draft_xi (sl/private only) — keeps web's draft
       // table in sync with a mobile save, mirroring db.js's saveDraft exactly.
       // Without this, web's slLoadDraft (draft > lastLocked > mobile XI) could
@@ -991,23 +1044,52 @@ export const useTeamStore = create<TeamState>((set, get) => ({
       // migration_v35) trust it outright instead of falling back to
       // carry-forward. Best-effort: a failure here must not fail the save
       // the user asked for.
-      if (contestType !== 'daily' && captainId && viceCaptainId) {
-        try {
-          await supabase.from('squad_draft_xi').upsert({
-            squad_id:        squadId,
-            player_ids:      selected.map(p => p.id),
-            captain_id:      captainId,
-            vc_id:           viceCaptainId,
-            target_match_id: matchId,
-            updated_at:      new Date().toISOString(),
-          }, { onConflict: 'squad_id' });
-        } catch (draftErr) {
-          console.warn('[teamStore] squad_draft_xi mirror failed (non-fatal, web may show a stale draft):', draftErr);
-        }
+      const captainId     = selected.find(p => p.captaincy === 'captain')?.id;
+      const viceCaptainId = selected.find(p => p.captaincy === 'vice_captain')?.id;
+      const __mirrorsT0 = perfStart();
+      const mirrorTasks: Promise<void>[] = [];
+
+      if (selected.length === 11 && captainId && viceCaptainId) {
+        mirrorTasks.push(
+          mirrorToUserTeams({
+            contestType, squadId, matchId, userId: user.id,
+            playerIds: selected.map(p => p.id),
+            captainId, viceCaptainId,
+            format: get().format,
+          }).catch(mirrorErr => {
+            console.warn('[teamStore] user_teams mirror failed (non-fatal, web may show a stale team):', mirrorErr);
+          }),
+        );
+      } else {
+        console.warn('[teamStore] saveXI: skipped user_teams mirror (XI incomplete or missing C/VC)');
       }
 
+      if (contestType !== 'daily' && captainId && viceCaptainId) {
+        mirrorTasks.push(
+          (async () => {
+            try {
+              await supabase.from('squad_draft_xi').upsert({
+                squad_id:        squadId,
+                player_ids:      selected.map(p => p.id),
+                captain_id:      captainId,
+                vc_id:           viceCaptainId,
+                target_match_id: matchId,
+                updated_at:      new Date().toISOString(),
+              }, { onConflict: 'squad_id' });
+            } catch (draftErr) {
+              console.warn('[teamStore] squad_draft_xi mirror failed (non-fatal, web may show a stale draft):', draftErr);
+            }
+          })(),
+        );
+      }
+
+      await Promise.all(mirrorTasks);
+      __t = perfMark('saveXI: 3d+3e mirrors (parallel, total)', __mirrorsT0);
+
+      perfMark(`===== saveXI TOTAL (contestType=${contestType}) =====`, __saveStart);
       return { error: null, squadId, matchId }; // success — REAL ids used, post-redirect/creation
     } catch (err: any) {
+      perfMark(`===== saveXI TOTAL — FAILED (contestType=${contestType}) =====`, __saveStart);
       const msg = err?.message ?? 'Save failed';
       console.error('[teamStore] saveXI error:', err);
       set({ saveError: msg });
