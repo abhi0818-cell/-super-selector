@@ -674,7 +674,7 @@ function detectCompletion(html: string): { completed: boolean; resultText: strin
   const badgeMatch = text.match(/\b(LIVE|COMPLETED|UPCOMING)\s*\/\s*Match\b/i)
   const badge = badgeMatch ? badgeMatch[1].toUpperCase() : null
   const resultMatch = text.match(
-    /([A-Za-z][A-Za-z .'-]+ won by [\w\s]+?(?:wickets?|runs?)(?:\s*\(.*?\))?|Match Tied|Match Drawn|No Result|Match Abandoned)/i,
+    /([A-Za-z][A-Za-z .'-]+ won by [\w\s]+?(?:wickets?|wkts?|runs?)(?:\s*\(.*?\))?|Match Tied|Match Drawn|No Result|Match Abandoned)/i,
   )
   return {
     completed : badge === 'COMPLETED' || !!resultMatch,
@@ -1107,8 +1107,17 @@ Deno.serve(async (req: Request) => {
         tournament:tournaments!tournament_id(id, name, scraper_enabled, scoring_rules, dot_ball_enabled)
       `)
       .lte('start_time', cutoff)
-      .not('status', 'in', '("completed","delayed")')
 
+    // Cron runs (no matchId) must never touch a match once it's completed/
+    // delayed — that exclusion is what protects post-completion admin
+    // corrections from being clobbered by the next unattended run. A manual
+    // "Scrape Now" (matchId provided) bypasses it: the admin is explicitly
+    // asking to re-scrape THIS match regardless of its current status — e.g.
+    // to top up stats after the staleness guard forced a completion flip off
+    // an incomplete last-trusted read. Without this, Scrape Now on an
+    // already-'completed' match silently returns "no live matches" and can
+    // never be used to fix it.
+    if (!matchId) query = query.not('status', 'in', '("completed","delayed")')
     if (matchId) query = query.eq('id', matchId)
 
     // No DB-level scraper_enabled filter here — mirrors poll-cricapi's
@@ -1267,6 +1276,16 @@ Deno.serve(async (req: Request) => {
       // CricAPI side of the same guard). If this read is BEHIND that, it's
       // almost certainly a stale/cached page — skip the write entirely
       // rather than regressing good data with a worse read.
+      //
+      // This protection is for the CRON path only, where nobody's watching
+      // and a background re-read silently regressing good data would go
+      // unnoticed. A manual "Scrape Now" (matchId provided) is the admin
+      // looking directly at this one match and explicitly asking for its
+      // current state — same "admin explicitly asked for this" reasoning as
+      // the cached-URL and status-filter bypasses above — so it always
+      // trusts the fresh read instead of silently discarding it. This is
+      // exactly the gap that left M12 stuck on 'stale_skipped' with no way
+      // to force a real re-read through the admin panel.
       const lastInn = innings[innings.length - 1]
       const inningsBalls = lastInn.bowling.reduce(
         (sum, b) => sum + (Math.round(b.overs) * 6 + Math.round((b.overs % 1) * 10)),
@@ -1274,11 +1293,30 @@ Deno.serve(async (req: Request) => {
       )
       const newProgress    = { innings: innings.length, balls: inningsBalls }
       const storedProgress = { innings: (match as any).progress_innings ?? 0, balls: (match as any).progress_balls ?? 0 }
-      const isStale = newProgress.innings < storedProgress.innings
+      const isStale = !matchId && (
+        newProgress.innings < storedProgress.innings
         || (newProgress.innings === storedProgress.innings && newProgress.balls < storedProgress.balls)
+      )
 
       if (isStale) {
-        results.push({ matchId: match.id, status: 'stale_skipped', url, read: newProgress, stored: storedProgress })
+        // The stats/scorecard numbers on this read aren't trusted (that's what
+        // triggered isStale above), but a genuine completion signal must never
+        // be suppressed by that — otherwise a match whose final page happens to
+        // read as "behind" the watermark (e.g. a curtailed/DLS-affected chase,
+        // or an earlier noisy mid-match read that over-counted balls) can never
+        // leave 'live', and nothing else in the app can ever finalize it. Flip
+        // status only; every stats/scorecard write below is still skipped for
+        // this match on this run.
+        let completionMarkedWhileStale = false
+        if (completionInfo.completed && match.status !== 'completed') {
+          await sb.from('matches').update({ status: 'completed' }).eq('id', match.id)
+          completionMarkedWhileStale = true
+        }
+        results.push({
+          matchId: match.id, status: 'stale_skipped', url, read: newProgress, stored: storedProgress,
+          completionDetected: completionInfo.completed,
+          completionMarked: completionMarkedWhileStale,
+        })
         continue
       }
 

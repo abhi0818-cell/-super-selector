@@ -1788,7 +1788,20 @@
             } else {
               const detail = r?.error ?? r?.fallback ?? r?.url ?? '';
               console.warn('Scrape Now failed:', r);
-              toast(`Scrape: ${r?.status ?? 'unknown'} — ${detail}`, 6000);
+              // A 'stale_skipped' result can still have flipped the match to
+              // 'completed' (the staleness guard only distrusts the stats/
+              // scorecard numbers on this read, not a genuine completion
+              // signal — see scrape-scorecard/index.ts step 3b) — reflect that
+              // in local state and the row immediately instead of leaving the
+              // admin staring at a stale-looking toast with no indication the
+              // match actually finished.
+              const m = state.matches.find(x => x.id === id);
+              if (r?.completionMarked && m) {
+                m.status = 'completed';
+                renderMatchesAdmin();
+              }
+              toast(`Scrape: ${r?.status ?? 'unknown'} — ${detail}` +
+                (r?.completionMarked ? ' — match marked completed despite stale stats; re-scrape once a fresher read lands to fill in stats.' : ''), 7000);
             }
           } catch (err) {
             toast('Scrape failed: ' + err.message, 5000);
