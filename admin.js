@@ -1543,6 +1543,16 @@
                 : (isAbandoned || m.status === 'cancelled') ? 'var(--bad)'
                 : m.status === 'live' || m.status === 'in_progress' ? 'var(--bad)'
                 : 'var(--muted)';
+              // 'completed' with no stats_verified_at means this flip came from
+              // the scrape-scorecard/poll-cricapi staleness-guard bypass — the
+              // page's own status text said the match ended, but the stats/
+              // scorecard write for that same run was skipped as untrustworthy
+              // (see scrape-scorecard/index.ts step 3b, migration_v59). status
+              // and the underlying scorecard can be out of sync until a
+              // trustworthy (non-stale) re-scrape lands, e.g. via the row's
+              // Scrape button — that always bypasses staleness for a manual
+              // matchId call and will set stats_verified_at once it succeeds.
+              const needsVerification = m.status === 'completed' && !m.stats_verified_at;
               // Quick time-push targets lock_time if one's already set (the
               // active gate once delayed — see effectiveLockTime()), else
               // start_time (still just the informational kickoff). First use
@@ -1554,6 +1564,12 @@
               return `
                 <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
                   <span style="font-size:11px;font-weight:600;color:${badgeColor};">${badge}</span>
+                  ${needsVerification ? `
+                    <span title="Marked completed from a stale/unverified read — the scorecard behind it may be incomplete. Click Scrape to force a trustworthy re-read and verify."
+                      style="font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px;
+                             background:rgba(220,80,80,0.12);border:1px solid var(--bad);color:var(--bad);cursor:help;">
+                      ⚠ unverified
+                    </span>` : ''}
                   <button class="delay-toggle-btn" data-id="${m.id}" data-delayed="${isDelayed}"
                     style="font-size:10px;padding:2px 7px;border-radius:4px;
                            background:${isDelayed ? 'rgba(166,124,0,0.12)' : 'transparent'};
@@ -1716,6 +1732,11 @@
               const m = state.matches.find(x => x.id === id);
               if (m && r.url) m.scorecard_url = r.url;
               if (r.completionMarked && m) m.status = 'completed';
+              // A 'status: ok' result only ever comes back from the non-stale
+              // write path (see scrape-scorecard/index.ts) — the server just
+              // stamped stats_verified_at for real, so clear any "⚠ unverified"
+              // badge immediately instead of waiting for the next full reload.
+              if (m) m.stats_verified_at = new Date().toISOString();
               const bits = [`🕷 Scraped ${r.matched} players from ${r.source}`];
               if (r.unmatched?.length) bits.push(`${r.unmatched.length} unmatched`);
               if (r.fieldingCredited) bits.push(`${r.fieldingCredited} fielding credit${r.fieldingCredited===1?'':'s'} auto-derived`);

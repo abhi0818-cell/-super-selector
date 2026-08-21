@@ -1306,7 +1306,10 @@ Deno.serve(async (req: Request) => {
         // or an earlier noisy mid-match read that over-counted balls) can never
         // leave 'live', and nothing else in the app can ever finalize it. Flip
         // status only; every stats/scorecard write below is still skipped for
-        // this match on this run.
+        // this match on this run — deliberately does NOT stamp
+        // stats_verified_at (migration_v59), so this exact completion is
+        // flagged "⚠ unverified" in the admin panel until a trustworthy
+        // re-scrape lands.
         let completionMarkedWhileStale = false
         if (completionInfo.completed && match.status !== 'completed') {
           await sb.from('matches').update({ status: 'completed' }).eq('id', match.id)
@@ -1728,9 +1731,21 @@ Deno.serve(async (req: Request) => {
       // filter means this match is never re-scraped again — which is exactly
       // what protects any admin fielding corrections made afterwards (see the
       // scraper_manual regression-guard check above) from being clobbered.
-      if (completionInfo.completed && match.status !== 'completed') {
-        await sb.from('matches').update({ status: 'completed' }).eq('id', match.id)
-      }
+      //
+      // stats_verified_at (migration_v59) is stamped unconditionally here —
+      // reaching this line means isStale was false, so the stats/scorecard
+      // writes above for this run are trustworthy. It's set regardless of
+      // whether completion happened this run, so it also works as a general
+      // "last time we wrote real data for this match" marker. Combined with
+      // `status`, `status = 'completed' AND stats_verified_at IS NULL`
+      // uniquely identifies a match that was auto-completed off the 3b
+      // staleness-guard bypass (completion detected on a run whose stats
+      // were skipped as stale) rather than off a genuinely trustworthy read —
+      // that bypass never reaches this line, so it never sets this column.
+      // The admin panel surfaces that combination as a "⚠ unverified" badge.
+      const matchUpdate: Record<string, unknown> = { stats_verified_at: new Date().toISOString() }
+      if (completionInfo.completed && match.status !== 'completed') matchUpdate.status = 'completed'
+      await sb.from('matches').update(matchUpdate).eq('id', match.id)
 
       // ── 10. Distribute raw_points to locked XI scores (SL squads + Daily teams) ──
       // Regressed players keep their existing (already-correct) raw_points

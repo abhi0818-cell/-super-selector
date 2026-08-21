@@ -903,10 +903,17 @@ Deno.serve(async (req: Request) => {
       const slScored         = await scoreSLForMatch(match.id, fmtKey, statsByPlayer, metaByPlayer, !!tournament?.dot_ball_enabled)
 
       // ── 8. Update match status (mirrors the browser poller's apiStatus logic) ──
+      // stats_verified_at (migration_v59) is stamped unconditionally here too
+      // — reaching this line means this run passed the isStale check above,
+      // so the stats just written are trustworthy. Shared with
+      // scrape-scorecard's identical convention so the admin panel's
+      // "⚠ unverified" badge (status='completed' with stats_verified_at
+      // still null) works the same regardless of which data source completed
+      // the match.
       const apiStatus = stage === 'completed' ? 'completed' : stage === 'live' ? 'in_progress' : null
-      if (apiStatus && match.status !== apiStatus) {
-        await sb.from('matches').update({ status: apiStatus }).eq('id', match.id)
-      }
+      const matchUpdate: Record<string, unknown> = { stats_verified_at: new Date().toISOString() }
+      if (apiStatus && match.status !== apiStatus) matchUpdate.status = apiStatus
+      await sb.from('matches').update(matchUpdate).eq('id', match.id)
 
       // ── 9. Bump the progress watermark now that this read has landed ────
       if (newProgress.innings !== storedProgress.innings || newProgress.balls !== storedProgress.balls) {
