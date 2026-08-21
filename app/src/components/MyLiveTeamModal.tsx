@@ -126,7 +126,7 @@ export default function MyLiveTeamModal({
                     <Text style={styles.sectionPts}>{s.team.pts} pts</Text>
                   </View>
                   <View style={styles.sectionPanel}>
-                    <TeamPointsBreakdown team={s.team} footerLabel={`${s.mw.label} · ${s.mw.match} · ${s.mw.date}`} />
+                    <TeamPointsBreakdown team={s.team} footerLabel={`${s.mw.label} · ${s.mw.match} · Team Total`} />
                   </View>
                 </View>
               ))}

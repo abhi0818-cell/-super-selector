@@ -346,7 +346,7 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
 
               {/* Matchweek total */}
               <LinearGradient colors={G.mwFooter} style={styles.mwFooter} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
-                <Text style={styles.mwFooterMatch}>{mw.label} · {mw.match} · {mw.date}</Text>
+                <Text style={styles.mwFooterMatch}>{mw.label} · {mw.match} · Team Total</Text>
                 <Text style={styles.mwFooterPts}>{team.pts} pts</Text>
               </LinearGradient>
 
