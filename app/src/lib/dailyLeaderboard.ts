@@ -204,16 +204,28 @@ export async function getDailyUserHistory(contestId: string, userId: string): Pr
   });
 
   const allPlayerIds = [...new Set((teamPlayers || []).map((tp: any) => tp.player_id))];
-  const [{ data: playerMeta }, { data: statRows }] = await Promise.all([
+  const [{ data: playerMeta }, { data: statRows }, { data: tpTeamRows }] = await Promise.all([
     supabase.from('players').select('id, name, team_id, role').in('id', allPlayerIds),
     supabase.from('player_match_stats')
       .select('match_id, player_id, batting, bowling, fielding')
       .in('match_id', matchIds).in('player_id', allPlayerIds),
+    // Tournament-scoped team assignment (migration_v43: team_id/credits/
+    // is_overseas are authoritative on tournament_players, not the global
+    // players row — that's just the bootstrap default). Mirrors web's
+    // getMatchHistoryDetailed fix — without this, a mid-tournament team
+    // correction (fixed on tournament_players, same place the pick-squad
+    // screen reads from) never showed up here, and this history kept
+    // reading the stale global players.team_id.
+    allPlayerIds.length
+      ? supabase.from('tournament_players').select('player_id, team_id').eq('tournament_id', tournamentId).in('player_id', allPlayerIds)
+      : Promise.resolve({ data: [] as any[] }),
   ]);
   const metaById: Record<string, any> = {};
   (playerMeta || []).forEach((p: any) => { metaById[p.id] = p; });
   const statIdx: Record<string, Record<string, any>> = {};
   (statRows || []).forEach((s: any) => { (statIdx[s.match_id] ??= {})[s.player_id] = s; });
+  const tpTeamById: Record<string, string> = {};
+  (tpTeamRows || []).forEach((r: any) => { tpTeamById[r.player_id] = r.team_id; });
 
   const scoreByTeam: Record<string, number> = {};
   (scores || []).forEach((s: any) => { scoreByTeam[s.user_team_id] = Number(s.total_points ?? 0); });
@@ -275,7 +287,10 @@ export async function getDailyUserHistory(contestId: string, userId: string): Pr
       const captaincy: CaptaincyRole = isCap ? 'captain' : isVc ? 'vice_captain' : 'normal';
 
       return {
-        name: meta.name || pid, team: meta.team_id || '', role, captaincy,
+        // Tournament-scoped team wins when we have one; falls back to the
+        // global players.team_id only for players with no tournament_players
+        // row yet (see tpTeamById fetch above).
+        name: meta.name || pid, team: tpTeamById[pid] ?? meta.team_id ?? '', role, captaincy,
         bat, bowl, field, bonus,
         multiplier: isCap ? 2 : isVc ? 1.5 : 1,
       };

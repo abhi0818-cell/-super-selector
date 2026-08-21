@@ -3110,9 +3110,10 @@ export function createDb(cfg = {}) {
      */
     async getTeamMatchPlayers(teamId, matchId) {
       const sb = await getClient();
-      const [{ data: team }, { data: tp }] = await Promise.all([
+      const [{ data: team }, { data: tp }, { data: matchRow }] = await Promise.all([
         sb.from('user_teams').select('name, captain_id, vice_captain_id, squad_id').eq('id', teamId).single(),
         sb.from('user_team_players').select('player_id').eq('user_team_id', teamId),
+        sb.from('matches').select('tournament_id').eq('id', matchId).single(),
       ]);
       const pids = (tp || []).map(r => r.player_id);
       const base = {
@@ -3122,13 +3123,24 @@ export function createDb(cfg = {}) {
         viceCaptainId: team?.vice_captain_id ?? null,
       };
       if (!pids.length) return { ...base, totalPoints: 0, players: [] };
-      const [{ data: players }, { data: stats }] = await Promise.all([
+      const tournamentId = matchRow?.tournament_id ?? null;
+      const [{ data: players }, { data: stats }, { data: tpTeamRows }] = await Promise.all([
         sb.from('players').select('id, name, role, team_id').in('id', pids),
         sb.from('player_match_stats').select('player_id, raw_points, batting, bowling, fielding')
           .eq('match_id', matchId).in('player_id', pids),
+        // Tournament-scoped team assignment (migration_v43: team_id/credits/
+        // is_overseas are authoritative on tournament_players, not the global
+        // players row — that's just the bootstrap default). Without this, a
+        // mid-tournament team correction (fixed on tournament_players, same
+        // place the selection screen reads from) never shows up here — the
+        // leaderboard kept reading the stale global players.team_id forever.
+        tournamentId
+          ? sb.from('tournament_players').select('player_id, team_id').eq('tournament_id', tournamentId).in('player_id', pids)
+          : Promise.resolve({ data: [] }),
       ]);
       const playerMap = Object.fromEntries((players || []).map(p => [p.id, p]));
       const statsMap  = Object.fromEntries((stats  || []).map(s => [s.player_id, s]));
+      const tpTeamMap = Object.fromEntries((tpTeamRows || []).map(r => [r.player_id, r.team_id]));
 
       // Teams linked to a squad (Season Long XIs — squad_id is set per
       // migration_v4) are the ones eligible for boosters (triple_captain,
@@ -3168,7 +3180,10 @@ export function createDb(cfg = {}) {
           player_id   : pid,
           name        : p.name || pid,
           role        : p.role || '',
-          team_id     : p.team_id ?? null,
+          // Tournament-scoped team wins when we have one; falls back to the
+          // global players.team_id only for players with no tournament_players
+          // row yet (see tournamentId fetch above).
+          team_id     : tpTeamMap[pid] ?? p.team_id ?? null,
           raw_points  : raw,
           batting     : s.batting   ?? null,
           bowling     : s.bowling   ?? null,
@@ -3578,7 +3593,7 @@ export function createDb(cfg = {}) {
       // 2. Match info
       const { data: matches, error: e2 } = await sb
         .from('matches')
-        .select('id, match_number, home_team_id, away_team_id, played_on, format, status')
+        .select('id, match_number, tournament_id, home_team_id, away_team_id, played_on, format, status')
         .in('id', matchIds);
       if (e2) throw e2;
 
@@ -3603,6 +3618,25 @@ export function createDb(cfg = {}) {
         .select('id, name, team_id, role')
         .in('id', allPlayerIds);
       if (e5) throw e5;
+
+      // 5b. Tournament-scoped team assignments (migration_v43: team_id is
+      // authoritative on tournament_players, not the global players row —
+      // that's just the bootstrap default). Keyed by tournament since this
+      // history can span matches from more than one tournament. Without
+      // this, a mid-tournament team correction (fixed on tournament_players,
+      // same place the selection screen reads from) never showed up here —
+      // the leaderboard kept reading the stale global players.team_id.
+      const tournamentIds = [...new Set((matches || []).map(m => m.tournament_id).filter(Boolean))];
+      let tpTeamMap = {};
+      if (tournamentIds.length && allPlayerIds.length) {
+        const { data: tpTeamRows, error: e5b } = await sb
+          .from('tournament_players')
+          .select('tournament_id, player_id, team_id')
+          .in('tournament_id', tournamentIds)
+          .in('player_id', allPlayerIds);
+        if (e5b) throw e5b;
+        tpTeamMap = Object.fromEntries((tpTeamRows || []).map(r => [`${r.tournament_id}|${r.player_id}`, r.team_id]));
+      }
 
       // 6. Player match stats for all relevant combos
       const { data: stats, error: e6 } = await sb
@@ -3647,7 +3681,10 @@ export function createDb(cfg = {}) {
             return {
               player_id : pid,
               name      : p.name      || pid,
-              team_id   : p.team_id   || '',
+              // Tournament-scoped team wins when we have one; falls back to
+              // the global players.team_id only for players with no
+              // tournament_players row yet (see tpTeamMap fetch above).
+              team_id   : tpTeamMap[`${match.tournament_id}|${pid}`] ?? p.team_id ?? '',
               role      : p.role      || '',
               raw_points: ps?.raw_points ?? null,
               batting   : ps?.batting   ?? null,
