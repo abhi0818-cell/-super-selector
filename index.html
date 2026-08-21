@@ -5028,7 +5028,14 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       if (!section || !list) return;
       if (!state.tournaments.length) { section.style.display = 'none'; return; }
       section.style.display = 'block';
-      list.innerHTML = state.tournaments.map(t => {
+      // Active tournament(s) first, then inactive — so the tournament
+      // you're most likely managing right now isn't buried below a long
+      // history of past/inactive ones.
+      const sortedTournaments = [
+        ...state.tournaments.filter(t => t.is_active),
+        ...state.tournaments.filter(t => !t.is_active),
+      ];
+      list.innerHTML = sortedTournaments.map(t => {
         const active = !!t.is_active;
         return `
           <div style="padding:10px 12px;
@@ -5657,6 +5664,17 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
                       await window.__admin?.computeAndSaveSLScoresForMatch?.(matchId);
                     } catch (e) { console.warn('rescore after alias failed', e); }
                   }
+                  // Push this alias into the live in-memory NAME_ALIASES map and
+                  // re-render the Fantasy Scorecard right away — otherwise a name
+                  // fixed here only clears on that panel once its live poller
+                  // happens to tick (hydrateNameAliasesFromDb's other call site),
+                  // and that poller has already stopped for any completed match,
+                  // which is exactly when Review-tab cleanup usually happens. See
+                  // the "why does the Fantasy Scorecard still show it" thread.
+                  try {
+                    const changed = await hydrateNameAliasesFromDb(tid);
+                    if (changed) window.__admin?.renderFantasyScorecard?.();
+                  } catch (e) { console.warn('hydrateNameAliasesFromDb after alias failed', e); }
                   row.remove();
                   // Update badge
                   const remaining = panel.querySelectorAll('.unmatched-row').length;
@@ -5706,6 +5724,11 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
                     try {
                       await loadPlayersForActiveTournament();
                       renderPool();
+                      // Load the alias this action just saved (rawName → newId)
+                      // into NAME_ALIASES before re-rendering, same reasoning as
+                      // the "Save alias" handler above — don't wait for the live
+                      // poller's next tick, which may not be running at all.
+                      await hydrateNameAliasesFromDb(tid).catch(e => console.warn('hydrateNameAliasesFromDb after add-new-player failed', e));
                       window.__admin?.renderFantasyScorecard?.();
                     } catch (e) { console.warn('player pool refresh after add-new-player failed', e); }
                   }
@@ -5912,6 +5935,19 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
                       await window.__admin?.computeAndSaveSLScoresForMatch?.(matchId);
                     } catch (e) { console.warn('rescore after fielding credit failed', e); }
                   }
+                  // If this created an alias (non-ambiguous case), push it into
+                  // NAME_ALIASES and re-render the Fantasy Scorecard now, instead
+                  // of waiting for a live poller tick that may not be running
+                  // (e.g. the match already completed). Ambiguous issues never
+                  // get an alias by design (see resolveFieldingIssueAsCredit) —
+                  // that raw name will still show as unmatched next time it
+                  // appears, which is expected, not a bug.
+                  if (aliasCreated) {
+                    try {
+                      const changed = await hydrateNameAliasesFromDb(tid);
+                      if (changed) window.__admin?.renderFantasyScorecard?.();
+                    } catch (e) { console.warn('hydrateNameAliasesFromDb after fielding credit failed', e); }
+                  }
                   row.remove();
                   const remaining = panel.querySelectorAll('.fi-row').length;
                   if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
@@ -5966,6 +6002,16 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
                       await window.__admin?.computeAndSaveSLScoresForMatch?.(matchId);
                     } catch (e) { console.warn('rescore after add+credit failed', e); }
                   }
+                  // Same reasoning as the other resolve handlers above: don't
+                  // wait for a live poller tick (which may not be running) to
+                  // pick up the alias this just saved and refresh the Fantasy
+                  // Scorecard's red rows.
+                  if (aliasCreated) {
+                    try {
+                      await hydrateNameAliasesFromDb(tid);
+                    } catch (e) { console.warn('hydrateNameAliasesFromDb after add+credit failed', e); }
+                  }
+                  window.__admin?.renderFantasyScorecard?.();
                   row.remove();
                   const remaining = panel.querySelectorAll('.fi-row').length;
                   if (badge) { badge.textContent = remaining; badge.style.display = remaining ? 'inline' : 'none'; }
