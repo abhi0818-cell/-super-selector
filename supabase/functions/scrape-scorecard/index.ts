@@ -1352,7 +1352,7 @@ Deno.serve(async (req: Request) => {
             'dismissal-text': b.dismissed ? (b.dismissalText ?? 'out') : 'not out',
           })),
           bowling: bowl.map(b => ({
-            bowler: { name: b.name }, o: b.overs, m: b.maidens, r: b.runs, w: b.wickets,
+            bowler: { name: b.name }, o: b.overs, m: b.maidens, r: b.runs, w: b.wickets, dots: b.dots,
           })),
         }
       })
