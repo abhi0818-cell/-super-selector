@@ -2,7 +2,7 @@
  * check-toss — Supabase Edge Function
  *
  * Confirms the toss (winner + bat/bowl decision) for any match starting
- * within the next 20 minutes, from two independent sources — CricAPI and
+ * within the next 30 minutes, from two independent sources — CricAPI and
  * CricketAddictor — so the admin has an early, corroborated signal well
  * before lock-matches freezes squads at start_time.
  *
@@ -21,7 +21,7 @@
  *      notifying.
  *   3. No toss yet, and still more than 10 minutes to start_time →
  *      toss_status = 'pending', no action. Normal state for most of the
- *      20-minute window; toss usually happens close to (sometimes right at)
+ *      30-minute window; toss usually happens close to (sometimes right at)
  *      start_time.
  *
  * Why the delay decision point is start_time MINUS 10 minutes, not
@@ -81,8 +81,10 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 const UA = 'Mozilla/5.0 (compatible; SuperSelector/1.0)'
 
-// Window opens this many minutes before start_time...
-const CHECK_WINDOW_MINUTES = 20
+// Window opens this many minutes before start_time. Widened from 20 to 30
+// (2026-08-22) to give matches more polling passes before the T-10 delay
+// decision point below — same delay/confirm logic, just a longer runway.
+const CHECK_WINDOW_MINUTES = 30
 // ...and "no toss yet" only counts as a delay signal once we're within this
 // many minutes of start_time (i.e. start_time - DELAY_DECISION_BUFFER_MINUTES
 // has passed) — see the file header for why this needs a real buffer before
