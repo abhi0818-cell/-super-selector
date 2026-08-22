@@ -2499,9 +2499,17 @@ export function createDb(cfg = {}) {
       const sb = await getClient();
       let mq = sb
         .from('matches')
-        .select('id, match_number, format, home_team_id, away_team_id, external_id, played_on, status, notes')
+        .select('id, match_number, format, home_team_id, away_team_id, external_id, data_source, scorecard_url, played_on, status, notes')
         .eq('status', 'completed')
-        .not('external_id', 'is', null);
+        // Was `.not('external_id', 'is', null)` — CricAPI-only, so it silently
+        // excluded every scraper-tracked match, which usually has no
+        // external_id at all (it identifies by scorecard_url instead). A row
+        // is "actionable" here if it has EITHER identifier; the caller
+        // (admin.js finalizeCompletedMatches) resolves which track each match
+        // is actually on via resolveMatchTrack() and handles them accordingly
+        // (data_source/scorecard_url are now selected above for exactly that).
+        // See docs/score_audit_track_streamline_plan.md §3.4/§3.5.
+        .or('external_id.not.is.null,scorecard_url.not.is.null');
       if (tournamentId) mq = mq.eq('tournament_id', tournamentId);
       const { data: completed, error: e1 } = await mq;
       if (e1) throw e1;

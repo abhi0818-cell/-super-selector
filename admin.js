@@ -72,6 +72,30 @@
   // NB: A.TEAMS_DATA — always read as A.TEAMS_DATA (reference reassigned on data loads)
   // NB: A.ALL_PLAYER_IDS / A.playersSource — use A. prefix for reads AND writes
 
+    // ─── MATCH DATA-SOURCE TRACK RESOLUTION ─────────────────────────────────
+    /**
+     * Resolves which data source a match should be scored from: 'cricapi' or
+     * 'scraper'. A per-match `data_source` override ('cricapi'/'scraper') wins
+     * over the tournament's `scraper_enabled` default; 'auto' (or unset) falls
+     * back to that default.
+     *
+     * This is the client-side copy of the exact same eligibility rule already
+     * implemented server-side in poll-cricapi/index.ts and
+     * scrape-scorecard/index.ts — kept here as the single client-side source
+     * of truth so admin.js's per-match actions (Finalize, Score Audit, Poll/
+     * Scrape visibility) don't each re-derive it separately. See
+     * docs/score_audit_track_streamline_plan.md.
+     *
+     * @param {object} match       a matches row — only `data_source` is read
+     * @param {object} tournament  the match's tournament row — only `scraper_enabled` is read
+     * @returns {'cricapi'|'scraper'}
+     */
+    function resolveMatchTrack(match, tournament) {
+      const src = match?.data_source || 'auto';
+      if (src === 'cricapi') return 'cricapi';
+      if (src === 'scraper') return 'scraper';
+      return tournament?.scraper_enabled ? 'scraper' : 'cricapi';
+    }
 
     // ─── PLAYER ADMIN ────────────────────────────────────────────────────────
     // All functions below this point (through RULES EDITOR) live in admin.js
@@ -1607,15 +1631,25 @@
                                    && m.status !== 'abandoned' && m.status !== 'cancelled';
               const isFinished  = m.status === 'completed';
               const matchTournament = state.tournaments?.find(t => t.id === m.tournament_id);
-              // Mirrors the eligibility logic in poll-cricapi/index.ts: a per-match
-              // data_source override ('cricapi'/'scraper') wins over the tournament
-              // default; 'auto' (or unset) falls back to scraper_enabled.
-              const src = m.data_source || 'auto';
-              const isCricApiDriven = m.external_id && (src === 'cricapi' || (src !== 'scraper' && !matchTournament?.scraper_enabled));
+              // Track resolution lives in resolveMatchTrack() (top of this file) —
+              // the client-side copy of the same rule poll-cricapi/index.ts and
+              // scrape-scorecard/index.ts already implement server-side.
+              const track = resolveMatchTrack(m, matchTournament);
+              const isCricApiDriven = m.external_id && track === 'cricapi';
+              // Finalize used to be gated on m.external_id alone, which assumes
+              // every actionable match has a CricAPI id — scraper-tracked matches
+              // identify by scorecard_url instead and usually have no external_id
+              // at all, so that gate hid Finalize completely for them once
+              // completed (no external_id => hidden; isInPlay => false once done;
+              // Scrape => also isInPlay-only). See
+              // docs/score_audit_track_streamline_plan.md §3.5.
+              const hasSourceId = track === 'cricapi' ? !!m.external_id : !!m.scorecard_url;
+              const finalizeTitle = track === 'cricapi'
+                ? 'Fetch scorecard from CricAPI (reusing a finished-looking cache when available) &amp; save fantasy points'
+                : 'Fetch scorecard from the scraper &amp; save fantasy points';
               return `
-                ${(isFinished || isInPlay) && m.external_id
-                  ? `<button class="row-finalize" data-act="finalize" title="Fetch scorecard &amp; save fantasy points">Finalize</button>
-                     <button class="row-recalc" data-act="recalc" title="Re-parse cached scorecard &amp; overwrite player stats">Recalc</button>`
+                ${(isFinished || isInPlay) && hasSourceId
+                  ? `<button class="row-finalize" data-act="finalize" title="${finalizeTitle}">Finalize</button>`
                   : ''}
                 ${isFinished
                   ? `<button class="row-fielding" data-act="fielding"
@@ -1652,7 +1686,7 @@
                               color:rgba(80,160,255,0.95);cursor:pointer;"
                        title="Poll CricAPI now — fetch scorecard, score it, write to the database (same as the cron job)">📡 Poll</button>`
                   : ''}
-                ${isInPlay
+                ${isInPlay && track === 'scraper'
                   ? `<button class="row-scrape" data-act="scrape"
                        style="font-size:11px;padding:2px 7px;border-radius:4px;
                               background:rgba(120,200,80,0.10);border:1px solid rgba(120,200,80,0.4);
@@ -1678,8 +1712,7 @@
           el.addEventListener('input',  () => el.classList.add('dirty'));
         });
         tr.querySelector('[data-act="del"]').addEventListener('click', () => deleteMatchHandler(id));
-        tr.querySelector('[data-act="finalize"]')?.addEventListener('click', () => finalizeMatchById(id));
-        tr.querySelector('[data-act="recalc"]')?.addEventListener('click',  () => forceRefinalizeMatch(id));
+        tr.querySelector('[data-act="finalize"]')?.addEventListener('click', () => finalizeMatchRouted(id));
         tr.querySelector('[data-act="poll"]')?.addEventListener('click', async (e) => {
           const btn = e.currentTarget;
           btn.disabled = true; btn.textContent = '⏳';
@@ -1714,119 +1747,8 @@
         tr.querySelector('[data-act="scrape"]')?.addEventListener('click', async (e) => {
           const btn = e.currentTarget;
           btn.disabled = true; btn.textContent = '⏳';
-          try {
-            // Call the Edge Function for this specific match
-            const supabaseUrl = state.db._supabaseUrl?.() ?? '';
-            const anonKey     = state.db._anonKey?.() ?? '';
-            const edgeFnUrl   = supabaseUrl.replace('.supabase.co', '.supabase.co/functions/v1') + '/scrape-scorecard';
-            const res = await fetch(edgeFnUrl, {
-              method : 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${anonKey}` },
-              body   : JSON.stringify({ matchId: id }),
-            });
-            const json = await res.json();
-            if (!json.ok) throw new Error(json.error ?? 'Scrape failed');
-            const r = json.results?.[0];
-            if (r?.status === 'ok') {
-              // Update cached scorecard_url in state
-              const m = state.matches.find(x => x.id === id);
-              if (m && r.url) m.scorecard_url = r.url;
-              if (r.completionMarked && m) m.status = 'completed';
-              // A 'status: ok' result only ever comes back from the non-stale
-              // write path (see scrape-scorecard/index.ts) — the server just
-              // stamped stats_verified_at for real, so clear any "⚠ unverified"
-              // badge immediately instead of waiting for the next full reload.
-              if (m) m.stats_verified_at = new Date().toISOString();
-              const bits = [`🕷 Scraped ${r.matched} players from ${r.source}`];
-              if (r.unmatched?.length) bits.push(`${r.unmatched.length} unmatched`);
-              if (r.fieldingCredited) bits.push(`${r.fieldingCredited} fielding credit${r.fieldingCredited===1?'':'s'} auto-derived`);
-              if (r.fieldingIssues)   bits.push(`${r.fieldingIssues} fielding issue${r.fieldingIssues===1?'':'s'} need review (see ⚠️ Fielding Issues below)`);
-              if (r.completionMarked) bits.push(`match marked completed`);
-              toast(bits.join(' — ') + '.', r.fieldingIssues || r.completionMarked ? 6000 : 4000);
-              renderMatchesAdmin();
-              // Pull the fresh player_match_stats this scrape just wrote and
-              // rebuild the Live/Fantasy scorecard panel right away — otherwise
-              // it stays on whatever was last cached (stale until the next poll
-              // tick, a Connect/reconnect, or Fetch now), which is exactly the
-              // mismatch between "points just scraped" and "what admin sees".
-              if (m) {
-                try {
-                  const [statRows, rawScorecard] = await Promise.all([
-                    state.db.getPlayerStatsForMatchFull(id),
-                    state.db.getMatchScorecard(id), // raw scrape this run just cached — every name, matched or not
-                  ]);
-                  console.info(`[Scrape Now] player_match_stats rows for match ${id}:`, statRows.length, statRows);
-                  // The squad-only reconstruction needs both teams assigned to this
-                  // match; the raw scraped scorecard doesn't (it's built straight
-                  // from the scraped team names, no team_id lookup involved) — so
-                  // only skip `built` (and its diagnostics) when teams are missing,
-                  // not the whole render.
-                  let built = null;
-                  if (!m.home_team_id || !m.away_team_id) {
-                    if (!rawScorecard) toast(`Saved ${statRows.length} player rows, but this match has no home_team_id/away_team_id set — can't build the scorecard table without both teams assigned.`, 6000);
-                  } else {
-                    built = buildLiveScorecardFromStats(m, statRows);
-                    if (!built) {
-                      const resolvedCount = statRows.filter(s => A.PLAYERS.some(p => p.id === s.player_id)).length;
-                      const rosterCount   = A.PLAYERS.filter(p => (p.team_id || p.team) === m.home_team_id || (p.team_id || p.team) === m.away_team_id).length;
-                      const matchedTeamIds = [...new Set(
-                        statRows.map(s => { const pl = A.PLAYERS.find(p => p.id === s.player_id); return pl && (pl.team_id || pl.team); }).filter(Boolean)
-                      )];
-                      console.info('[Scrape Now] diagnostic:', {
-                        statRowCount: statRows.length, resolvedCount, rosterCount,
-                        playersInPool: A.PLAYERS.length, playersSource: A.playersSource,
-                        matchedTeamIds, expects: [m.home_team_id, m.away_team_id],
-                      });
-                      if (!rawScorecard) {
-                        if (resolvedCount === 0) {
-                          toast(`Saved ${statRows.length} player rows, but NONE of those player_ids exist in the currently loaded ` +
-                            `pool (${A.PLAYERS.length} players, source: ${A.playersSource}). Your player pool for ${m.home_team_id}/${m.away_team_id} ` +
-                            `has ${rosterCount} players — if that's 0, this tournament's roster was never set up. If it's >0, the scraper resolved ` +
-                            `to different player records than your roster (re-check Player Linking).`, 9000);
-                        } else {
-                          toast(`Saved ${statRows.length} player rows (${resolvedCount} resolved to a player), but their team_id didn't match ` +
-                            `${m.home_team_id}/${m.away_team_id}: ${matchedTeamIds.join(', ') || 'none'} — fix the mismatch in Teams/Players.`, 8000);
-                        }
-                      }
-                    }
-                  }
-                  // Prefer the raw scraped scorecard this run just cached in
-                  // match_scorecards (every name as scraped, matched or not,
-                  // with dismissal text) over the squad-only reconstruction —
-                  // same rich view CricAPI matches get.
-                  if (rawScorecard || built) {
-                    state.lastScorecard = rawScorecard || built;
-                    render();
-                    renderScorecard();
-                    renderFantasyScorecard();
-                    $('#scorecardSection')?.setAttribute('open', '');
-                  }
-                } catch (err2) {
-                  console.warn('Scrape Now: scorecard refresh failed:', err2.message);
-                  toast('Scorecard refresh failed: ' + err2.message, 5000);
-                }
-              }
-            } else {
-              const detail = r?.error ?? r?.fallback ?? r?.url ?? '';
-              console.warn('Scrape Now failed:', r);
-              // A 'stale_skipped' result can still have flipped the match to
-              // 'completed' (the staleness guard only distrusts the stats/
-              // scorecard numbers on this read, not a genuine completion
-              // signal — see scrape-scorecard/index.ts step 3b) — reflect that
-              // in local state and the row immediately instead of leaving the
-              // admin staring at a stale-looking toast with no indication the
-              // match actually finished.
-              const m = state.matches.find(x => x.id === id);
-              if (r?.completionMarked && m) {
-                m.status = 'completed';
-                renderMatchesAdmin();
-              }
-              toast(`Scrape: ${r?.status ?? 'unknown'} — ${detail}` +
-                (r?.completionMarked ? ' — match marked completed despite stale stats; re-scrape once a fresher read lands to fill in stats.' : ''), 7000);
-            }
-          } catch (err) {
-            toast('Scrape failed: ' + err.message, 5000);
-          } finally { btn.disabled = false; btn.textContent = '🕷 Scrape'; }
+          await scrapeMatchNow(id); // extracted — see scrapeMatchNow() for the full flow
+          btn.disabled = false; btn.textContent = '🕷 Scrape';
         });
         tr.querySelector('[data-act="revert-lock"]')?.addEventListener('click', async (e) => {
           const btn = e.currentTarget;
@@ -2414,33 +2336,84 @@
      */
     async function finalizeOneMatch(m, apiKey) {
       const matchLabel = `M${m.match_number ?? '?'} ${m.home_team_id || '—'} vs ${m.away_team_id || '—'}`;
-      // Always fetch fresh from CricAPI — a cached version may be mid-match
-      // (e.g. from the live poller stopping early). Overwrite with final result.
+
+      // Reuse a cached scorecard ONLY if it already looks finished — a cache
+      // taken mid-match (e.g. the live poller's last snapshot before a chase
+      // wrapped up) would otherwise get reused forever, since this would keep
+      // "succeeding" without ever fetching the actual final data. If the
+      // cached payload doesn't look done yet, always fetch fresh from CricAPI.
+      // (Absorbed from the former forceRefinalizeMatch/"Recalc" — Finalize and
+      // Recalc were merged into this one function; see
+      // docs/score_audit_track_streamline_plan.md §3.2.)
       let json;
-      json = await fetchJsonWithFallback(k => `match_scorecard?apikey=${encodeURIComponent(k)}&id=${encodeURIComponent(m.external_id)}`);
-      await state.db.saveMatchScorecard(m.id, json);
+      let cached = null;
+      try { cached = await state.db.getMatchScorecard(m.id); } catch (_) {}
+      const cachedLooksFinished = cached && matchLifecycle(cached, m.format) === 'completed';
+
+      if (cachedLooksFinished) {
+        json = cached;
+      } else {
+        json = await fetchJsonWithFallback(k => `match_scorecard?apikey=${encodeURIComponent(k)}&id=${encodeURIComponent(m.external_id)}`);
+        await state.db.saveMatchScorecard(m.id, json);
+      }
+
       const players = fromCricAPI(json, matchSquadFor(m), m.format);
       if (!players.length) throw new Error('CricAPI returned no player rows');
+
+      // Fielding summary to console for easy verification (also absorbed from
+      // the former Recalc, which had this and Finalize didn't).
+      const fieldingPlayers = players.filter(p => p.fielding &&
+        (p.fielding.catches + p.fielding.stumpings + p.fielding.runOutDirect + p.fielding.runOutIndirect) > 0);
+      console.group(`[Finalize] M${m.match_number ?? '?'} — ${players.length} players, ${fieldingPlayers.length} with fielding`);
+      console.table(fieldingPlayers.map(p => ({
+        name: p.name,
+        catches: p.fielding.catches,
+        stumpings: p.fielding.stumpings,
+        runOutDirect: p.fielding.runOutDirect,
+        runOutIndirect: p.fielding.runOutIndirect,
+        fieldingPts: calcFielding(p.fielding, m.format || 'T20').total,
+      })));
+      console.groupEnd();
       // Merge (not skip) duplicate API names that resolve to the same local
       // player — see mergeApiPlayersByLocalId. Skipping used to silently
       // drop whichever entry lost the race (e.g. a fielding-only mention).
       const { matched, unmatched: unmatchedPl } = mergeApiPlayersByLocalId(players, findLocalByName);
       const unmatchedNames = unmatchedPl.map(p => p.name);
-      const rows = matched.map(({ local, pl }) => {
-        // Use the local DB role, not the API-derived role.  fromCricAPI promotes any player
-        // who both bats AND bowls to 'ar', which incorrectly triggers the duck penalty for
-        // specialist bowlers who bat lower-order.  The DB role is the authoritative designation.
-        const s = calculateScore({ ...pl, role: local.role, captaincy: 'normal' }, m.format);
-        return {
-          playerId: local.id,
-          batting : pl.batting  ?? null,
-          bowling : pl.bowling  ?? null,
-          fielding: pl.fielding ?? null,
-          rawPoints: s.rawPoints,
-        };
-      });
-      if (!rows.length) throw new Error(`No player name from API matched local pool (${players.length} API players, all unmatched)`);
-      await state.db.bulkUpsertPlayerMatchStats(m.id, rows);
+
+      // Manual-correction guard: a player row an admin corrected by hand
+      // (Review tab "Credit", or the row's 🥎 Fielding button — both tag the
+      // row source='scraper_manual') always wins. Without this, the blind
+      // upsert below would silently overwrite that correction with whatever
+      // CricAPI's own parse produces — with no error, no warning, the fix
+      // just gone. Mirrors the identical guard scrape-scorecard/index.ts
+      // already has server-side (search "per-player regression guard" there).
+      // See docs/score_audit_track_streamline_plan.md §3.6.
+      let manuallyCorrectedIds = new Set();
+      try {
+        const existingStats = await state.db.getPlayerStatsForMatch(m.id);
+        manuallyCorrectedIds = new Set(
+          existingStats.filter(s => s.source === 'scraper_manual').map(s => s.player_id)
+        );
+      } catch (_) { /* best-effort — a failed lookup here just means no rows get protected this run */ }
+
+      const protectedMatches = matched.filter(({ local }) => manuallyCorrectedIds.has(local.id));
+      const rows = matched
+        .filter(({ local }) => !manuallyCorrectedIds.has(local.id))
+        .map(({ local, pl }) => {
+          // Use the local DB role, not the API-derived role.  fromCricAPI promotes any player
+          // who both bats AND bowls to 'ar', which incorrectly triggers the duck penalty for
+          // specialist bowlers who bat lower-order.  The DB role is the authoritative designation.
+          const s = calculateScore({ ...pl, role: local.role, captaincy: 'normal' }, m.format);
+          return {
+            playerId: local.id,
+            batting : pl.batting  ?? null,
+            bowling : pl.bowling  ?? null,
+            fielding: pl.fielding ?? null,
+            rawPoints: s.rawPoints,
+          };
+        });
+      if (!rows.length && !protectedMatches.length) throw new Error(`No player name from API matched local pool (${players.length} API players, all unmatched)`);
+      if (rows.length) await state.db.bulkUpsertPlayerMatchStats(m.id, rows);
       await computeAndSaveXIScoresForMatch(m.id);
       await computeAndSaveSLScoresForMatch(m.id);
       // Only mark the match row 'completed' if the scorecard we just fetched
@@ -2468,6 +2441,7 @@
         scorecard: json,
         matchLooksFinished: looksFinished,
         liveStatusText: json?.data?.status ?? json?.status ?? '',
+        manuallyProtected: protectedMatches.length,
       };
     }
 
@@ -2508,6 +2482,10 @@
         const hasUnmatched = result.unmatchedNames?.length > 0;
         const hasFieldingIssues = fIssues.length > 0;
         const notActuallyFinished = result.matchLooksFinished === false;
+        const protectedCount = result.manuallyProtected || 0;
+        const protectedNote = protectedCount
+          ? ` 🛡 ${protectedCount} manually-corrected player row${protectedCount > 1 ? 's' : ''} preserved (not overwritten).`
+          : '';
         if (hasUnmatched || hasFieldingIssues || notActuallyFinished) {
           let warn = '';
           if (notActuallyFinished) {
@@ -2520,7 +2498,7 @@
           if (hasFieldingIssues) {
             warn += `⚠ ${fIssues.length} fielding event${fIssues.length>1?'s':''} not credited: ${escapeHtml(summarizeFieldingIssues(fIssues))}. `;
           }
-          statusEl.innerHTML = `✓ ${result.match} — ${result.players} players saved. `
+          statusEl.innerHTML = `✓ ${result.match} — ${result.players} players saved.${escapeHtml(protectedNote)} `
             + `<span style="color:var(--bad);">${warn}`
             + `Open <strong>Fantasy Scorecard ↓</strong>${hasUnmatched ? ', click Link on the red rows,' : ''} then re-finalize.</span>`;
           const toastBits = [];
@@ -2532,8 +2510,8 @@
           $('#fantasyScorecardSection')?.setAttribute('open', '');
           $('#fantasyScorecardSection')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         } else {
-          statusEl.textContent = `✓ ${result.match} — ${result.players} players saved.`;
-          toast(`Finalized ${result.match}.`);
+          statusEl.textContent = `✓ ${result.match} — ${result.players} players saved.${protectedNote}`;
+          toast(`Finalized ${result.match}.${protectedCount ? ` (${protectedCount} manual correction${protectedCount > 1 ? 's' : ''} preserved)` : ''}`);
         }
       } catch (e) {
         const kind = classifyFinalizeError(e.message);
@@ -2584,135 +2562,174 @@
       }
     }
 
+    // forceRefinalizeMatch ("Recalc") was merged into finalizeOneMatch —
+    // see the cache-check at the top of that function, and
+    // docs/score_audit_track_streamline_plan.md §3.2 for why. Kept as a
+    // console alias for old muscle-memory / bookmarks pointing at
+    // window.__recalcMatch — repointed at finalizeMatchRouted (defined just
+    // below) once that existed, so the console shortcut is track-aware too
+    // instead of assuming CricAPI.
+
     /**
-     * Force-recalculate a match that is already finalized.
-     * Re-parses the cached scorecard with the current fromCricAPI + calcFielding
-     * logic and overwrites player_match_stats (upsert — no delete needed).
-     * Also exposed as window.__recalcMatch(matchId) for console use.
+     * Scrape one match now — calls the scrape-scorecard edge function for
+     * this matchId (the same function the 15-min cron runs for every live
+     * scraper-tracked match) and refreshes whatever's currently on screen.
+     * This is the scraper-track sibling of finalizeOneMatch/finalizeMatchById
+     * — pulled out into its own function (previously inlined directly in the
+     * row's 🕷 Scrape click handler) so finalizeMatchRouted() below can call
+     * it too when Finalize is clicked on a scraper-tracked match. See
+     * docs/score_audit_track_streamline_plan.md §3.2.
+     *
+     * Unlike finalizeMatchById, this manages no button state itself — the
+     * caller (the row's own Scrape handler, or finalizeMatchRouted) is
+     * responsible for disabling/relabeling whichever button it was clicked
+     * from, since two different buttons can now trigger this.
      */
-    async function forceRefinalizeMatch(matchId) {
-      const apiKey = $('#apiKey').value.trim();
-      if (!apiKey) { toast('Enter your CricAPI key in Settings first.', 4000); return; }
-      if (!state.db)  { toast('Connect to the database first.', 4000); return; }
-
-      const statusEl = $('#syncStatus');
-      const btn = document.querySelector(`#adminMatchesBody tr[data-id="${matchId}"] .row-recalc`);
-      if (btn) { btn.disabled = true; btn.textContent = '…'; }
-
+    async function scrapeMatchNow(matchId) {
       try {
-        // Build the match descriptor — try state.matches first, then listMatchesNeedingFinalization
-        let m = state.matches?.find(x => x.id === matchId);
-        if (!m) throw new Error('Match not found in state — reload the page and try again.');
-
-        // Prefer the cached scorecard ONLY if it already looks finished — a cache
-        // taken mid-match (e.g. the live poller's last snapshot before a chase
-        // wrapped up) would otherwise get reused forever, since Recalculate would
-        // keep "succeeding" without ever fetching the actual final data. If the
-        // cached payload doesn't look done yet, always go fetch fresh from CricAPI.
-        let json;
-        let cached = null;
-        try { cached = await state.db.getMatchScorecard(matchId); } catch (_) {}
-        const cachedLooksFinished = cached && matchLifecycle(cached, m.format) === 'completed';
-
-        if (cachedLooksFinished) {
-          json = cached;
-        } else if (m.external_id) {
-          statusEl.textContent = `Fetching latest scorecard for M${m.match_number} from CricAPI…`;
-          json = await fetchJsonWithFallback(k =>
-            `match_scorecard?apikey=${encodeURIComponent(k)}&id=${encodeURIComponent(m.external_id)}`
-          );
-          await state.db.saveMatchScorecard(matchId, json);
-        } else if (cached) {
-          // No external_id to refetch with — fall back to the stale cache, but
-          // the status banner below will flag it as not-yet-finished.
-          json = cached;
-        } else {
-          throw new Error('No external_id on this match and no cached scorecard — cannot recalc.');
-        }
-
-        const players = fromCricAPI(json, matchSquadFor(m), m.format || 'T20');
-        if (!players.length) throw new Error('Scorecard parsed 0 players — check payload.');
-
-        // Log fielding summary to console for easy verification
-        const fieldingPlayers = players.filter(p => p.fielding &&
-          (p.fielding.catches + p.fielding.stumpings + p.fielding.runOutDirect + p.fielding.runOutIndirect) > 0);
-        console.group(`[Recalc] M${m.match_number} — ${players.length} players, ${fieldingPlayers.length} with fielding`);
-        console.table(fieldingPlayers.map(p => ({
-          name: p.name,
-          catches: p.fielding.catches,
-          stumpings: p.fielding.stumpings,
-          runOutDirect: p.fielding.runOutDirect,
-          runOutIndirect: p.fielding.runOutIndirect,
-          fieldingPts: calcFielding(p.fielding, m.format || 'T20').total,
-        })));
-        console.groupEnd();
-
-        // Merge (not skip) duplicate API names resolving to the same local
-        // player — see mergeApiPlayersByLocalId; skipping used to silently
-        // drop whichever entry (e.g. a fielding-only mention) lost the race.
-        const { matched, unmatched: unmatchedPl2 } = mergeApiPlayersByLocalId(players, findLocalByName);
-        const unmatched = unmatchedPl2.length;
-        const rows = matched.map(({ local, pl }) => {
-          // Use local DB role — fromCricAPI promotes any player with both batting + bowling data
-          // to 'ar', which wrongly applies the duck penalty to specialist bowlers.
-          const s = calculateScore({ ...pl, role: local.role, captaincy: 'normal' }, m.format || 'T20');
-          return {
-            playerId: local.id,
-            batting:  pl.batting  ?? null,
-            bowling:  pl.bowling  ?? null,
-            fielding: pl.fielding ?? null,
-            rawPoints: s.rawPoints,
-          };
+        const supabaseUrl = state.db._supabaseUrl?.() ?? '';
+        const anonKey     = state.db._anonKey?.() ?? '';
+        const edgeFnUrl   = supabaseUrl.replace('.supabase.co', '.supabase.co/functions/v1') + '/scrape-scorecard';
+        const res = await fetch(edgeFnUrl, {
+          method : 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${anonKey}` },
+          body   : JSON.stringify({ matchId }),
         });
-        if (!rows.length) throw new Error(`No API player names matched local pool (${players.length} players, all unmatched).`);
-
-        await state.db.bulkUpsertPlayerMatchStats(matchId, rows);
-        await computeAndSaveXIScoresForMatch(matchId);
-        await computeAndSaveSLScoresForMatch(matchId);
-
-        const fIssues2 = players.fieldingIssues || [];
-        const notFinished = matchLifecycle(json, m.format) !== 'completed';
-        const liveStatusText = json?.data?.status ?? json?.status ?? '';
-        let issueText = '';
-        if (notFinished) issueText += ` ⚠ Scorecard doesn't look finished yet (status: "${liveStatusText || 'unknown'}") — recalculate again once the match actually ends.`;
-        if (fIssues2.length) issueText += ` ⚠ ${fIssues2.length} fielding event(s) not credited: ${summarizeFieldingIssues(fIssues2)}.`;
-        statusEl.innerHTML = `✓ Recalculated M${m.match_number} — ${rows.length} players updated, ${unmatched} unmatched. Fielding: ${fieldingPlayers.length} players credited.`
-          + (issueText ? `<span style="color:var(--bad);">${escapeHtml(issueText)}</span>` : '');
-        // Feed the Fantasy Scorecard panel so the fielding-issue banner is visible
-        // there too, not just in this status line (same gap as finalize had).
-        state.lastScorecard = json;
-        renderFantasyScorecard();
-        if (fIssues2.length || notFinished) {
-          $('#fantasyScorecardSection')?.setAttribute('open', '');
-          $('#fantasyScorecardSection')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        }
-        renderMatchesAdmin();
-        renderHistory();
-        // If the Leaderboard modal is already open, it doesn't auto-refresh on
-        // its own — re-render now so a Recalc'd score shows up immediately
-        // instead of looking "stuck" until the modal is closed and reopened.
-        if ($('#lbModal')?.classList.contains('open')) {
-          await renderLeaderboard();
-          maybeStartLbPolling();
-        }
-        if (fIssues2.length || notFinished) {
-          const bits = [];
-          if (notFinished) bits.push('match not finished yet');
-          if (fIssues2.length) bits.push(`${fIssues2.length} fielding event(s) not credited`);
-          toast(`Recalculated M${m.match_number} — but ${bits.join(' and ')}. Check status above.`, 6500);
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.error ?? 'Scrape failed');
+        const r = json.results?.[0];
+        if (r?.status === 'ok') {
+          // Update cached scorecard_url in state
+          const m = state.matches.find(x => x.id === matchId);
+          if (m && r.url) m.scorecard_url = r.url;
+          if (r.completionMarked && m) m.status = 'completed';
+          // A 'status: ok' result only ever comes back from the non-stale
+          // write path (see scrape-scorecard/index.ts) — the server just
+          // stamped stats_verified_at for real, so clear any "⚠ unverified"
+          // badge immediately instead of waiting for the next full reload.
+          if (m) m.stats_verified_at = new Date().toISOString();
+          const bits = [`🕷 Scraped ${r.matched} players from ${r.source}`];
+          if (r.unmatched?.length) bits.push(`${r.unmatched.length} unmatched`);
+          if (r.fieldingCredited) bits.push(`${r.fieldingCredited} fielding credit${r.fieldingCredited===1?'':'s'} auto-derived`);
+          if (r.fieldingIssues)   bits.push(`${r.fieldingIssues} fielding issue${r.fieldingIssues===1?'':'s'} need review (see ⚠️ Fielding Issues below)`);
+          if (r.completionMarked) bits.push(`match marked completed`);
+          toast(bits.join(' — ') + '.', r.fieldingIssues || r.completionMarked ? 6000 : 4000);
+          renderMatchesAdmin();
+          // Pull the fresh player_match_stats this scrape just wrote and
+          // rebuild the Live/Fantasy scorecard panel right away — otherwise
+          // it stays on whatever was last cached (stale until the next poll
+          // tick, a Connect/reconnect, or Fetch now), which is exactly the
+          // mismatch between "points just scraped" and "what admin sees".
+          if (m) {
+            try {
+              const [statRows, rawScorecard] = await Promise.all([
+                state.db.getPlayerStatsForMatchFull(matchId),
+                state.db.getMatchScorecard(matchId), // raw scrape this run just cached — every name, matched or not
+              ]);
+              console.info(`[Scrape Now] player_match_stats rows for match ${matchId}:`, statRows.length, statRows);
+              // The squad-only reconstruction needs both teams assigned to this
+              // match; the raw scraped scorecard doesn't (it's built straight
+              // from the scraped team names, no team_id lookup involved) — so
+              // only skip `built` (and its diagnostics) when teams are missing,
+              // not the whole render.
+              let built = null;
+              if (!m.home_team_id || !m.away_team_id) {
+                if (!rawScorecard) toast(`Saved ${statRows.length} player rows, but this match has no home_team_id/away_team_id set — can't build the scorecard table without both teams assigned.`, 6000);
+              } else {
+                built = buildLiveScorecardFromStats(m, statRows);
+                if (!built) {
+                  const resolvedCount = statRows.filter(s => A.PLAYERS.some(p => p.id === s.player_id)).length;
+                  const rosterCount   = A.PLAYERS.filter(p => (p.team_id || p.team) === m.home_team_id || (p.team_id || p.team) === m.away_team_id).length;
+                  const matchedTeamIds = [...new Set(
+                    statRows.map(s => { const pl = A.PLAYERS.find(p => p.id === s.player_id); return pl && (pl.team_id || pl.team); }).filter(Boolean)
+                  )];
+                  console.info('[Scrape Now] diagnostic:', {
+                    statRowCount: statRows.length, resolvedCount, rosterCount,
+                    playersInPool: A.PLAYERS.length, playersSource: A.playersSource,
+                    matchedTeamIds, expects: [m.home_team_id, m.away_team_id],
+                  });
+                  if (!rawScorecard) {
+                    if (resolvedCount === 0) {
+                      toast(`Saved ${statRows.length} player rows, but NONE of those player_ids exist in the currently loaded ` +
+                        `pool (${A.PLAYERS.length} players, source: ${A.playersSource}). Your player pool for ${m.home_team_id}/${m.away_team_id} ` +
+                        `has ${rosterCount} players — if that's 0, this tournament's roster was never set up. If it's >0, the scraper resolved ` +
+                        `to different player records than your roster (re-check Player Linking).`, 9000);
+                    } else {
+                      toast(`Saved ${statRows.length} player rows (${resolvedCount} resolved to a player), but their team_id didn't match ` +
+                        `${m.home_team_id}/${m.away_team_id}: ${matchedTeamIds.join(', ') || 'none'} — fix the mismatch in Teams/Players.`, 8000);
+                    }
+                  }
+                }
+              }
+              // Prefer the raw scraped scorecard this run just cached in
+              // match_scorecards (every name as scraped, matched or not,
+              // with dismissal text) over the squad-only reconstruction —
+              // same rich view CricAPI matches get.
+              if (rawScorecard || built) {
+                state.lastScorecard = rawScorecard || built;
+                render();
+                renderScorecard();
+                renderFantasyScorecard();
+                $('#scorecardSection')?.setAttribute('open', '');
+              }
+            } catch (err2) {
+              console.warn('Scrape Now: scorecard refresh failed:', err2.message);
+              toast('Scorecard refresh failed: ' + err2.message, 5000);
+            }
+          }
         } else {
-          toast(`Recalculated M${m.match_number} — ${fieldingPlayers.length} players with fielding points.`);
+          const detail = r?.error ?? r?.fallback ?? r?.url ?? '';
+          console.warn('Scrape Now failed:', r);
+          // A 'stale_skipped' result can still have flipped the match to
+          // 'completed' (the staleness guard only distrusts the stats/
+          // scorecard numbers on this read, not a genuine completion
+          // signal — see scrape-scorecard/index.ts step 3b) — reflect that
+          // in local state and the row immediately instead of leaving the
+          // admin staring at a stale-looking toast with no indication the
+          // match actually finished.
+          const m = state.matches.find(x => x.id === matchId);
+          if (r?.completionMarked && m) {
+            m.status = 'completed';
+            renderMatchesAdmin();
+          }
+          toast(`Scrape: ${r?.status ?? 'unknown'} — ${detail}` +
+            (r?.completionMarked ? ' — match marked completed despite stale stats; re-scrape once a fresher read lands to fill in stats.' : ''), 7000);
         }
-      } catch (e) {
-        statusEl.textContent = `✗ Recalc failed: ${e.message}`;
-        toast('Recalc failed: ' + e.message, 5000);
-        console.error('[forceRefinalizeMatch]', e);
-      } finally {
-        if (btn) { btn.disabled = false; btn.textContent = 'Recalc'; }
+      } catch (err) {
+        toast('Scrape failed: ' + err.message, 5000);
+      }
+    }
+
+    /**
+     * Finalize dispatcher — routes to the right track instead of assuming
+     * CricAPI. Used by the Schedule tab row's Finalize button and by Score
+     * Audit's Finalize/Re-finalize row actions, so every "Finalize"-labeled
+     * action in the admin — not just the Schedule tab row — goes to the
+     * correct backend. See docs/score_audit_track_streamline_plan.md §3.2.
+     *
+     * Deliberately looks up the match/tournament itself (rather than trusting
+     * a stale isCricApiDriven computed at render time) so it's safe to call
+     * from anywhere with just a matchId — including Score Audit, which never
+     * had a `track` variable in scope at all.
+     */
+    async function finalizeMatchRouted(matchId) {
+      const m = state.matches?.find(x => x.id === matchId);
+      const matchTournament = state.tournaments?.find(t => t.id === m?.tournament_id);
+      const track = resolveMatchTrack(m, matchTournament);
+      if (m && track === 'scraper') {
+        const btn = document.querySelector(`#adminMatchesBody tr[data-id="${matchId}"] .row-finalize`);
+        if (btn) { btn.disabled = true; btn.textContent = '…'; }
+        await scrapeMatchNow(matchId);
+        if (btn) { btn.disabled = false; btn.textContent = 'Finalize'; }
+      } else {
+        // cricapi track, or match not found locally (let finalizeMatchById's
+        // own listMatchesNeedingFinalization lookup be the source of truth —
+        // it already handles "already finalized" / "not found" gracefully).
+        await finalizeMatchById(matchId);
       }
     }
     // Console shortcut: window.__recalcMatch('match-uuid-here')
-    window.__recalcMatch = forceRefinalizeMatch;
+    window.__recalcMatch = finalizeMatchRouted;
 
     /**
      * Bulk finalize — processes every completed match that still needs stats.
@@ -2734,20 +2751,43 @@
           toast('Nothing to finalize.');
           return;
         }
-        const apiNeeded = pending.filter(m => !m.cachedScorecard).length;
-        statusEl.textContent = `Finalizing ${pending.length} match${pending.length===1?'':'es'}`
-          + (apiNeeded < pending.length ? ` (${pending.length - apiNeeded} from cache, ${apiNeeded} from CricAPI)` : '') + '…';
+
+        // Bulk finalize is CricAPI-only for now — scraper-tracked matches are
+        // skipped here (with a note), not looped through scrape-scorecard,
+        // since that edge function wasn't designed to be hammered N times in
+        // a tight client-side loop the way finalizeOneMatch is. Use the
+        // Schedule tab's per-row Finalize/Scrape for those instead. See
+        // docs/score_audit_track_streamline_plan.md §3.4/§7.
+        const activeTournament = (state.tournaments || []).find(t => t.id === state.activeTournamentId);
+        const cricapiPending  = pending.filter(m => resolveMatchTrack(m, activeTournament) === 'cricapi');
+        const scraperSkipped  = pending.filter(m => resolveMatchTrack(m, activeTournament) === 'scraper');
+
+        if (!cricapiPending.length) {
+          statusEl.textContent = `Nothing to bulk-finalize — all ${pending.length} pending match${pending.length===1?'':'es'} `
+            + `${pending.length===1?'is':'are'} scraper-tracked. Use the Schedule tab's row-level Finalize/Scrape for ${pending.length===1?'it':'them'}.`;
+          toast('Nothing to bulk-finalize — pending matches are scraper-tracked.', 6000);
+          return;
+        }
+
+        const apiNeeded = cricapiPending.filter(m => !m.cachedScorecard).length;
+        const skipNote = scraperSkipped.length
+          ? ` — ${scraperSkipped.length} scraper-tracked match${scraperSkipped.length===1?'':'es'} skipped, use Schedule tab Scrape/Finalize per row`
+          : '';
+        statusEl.textContent = `Finalizing ${cricapiPending.length} match${cricapiPending.length===1?'':'es'}`
+          + (apiNeeded < cricapiPending.length ? ` (${cricapiPending.length - apiNeeded} from cache, ${apiNeeded} from CricAPI)` : '')
+          + skipNote + '…';
 
         const ok = [], failures = [];
-        let playersTotal = 0, unmatchedTotal = 0;
+        let playersTotal = 0, unmatchedTotal = 0, protectedTotal = 0;
 
-        for (let i = 0; i < pending.length; i++) {
-          const m = pending[i];
-          btn.textContent = `Finalizing ${i+1} / ${pending.length}`;
+        for (let i = 0; i < cricapiPending.length; i++) {
+          const m = cricapiPending[i];
+          btn.textContent = `Finalizing ${i+1} / ${cricapiPending.length}`;
           try {
             const result = await finalizeOneMatch(m, apiKey);
             ok.push(result);
             playersTotal += result.players; unmatchedTotal += result.unmatched;
+            protectedTotal += result.manuallyProtected || 0;
           } catch (err) {
             const reason = err?.message || String(err);
             failures.push({ match: `M${m.match_number ?? '?'} ${m.home_team_id || '—'} vs ${m.away_team_id || '—'}`, externalId: m.external_id, reason, kind: classifyFinalizeError(reason) });
@@ -2763,10 +2803,12 @@
           console.log('Grouped:', Object.fromEntries(Object.entries(grouped).map(([k, v]) => [k, v.map(f => f.match)])));
         }
         console.groupEnd();
-        window.__lastFinalize = { ok, failures, grouped };
+        window.__lastFinalize = { ok, failures, grouped, scraperSkipped };
 
         statusEl.innerHTML = `
           <strong>${ok.length}</strong> finalized · <strong>${playersTotal}</strong> player rows · <strong>${unmatchedTotal}</strong> unmatched
+          ${protectedTotal ? ` · 🛡 <strong>${protectedTotal}</strong> manual correction${protectedTotal > 1 ? 's' : ''} preserved` : ''}
+          ${scraperSkipped.length ? ` · <strong>${scraperSkipped.length}</strong> scraper-tracked skipped (use Schedule tab per row)` : ''}
           ${failures.length ? `<br><span style="color:var(--bad);">${failures.length} failed</span> (${escapeHtml(summary)}) — see dev console (<code>window.__lastFinalize</code>) for the full list.` : ''}
         `;
 
@@ -2795,7 +2837,8 @@
 
         renderMatchesAdmin();
         renderHistory();
-        toast(`Finalized ${ok.length} — ${failures.length} failed.`);
+        toast(`Finalized ${ok.length} — ${failures.length} failed.`
+          + (scraperSkipped.length ? ` ${scraperSkipped.length} scraper-tracked skipped.` : ''));
       } catch (e) {
         statusEl.textContent = 'Finalize failed: ' + e.message;
         toast('Finalize failed: ' + e.message, 5000);
@@ -3171,7 +3214,7 @@
         // promotes any player who both batted AND bowled to 'ar', which
         // incorrectly triggers the duck penalty for specialist bowlers who
         // bat lower-order. The DB role is the authoritative designation
-        // (same pattern as finalizeOneMatch/forceRefinalizeMatch).
+        // (same pattern as finalizeOneMatch).
         const s = calculateScore({ ...pl, role: local.role, captaincy: 'normal' }, state.format);
         return {
           apiName: local.name,
@@ -4863,11 +4906,12 @@
      * left untouched) — no CricAPI call. This is the right fix for the
      * "bowler wrongly got duck penalty" class of bug: the captured stats
      * were always correct, only the role used to score them was wrong, so
-     * there's nothing to refetch. Use forceRefinalizeMatch/"Recalc" instead
+     * there's nothing to refetch. Use the row's "Finalize" (or Score Audit's
+     * "Re-finalize", same underlying function — see finalizeOneMatch) instead
      * only when the stored stats themselves are missing or wrong (e.g. a
      * genuinely incomplete scorecard) — for scraper-sourced tournaments that
-     * button also isn't reliable since matches usually have no real CricAPI
-     * external_id to refetch from.
+     * path also isn't reliable yet since matches usually have no real CricAPI
+     * external_id to refetch from (see docs/score_audit_track_streamline_plan.md §3.5).
      */
     async function recomputeStoredStatsForMatch(matchId) {
       if (!state.db) { toast('Connect a database first.'); return; }
@@ -4930,7 +4974,7 @@
           <tr>
             <td>M${m.match_number}</td>
             <td colspan="3" style="color:var(--bad);">Completed match — no player_match_stats at all</td>
-            <td><button class="row-audit-finalize" data-match-id="${m.id}" style="font-size:11px; padding:3px 8px;">Finalize</button></td>
+            <td><button class="row-audit-finalize" data-match-id="${m.id}" style="font-size:11px; padding:3px 8px;" title="Fetch this match's scorecard — from CricAPI or the scraper, whichever this match is tracked on — &amp; save fantasy points">Finalize</button></td>
           </tr>`);
       }
       for (const m of mismatches) {
@@ -4942,7 +4986,7 @@
             <td>${m.recomputed} <span style="color:${m.diff > 0 ? 'var(--accent-2)' : 'var(--bad)'};">(${m.diff > 0 ? '+' : ''}${m.diff})</span></td>
             <td>
               <button class="row-audit-fix" data-match-id="${m.matchId}" style="font-size:11px; padding:3px 8px;" title="Recompute from already-stored stats — no CricAPI call">Fix</button>
-              <button class="row-audit-recalc" data-match-id="${m.matchId}" style="font-size:11px; padding:3px 8px;" title="Refetch from CricAPI — only if the stored stats themselves are wrong/incomplete">Recalc</button>
+              <button class="row-audit-refinalize" data-match-id="${m.matchId}" style="font-size:11px; padding:3px 8px;" title="Re-finalize — refetch from this match's source (CricAPI, reusing a finished-looking cache when possible; or the scraper) &amp; re-save. Use when the stored stats themselves are wrong/incomplete.">Re-finalize</button>
             </td>
           </tr>`);
       }
@@ -4965,17 +5009,27 @@
           await runScoreAudit(); // re-check so fixed rows drop off the list
         });
       });
-      resultsEl.querySelectorAll('.row-audit-recalc').forEach(b => {
+      resultsEl.querySelectorAll('.row-audit-refinalize').forEach(b => {
         b.addEventListener('click', async () => {
           b.disabled = true; b.textContent = '…';
-          await forceRefinalizeMatch(b.dataset.matchId);
+          // Recalc used to call forceRefinalizeMatch directly — that function
+          // is gone (merged into finalizeOneMatch, see §3.2 of the plan doc).
+          // Routed through finalizeMatchRouted (not finalizeMatchById
+          // directly) so a scraper-tracked mismatch row re-scrapes instead of
+          // wrongly attempting a CricAPI fetch — see §3.2/§3.5.
+          await finalizeMatchRouted(b.dataset.matchId);
           await runScoreAudit(); // re-check so fixed rows drop off the list
         });
       });
       resultsEl.querySelectorAll('.row-audit-finalize').forEach(b => {
         b.addEventListener('click', async () => {
           b.disabled = true; b.textContent = '…';
-          await finalizeMatchById(b.dataset.matchId);
+          // Routed (not finalizeMatchById directly) for the same reason as
+          // Re-finalize above — a scraper-tracked match with a completely
+          // missing scorecard usually has no external_id, which would make
+          // finalizeMatchById's own lookup misreport it as "already
+          // finalized" instead of actually scraping it. See §3.5.
+          await finalizeMatchRouted(b.dataset.matchId);
           await runScoreAudit();
         });
       });
