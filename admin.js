@@ -2432,6 +2432,20 @@
         const idx = state.matches.findIndex(x => x.id === m.id);
         if (idx >= 0) state.matches[idx] = upd;
       }
+      // Persist anything fromCricAPI() couldn't resolve into the same queue
+      // poll-cricapi already writes to server-side, so it shows up in Review →
+      // Fielding Issues instead of only ever reaching a console.warn.
+      // Best-effort: a failure here shouldn't fail the finalize itself — the
+      // credit for everyone it DID resolve is already saved.
+      // See docs/fielding_credit_single_source_plan.md.
+      if (players.fieldingIssues?.length) {
+        try {
+          await state.db.insertFieldingIssues(m.tournament_id, m.id, players.fieldingIssues, 'cricapi');
+        } catch (fiErr) {
+          console.warn('[Finalize] insertFieldingIssues failed (fielding issues still reported below, just not queued in Review):', fiErr.message);
+        }
+      }
+
       return {
         match: matchLabel,
         players: rows.length,
@@ -2500,7 +2514,9 @@
           }
           statusEl.innerHTML = `✓ ${result.match} — ${result.players} players saved.${escapeHtml(protectedNote)} `
             + `<span style="color:var(--bad);">${warn}`
-            + `Open <strong>Fantasy Scorecard ↓</strong>${hasUnmatched ? ', click Link on the red rows,' : ''} then re-finalize.</span>`;
+            + `Open <strong>Fantasy Scorecard ↓</strong>${hasUnmatched ? ', click Link on the red rows,' : ''}`
+            + `${hasFieldingIssues ? ' (fielding credit is queued in Review → 🥎 Fielding Issues, not fixable from Fantasy Scorecard)' : ''}`
+            + ` then re-finalize.</span>`;
           const toastBits = [];
           if (notActuallyFinished) toastBits.push(`match still in progress — not marked completed`);
           if (hasUnmatched) toastBits.push(`${result.unmatchedNames.length} player(s) unmatched`);
@@ -3256,8 +3272,7 @@
           ${unmatchedCount} player${unmatchedCount>1?'s':''} not matched to your pool — click <strong>Link</strong> on the red rows to fix names &amp; recalculate points.
         </div>` : ''}
         ${fieldingIssues.length ? `<div style="padding:6px 10px;font-size:11px;background:rgba(248,113,113,0.08);border-bottom:1px solid var(--border);color:var(--bad);">
-          <div style="margin-bottom:4px;">⚠ ${fieldingIssues.length} fielding event${fieldingIssues.length>1?'s':''} not credited to anyone:</div>
-          ${fieldingIssues.map(fieldingIssueRowHtml).join('')}
+          ⚠ ${fieldingIssues.length} fielding event${fieldingIssues.length>1?'s':''} this live preview couldn't match locally. This panel is a live preview, not the source of truth for fielding credit — check <strong>Review → 🥎 Fielding Issues</strong> for what's actually unresolved (it reads the real saved data).
         </div>` : ''}
         <table class="fsc-table">
           <thead>
@@ -3307,16 +3322,12 @@
         btn.addEventListener('click', () => expandLinkRow(btn));
       });
 
-      // Fielding-issue action controls: one-click "Credit to X" for ambiguous
-      // same-name matches, and an expandable Link picker for fielding events that
-      // matched no one at all. Both write into NAME_ALIASES (same store as the
-      // top-level Link buttons) and rescore, so the fix sticks on the next recalc.
-      view.querySelectorAll('.fielding-credit-btn').forEach(btn => {
-        btn.addEventListener('click', () => linkPlayerAndRescore(btn.dataset.rawName, btn.dataset.playerId));
-      });
-      view.querySelectorAll('.fielding-link-btn').forEach(btn => {
-        btn.addEventListener('click', () => expandFieldingLinkRow(btn));
-      });
+      // No fielding-issue action controls here anymore — this panel is a live
+      // preview, not the source of truth, and its own client-side name
+      // matching could disagree with what's actually saved (see
+      // docs/fielding_credit_single_source_plan.md). Resolving a genuinely
+      // unmatched fielding credit now always happens in Review → 🥎 Fielding
+      // Issues, which reads the real persisted queue.
 
       // Click a player row → toggle breakdown detail row
       view.querySelectorAll('.fsc-player-row').forEach(tr => {
@@ -3332,61 +3343,17 @@
     }
 
     /**
-     * Renders one fielding-issue row with whatever action control fits its stage:
-     *  - 'parse': no raw name was even extracted — nothing to link, text only.
-     *  - 'ambiguous': raw name matched 2+ players — one button per candidate so
-     *     the admin can credit it to the right one in a single click.
-     *  - 'match' (default): raw name matched nobody — same Link-and-pick pattern
-     *     as the top-level unmatched-name rows.
-     * All actions ultimately call linkPlayerAndRescore, which stores the mapping
-     * in NAME_ALIASES (now also consulted by resolveFielder, see fromCricAPI) and
-     * re-runs scoring so the credit actually lands on the next render.
+     * fieldingIssueRowHtml/expandFieldingLinkRow (the old per-row "Credit to X"
+     * / "Link" controls in this panel) were removed — this panel is a live
+     * preview, not the source of truth for fielding credit, and offering an
+     * action here let its own client-side matching quietly disagree with what
+     * was actually saved. See docs/fielding_credit_single_source_plan.md.
+     * Resolving a genuinely unmatched fielding credit now always happens in
+     * Review → 🥎 Fielding Issues (see db.js's getFieldingIssues/
+     * resolveFieldingIssueAsCredit and the Review-tab rendering in index.html
+     * around getFieldingIssues(tid)), which reads the real persisted queue
+     * instead of re-guessing.
      */
-    function fieldingIssueRowHtml(it) {
-      const text = `<span style="color:var(--fg)">${escapeHtml(summarizeFieldingIssues([it]))}</span>`;
-      if (it.stage === 'ambiguous') {
-        const btns = it.candidates.map(name => {
-          const p = A.PLAYERS.find(pp => pp.name === name);
-          return p ? `<button class="fielding-credit-btn" data-raw-name="${escapeHtml(it.rawName)}" data-player-id="${escapeHtml(String(p.id))}">Credit to ${escapeHtml(name)}</button>` : '';
-        }).join(' ');
-        return `<div style="margin:3px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">${text} ${btns}</div>`;
-      }
-      if (it.stage === 'match') {
-        return `<div class="fielding-link-row" data-raw-name="${escapeHtml(it.rawName)}" style="margin:3px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-          ${text}
-          <button class="fielding-link-btn">Link</button>
-        </div>`;
-      }
-      return `<div style="margin:3px 0;">${text}</div>`;
-    }
-
-    /**
-     * Expands a fielding-issue "Link" button into an inline player-picker,
-     * mirroring expandLinkRow below but for a fielder raw-name row instead of
-     * an unmatched top-level player row.
-     */
-    function expandFieldingLinkRow(btn) {
-      const row = btn.closest('.fielding-link-row');
-      const rawName = row?.dataset.rawName;
-      if (!rawName) return;
-
-      const playerOpts = A.PLAYERS
-        .slice().sort((a, b) => a.name.localeCompare(b.name))
-        .map(p => `<option value="${p.id}">${escapeHtml(p.name)} (${escapeHtml(p.team_id || p.team || '')})</option>`)
-        .join('');
-
-      row.innerHTML = `
-        <span style="color:var(--fg)">"${escapeHtml(rawName)}" —</span>
-        <select class="fielding-link-sel">${playerOpts}</select>
-        <button class="fielding-link-save-btn">Credit &amp; rescore</button>
-        <button class="fielding-link-cancel-btn" style="background:transparent;border-color:var(--muted);color:var(--muted);">✕</button>
-      `;
-      row.querySelector('.fielding-link-save-btn').addEventListener('click', () => {
-        const playerId = row.querySelector('.fielding-link-sel').value;
-        linkPlayerAndRescore(rawName, playerId);
-      });
-      row.querySelector('.fielding-link-cancel-btn').addEventListener('click', () => renderFantasyScorecard());
-    }
 
     /**
      * Expands the "Link" button into an inline player-picker.

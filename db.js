@@ -2256,6 +2256,55 @@ export function createDb(cfg = {}) {
     },
 
     /**
+     * Client-side counterpart to what poll-cricapi/scrape-scorecard already do
+     * server-side: persist fielding credit the browser's own fromCricAPI() pass
+     * couldn't resolve to exactly one player, so it lands in the same Review →
+     * Fielding Issues queue instead of only ever reaching a console.warn. Used
+     * by finalizeOneMatch (admin.js) for CricAPI-track matches finalized
+     * manually — the cron path (poll-cricapi) already writes here directly.
+     * See docs/fielding_credit_single_source_plan.md.
+     *
+     * `issues` is fromCricAPI()'s own fieldingIssues array — entries with
+     * stage 'match' (unmatched) or 'ambiguous' only; stage 'parse' (no fielder
+     * name could even be extracted from the dismissal text) has no rawName and
+     * mirrors what the server-side scrapers silently drop too (addFieldingCredit
+     * there returns early on a falsy rawName), so it's skipped here the same
+     * way. The client aggregates per raw name across the whole match rather
+     * than per individual dismissal (unlike the server's per-dismissal
+     * granularity) — one row is written per (rawName, field) pair actually
+     * left uncredited, with `reason` standing in for the per-dismissal
+     * batter/text detail the client no longer has at this point.
+     */
+    async insertFieldingIssues(tournamentId, matchId, issues, source) {
+      if (!tournamentId || !matchId || !issues?.length) return;
+      const sb = await getClient();
+      const FIELDS = ['catches', 'stumpings', 'runOutDirect', 'runOutIndirect'];
+      const rows = [];
+      for (const it of issues) {
+        if (!it.rawName) continue; // stage 'parse' — no name to persist, matches server behavior
+        for (const field of FIELDS) {
+          if (it[field] > 0) {
+            rows.push({
+              tournament_id : tournamentId,
+              match_id      : matchId,
+              raw_name      : it.rawName,
+              source,
+              field,
+              batter_name   : '(multiple)',
+              dismissal_text: it.reason || '',
+              candidates    : it.candidates ?? null,
+            });
+          }
+        }
+      }
+      if (!rows.length) return;
+      const { error } = await sb.from('scraper_fielding_issues').upsert(
+        rows, { onConflict: 'match_id,raw_name,field,batter_name', ignoreDuplicates: true },
+      );
+      if (error) throw error;
+    },
+
+    /**
      * Apply a manual fielding/wicket-bonus credit directly to a player's
      * player_match_stats row for one match — the fallback the admin reaches for
      * when auto-derivation can't resolve a dismissal, AND the generic "add
@@ -2499,7 +2548,7 @@ export function createDb(cfg = {}) {
       const sb = await getClient();
       let mq = sb
         .from('matches')
-        .select('id, match_number, format, home_team_id, away_team_id, external_id, data_source, scorecard_url, played_on, status, notes')
+        .select('id, match_number, format, home_team_id, away_team_id, external_id, data_source, scorecard_url, played_on, status, notes, tournament_id')
         .eq('status', 'completed')
         // Was `.not('external_id', 'is', null)` — CricAPI-only, so it silently
         // excluded every scraper-tracked match, which usually has no
