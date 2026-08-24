@@ -1,8 +1,9 @@
 # Plan: One source of truth for fielding credit (Fantasy Scorecard preview vs. Review)
 
-**Status:** 🟡 First increment shipped locally, not yet pushed. §5.3/§5.6 turned out to
-already exist — see §10. §5.5 (Link rewiring) intentionally held until M15 finishes, per
-§8's sequencing.
+**Status:** 🟡 Two increments shipped locally, not yet pushed. §5.3/§5.6 turned out to
+already exist — see §10. §9's open question is decided and implemented — see §11. §5.5
+(Link rewiring) is now moot for the fielding case (§10) and was never touched. Still
+holding the push until M15 finishes, per §8's sequencing.
 
 ## At a glance — the problem in one line
 
@@ -243,12 +244,42 @@ callers) is now largely moot for the fielding case specifically, since there's n
 "Link" button left to rewire — it still stands as a real precaution for the *player-identity*
 Link case, which was never part of today's confusion and is left untouched.
 
+## §11 Increment 2: "resolve on next data read" for matched players
+
+Shipped as a follow-on to increment 1, once §9's open question was decided. `renderFantasyScorecard`
+(admin.js) is now `async`: it fetches `player_match_stats` for the currently-connected match via
+`getPlayerStatsForMatchFull`, builds a `player_id → saved row` map, and for every batting/bowling-
+matched player either scores strictly off that saved row (real, DB-backed, whatever the actual
+engine resolved — fielding included) or marks the player `pending` with no number shown at all.
+A fetch failure degrades to "everyone pending this render" rather than falling back to a live
+guess — self-corrects on the next poll tick. All 14 existing call sites of `renderFantasyScorecard`
+were already fire-and-forget (none awaited or used a return value), so making it `async` needed no
+caller changes.
+
+This also shrinks the still-deferred `matchSquadFor`/`A.PLAYERS` scoping bug (§5.1) further: that
+scoping now only affects the informational fieldingIssues banner's count and unmatched-identity
+detection, never a matched player's actual displayed points — even if `currentMatch` resolves
+wrong, the failure mode is "shows pending" (safe, honest) rather than "shows a plausible-looking
+wrong number" (what the bug used to cause when it fed a live guess). Still worth fixing
+eventually for the banner/unmatched accuracy, but the stakes are now clearly cosmetic.
+
+Verified via a standalone sort/pending simulation (5 players — 3 saved including one negative
+score, 2 pending — confirmed pending always sorts below every real score) and `node --check`.
+Not yet click-tested in the running app.
+
 ## §9 Open questions
 
 - ~~Widen `scraper_fielding_issues` vs. a separate table~~ — **resolved**: neither was needed,
   `source: 'cricapi'` was already a valid value. See §10.
-- Should the Fantasy Scorecard tab keep *any* live-preview fielding computation for genuinely
-  in-progress, nothing-saved-yet matches, or should it just show "pending" until the next
-  scrape/poll lands? Keeping a live estimate is more useful mid-match but reintroduces exactly
-  the "could disagree with reality" risk this plan is trying to remove — worth deciding
-  deliberately rather than defaulting to keeping it.
+- ~~For a genuinely in-progress match with nothing saved yet, when should the Fantasy Scorecard
+  tab's numbers resolve~~ — **decided: resolve on next data read.** Implemented: for any
+  batting/bowling-*matched* player, `renderFantasyScorecard()` now fetches this match's real
+  `player_match_stats` (via `db.js`'s existing `getPlayerStatsForMatchFull`) and scores strictly
+  from that — never from a live `fromCricAPI()` guess. A matched player with nothing saved yet
+  shows "pending" (sorts below every real score, including a negative one, so it's never
+  confused for a genuine zero) instead of a number that could later turn out wrong. Trades a
+  poll-interval's worth of lag for never disagreeing with Review's Fielding Issues queue or with
+  reality. Unmatched-identity players (a separate, pre-existing concern — CricAPI name spelling
+  mismatches, not fielding credit) are untouched, still shown via a live guess with their
+  existing Link button, since that mechanism was never part of this decision or today's
+  confusion. See §11.

@@ -3195,7 +3195,27 @@
     // Engine-calculated fantasy points for every player in the live match.
     // Independent of the user's XI — shows what each player WOULD score
     // (no captain/VC multiplier; that's per-team).
-    function renderFantasyScorecard() {
+    /**
+     * "Resolve on next data read", not "resolve immediately": for any player
+     * already matched to the local pool, this panel now shows the real,
+     * already-saved player_match_stats row for this match when one exists —
+     * never a live fromCricAPI() guess for those players — and shows
+     * "pending" for anyone without one yet, rather than a number that could
+     * later turn out to have been wrong. A saved row already reflects
+     * whatever the real engine (server cron or client Finalize) resolved,
+     * fielding included, so there's nothing left here that can silently
+     * disagree with Review's Fielding Issues queue. Trades a poll-interval's
+     * worth of lag (this panel only updates as fast as the next scrape/poll
+     * lands) for never showing a wrong number. See §9/§10 of
+     * docs/fielding_credit_single_source_plan.md — this was a deliberate,
+     * discussed decision, not a default.
+     *
+     * Unmatched players (batting/bowling identity not resolved to the local
+     * pool at all) are a separate, unrelated concern — still shown via a live
+     * fromCricAPI() guess with a Link button, same as before; that mechanism
+     * was never part of the fielding-credit confusion this addresses.
+     */
+    async function renderFantasyScorecard() {
       const roleLabel = { wk: 'WK', bat: 'BAT', ar: 'AR', bowl: 'BOWL' };
       const view = $('#fantasyScorecardView');
       const meta = $('#fantasyScorecardMeta');
@@ -3212,7 +3232,10 @@
       // Scope the squad to the two teams actually playing this match (see
       // matchSquadFor) instead of the whole tournament roster — otherwise a
       // fielder's raw surname can mismatch against an unrelated player on a
-      // different team, silently stealing or losing fielding credit.
+      // different team, silently stealing or losing fielding credit. Note:
+      // this scoping only affects the informational fieldingIssues banner and
+      // unmatched-player identity checks below now — actual scoring for any
+      // matched player comes from saved player_match_stats, not from this.
       const externalId = $('#matchId')?.value?.trim();
       const currentMatch = state.matches?.find(m => m.external_id === externalId);
       const players = fromCricAPI(payload, matchSquadFor(currentMatch), state.format);
@@ -3225,13 +3248,37 @@
       // banner never flags it — the row count is just wrong. Unmatched names
       // still get their own row each, since those genuinely need a Link click.
       const { matched, unmatched: unmatchedPl } = mergeApiPlayersByLocalId(players, findLocalByName);
-      const matchedScored = matched.map(({ local, pl }) => {
-        // Use the local DB role, not the API-derived role. fromCricAPI
-        // promotes any player who both batted AND bowled to 'ar', which
-        // incorrectly triggers the duck penalty for specialist bowlers who
-        // bat lower-order. The DB role is the authoritative designation
-        // (same pattern as finalizeOneMatch).
-        const s = calculateScore({ ...pl, role: local.role, captaincy: 'normal' }, state.format);
+
+      // Real, saved data for this exact match — the only thing a matched
+      // player's row is ever scored from now. Best-effort: a fetch failure
+      // just means everyone shows "pending" this render, self-corrects next
+      // poll tick.
+      let savedByPlayerId = new Map();
+      if (currentMatch && state.db) {
+        try {
+          const saved = await state.db.getPlayerStatsForMatchFull(currentMatch.id);
+          savedByPlayerId = new Map(saved.map(s => [s.player_id, s]));
+        } catch (e) {
+          console.warn('[renderFantasyScorecard] could not load saved stats — showing pending for matched players this render:', e.message);
+        }
+      }
+
+      const matchedScored = matched.map(({ local }) => {
+        const savedRow = savedByPlayerId.get(local.id);
+        if (!savedRow) {
+          return {
+            apiName: local.name, role: local.role, localPlayer: local,
+            inXi: xiIds.has(local.id), points: null, breakdown: null, pending: true,
+          };
+        }
+        // Use the local DB role, not the API-derived role — same reasoning
+        // as finalizeOneMatch: fromCricAPI promotes anyone who both batted
+        // AND bowled to 'ar', wrongly triggering the duck penalty for
+        // specialist bowlers who bat lower-order.
+        const s = calculateScore({
+          name: local.name, role: local.role, captaincy: 'normal',
+          batting: savedRow.batting, bowling: savedRow.bowling, fielding: savedRow.fielding,
+        }, state.format);
         return {
           apiName: local.name,
           role: local.role,
@@ -3239,6 +3286,7 @@
           inXi: xiIds.has(local.id),
           points: s.rawPoints,
           breakdown: s.breakdown,
+          pending: false,
         };
       });
       const unmatchedScored = unmatchedPl.map(pl => {
@@ -3250,12 +3298,18 @@
           inXi: false,
           points: s.rawPoints,
           breakdown: s.breakdown,
+          pending: false,
         };
       });
-      const scored = [...matchedScored, ...unmatchedScored].sort((a, b) => b.points - a.points);
+      // Pending rows (points === null) sort to the bottom, same tier as each
+      // other, without being confused for a genuine zero-point performance.
+      const scored = [...matchedScored, ...unmatchedScored]
+        .sort((a, b) => (b.points ?? -Infinity) - (a.points ?? -Infinity));
 
+      const pendingCount = matchedScored.filter(r => r.pending).length;
       count.textContent = scored.length ? `(${scored.length})` : '';
-      meta.textContent = `Match: ${payload.data?.matchInfo?.name || payload.data?.status || ''}`;
+      meta.textContent = `Match: ${payload.data?.matchInfo?.name || payload.data?.status || ''}`
+        + (pendingCount ? ` · ${pendingCount} player${pendingCount > 1 ? 's' : ''} pending next save` : '');
 
       if (!scored.length) {
         view.className = 'fsc-empty';
@@ -3287,6 +3341,14 @@
           <tbody>
             ${scored.map((r, i) => {
               const colSpan = unmatchedCount ? 5 : 4;
+              if (r.pending) return `
+              <tr class="fsc-player-row-pending" title="No player_match_stats saved for this match yet — will show real points once the next scrape/poll lands.">
+                <td class="name">${escapeHtml(r.apiName)}</td>
+                <td class="team-tag">${r.localPlayer.team_id || r.localPlayer.team || '—'}</td>
+                <td>${roleLabel[r.role] || r.role}</td>
+                <td class="pts" style="color:var(--muted);font-style:italic;">pending</td>
+                ${unmatchedCount ? '<td></td>' : ''}
+              </tr>`;
               const bdText = Object.entries(r.breakdown).map(([cat, vals]) => {
                 const items = Object.entries(vals).filter(([,v]) => v !== 0).map(([k,v]) => `${k}: ${v>0?'+':''}${v}`).join(', ');
                 return items ? `<span class="b-cat">${cat}</span>${items}` : '';
