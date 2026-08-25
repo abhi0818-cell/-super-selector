@@ -2486,58 +2486,6 @@ export function createDb(cfg = {}) {
     },
 
     /**
-     * Revert a match lock — deletes all user_match_xi rows for a given match.
-     *
-     * Use this when a match is delayed AFTER its lock time has already fired.
-     * Deleting the locked XI rows lets users re-pick from their squad_draft_xi
-     * until the rescheduled lock_time arrives.
-     *
-     * Requires the "user_match_xi_admin_delete" policy from migration_v20.
-     *
-     * Returns the count of deleted rows.
-     */
-    async revertMatchLock(matchId) {
-      const sb = await getClient();
-      const { data, error } = await sb
-        .from('user_match_xi')
-        .delete()
-        .eq('match_id', matchId)
-        .select('id');
-      if (error) throw error;
-      return data?.length ?? 0;
-    },
-
-    /**
-     * Revert a DAILY team lock — clears locked_at on every daily user_teams
-     * row (squad_id IS NULL) for a given match.
-     *
-     * Daily teams are gated entirely by RLS (migration_v27_daily_team_lock_rls.sql):
-     * once a match's lock gate (lock_time, falling back to start_time) has
-     * passed, INSERT/UPDATE on user_teams and INSERT/DELETE on
-     * user_team_players are denied for that match. So if a match is delayed
-     * AFTER its lock time already fired, just clearing locked_at here is
-     * cosmetic — the real unlock requires the match's lock_time to be moved
-     * forward (admin reschedules it), which is what actually re-opens the
-     * RLS gate. Call this alongside that reschedule so the "Locked" badge in
-     * the UI clears too.
-     *
-     * Requires the "user_teams_admin_unlock" policy from migration_v27.
-     *
-     * Returns the count of updated rows.
-     */
-    async revertDailyTeamLock(matchId) {
-      const sb = await getClient();
-      const { data, error } = await sb
-        .from('user_teams')
-        .update({ locked_at: null })
-        .eq('match_id', matchId)
-        .is('squad_id', null)
-        .select('id');
-      if (error) throw error;
-      return data?.length ?? 0;
-    },
-
-    /**
      * Returns completed matches that have an external_id (CricAPI link) but
      * zero player_match_stats rows yet — i.e. ready to be "finalized".
      *

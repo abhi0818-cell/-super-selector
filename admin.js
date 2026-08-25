@@ -1665,20 +1665,6 @@
                               color:rgba(220,80,80,0.95);cursor:pointer;"
                        title="Match got marked Completed but the scorecard isn't actually finished (bad/early signal from the data source). Set it back to In Progress so Poll/Scrape can run again.">↩ Revert to Live</button>`
                   : ''}
-                ${m.status === 'delayed'
-                  ? `<button class="row-revert-lock" data-act="revert-lock"
-                       style="font-size:11px;padding:2px 7px;border-radius:4px;
-                              background:rgba(80,160,255,0.10);border:1px solid rgba(80,160,255,0.4);
-                              color:rgba(80,160,255,0.9);cursor:pointer;"
-                       title="Delete locked SL XIs so users can re-pick after the delay">🔓 Revert Lock</button>`
-                  : ''}
-                ${m.status === 'delayed'
-                  ? `<button class="row-revert-daily-lock" data-act="revert-daily-lock"
-                       style="font-size:11px;padding:2px 7px;border-radius:4px;
-                              background:rgba(80,160,255,0.10);border:1px solid rgba(80,160,255,0.4);
-                              color:rgba(80,160,255,0.9);cursor:pointer;"
-                       title="Clear the Locked badge on daily teams for this match (also push lock_time forward — RLS, not this flag, is what actually re-opens daily team edits)">🔓 Revert Daily Lock</button>`
-                  : ''}
                 ${isInPlay && isCricApiDriven
                   ? `<button class="row-poll" data-act="poll"
                        style="font-size:11px;padding:2px 7px;border-radius:4px;
@@ -1749,51 +1735,6 @@
           btn.disabled = true; btn.textContent = '⏳';
           await scrapeMatchNow(id); // extracted — see scrapeMatchNow() for the full flow
           btn.disabled = false; btn.textContent = '🕷 Scrape';
-        });
-        tr.querySelector('[data-act="revert-lock"]')?.addEventListener('click', async (e) => {
-          const btn = e.currentTarget;
-          const match = state.matches.find(x => x.id === id);
-          const label = match
-            ? `Match ${match.match_number ?? ''} (${match.home_team_id ?? ''} vs ${match.away_team_id ?? ''})`
-            : `match ${id}`;
-          if (!confirm(
-            `Revert lock for ${label}?\n\n` +
-            `This will DELETE all locked XIs for this match so users can re-pick ` +
-            `before the rescheduled start time.\n\n` +
-            `Proceed?`
-          )) return;
-          btn.disabled = true;
-          try {
-            const count = await state.db.revertMatchLock(id);
-            toast(`🔓 Lock reverted — ${count} XI${count !== 1 ? 's' : ''} unlocked. Users can now re-pick.`, 4000);
-          } catch (err) {
-            toast('Revert failed: ' + err.message, 5000);
-            btn.disabled = false;
-          }
-        });
-        tr.querySelector('[data-act="revert-daily-lock"]')?.addEventListener('click', async (e) => {
-          const btn = e.currentTarget;
-          const match = state.matches.find(x => x.id === id);
-          const label = match
-            ? `Match ${match.match_number ?? ''} (${match.home_team_id ?? ''} vs ${match.away_team_id ?? ''})`
-            : `match ${id}`;
-          if (!confirm(
-            `Revert daily team lock badge for ${label}?\n\n` +
-            `This only clears the "Locked" badge shown to users — it does NOT ` +
-            `re-open editing by itself. Daily team edits are actually blocked by ` +
-            `RLS against lock_time/start_time, so also push this match's lock_time ` +
-            `forward (e.g. via the delay toggle) or daily edits will still be ` +
-            `rejected on save.\n\nProceed?`
-          )) return;
-          btn.disabled = true;
-          try {
-            const count = await state.db.revertDailyTeamLock(id);
-            toast(`🔓 Daily lock badge cleared on ${count} team${count !== 1 ? 's' : ''}. Remember to push lock_time forward too.`, 5000);
-          } catch (err) {
-            toast('Revert failed: ' + err.message, 5000);
-          } finally {
-            btn.disabled = false;
-          }
         });
         tr.querySelector('[data-act="revert-live"]')?.addEventListener('click', async (e) => {
           const btn = e.currentTarget;
