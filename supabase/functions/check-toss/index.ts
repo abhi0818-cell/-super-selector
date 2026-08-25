@@ -12,26 +12,28 @@
  *      the all-clear signal, not just a silent DB write, so a confirmation
  *      is only persisted once that push has actually gone out (see the
  *      "Case 1" comment below for why).
- *   2. No toss from either source, AND we're within 10 minutes of start_time
- *      (i.e. start_time minus 10 minutes has passed) → matches.toss_status =
+ *   2. No toss from either source, AND we're within 15 minutes of start_time
+ *      (i.e. start_time minus 15 minutes has passed) → matches.toss_status =
  *      'delay_flagged', admin gets a push ('no toss yet, match looks delayed
  *      — review / push the start time'). If app_settings.toss_auto_push.enabled
  *      is true (off by default — see migration_v55), it ALSO auto-pushes
  *      lock_time forward and flips the match to 'delayed' instead of just
  *      notifying.
- *   3. No toss yet, and still more than 10 minutes to start_time →
- *      toss_status = 'pending', no action. Normal state for most of the
- *      30-minute window; toss usually happens close to (sometimes right at)
- *      start_time.
+ *   3. No toss yet, and still more than 15 minutes to start_time →
+ *      toss_status = 'pending', no action. Toss is typically in by T-30, so
+ *      this is the normal state for the first half of the 30-minute window.
  *
- * Why the delay decision point is start_time MINUS 10 minutes, not
- * start_time itself: lock-matches runs on its own independent 1-minute cron
- * and locks squads the moment start_time passes, regardless of toss_status —
- * the two functions aren't coupled. Flagging (and, if auto-push is on,
- * pushing lock_time forward) only at start_time itself left no real buffer:
- * both crons could tick the same minute, so a delayed match could still get
- * locked before check-toss's own update lands. Deciding 10 minutes early
- * gives auto-push (or a human) a genuine head start over that race.
+ * Why the delay decision point is start_time MINUS 15 minutes, not 10 (and
+ * not start_time itself): toss usually happens by ~T-30, not right at
+ * start_time — flagging at T-10 left too little runway to actually act on
+ * a delay (review it, decide, push lock_time) before kickoff. T-15 still
+ * gives the toss a full 15-minute grace window past its usual timing before
+ * calling it a delay, while preserving 15 real minutes to react. Separately,
+ * lock-matches runs on its own independent 1-minute cron and locks squads
+ * the moment start_time passes, regardless of toss_status — the two
+ * functions aren't coupled, so flagging only at start_time itself would
+ * leave no real buffer at all: both crons could tick the same minute, and a
+ * delayed match could get locked before check-toss's own update lands.
  *
  * Why "no toss by the decision point" is the delay signal (rather than
  * text-matching for words like "rain"/"delayed" in a source's status
@@ -54,15 +56,32 @@
  * scrape-scorecard doesn't have to re-discover it later — a free side benefit,
  * not something either function depends on the other for.
  *
+ * CricAPI hits /v1/match_info, not /v1/match_scorecard — this project's
+ * CricAPI subscription doesn't have access to match_scorecard (confirmed
+ * live: it returns "Subscription invalid"), and match_info is a better fit
+ * regardless, since it returns tossWinner/tossChoice as clean top-level
+ * fields instead of a free-text sentence to regex against.
+ *
+ * "Corroborated" above is aspirational, not yet enforced: matches.toss_status
+ * still confirms off whichever ONE source answers first (cricApiToss ??
+ * addictorToss) — the two sources are not currently cross-checked against
+ * each other before confirming. What IS new: every successful read from
+ * EITHER source, not just the winning one, is also written to
+ * toss_source_log (migration_v60_toss_source_log.sql) — one row per
+ * (match, source), stamped with when that source first reported it. That
+ * table is what a real "do the sources agree, and how far apart in time"
+ * corroboration check would query; this function doesn't gate on it yet.
+ *
  * Triggered by:
  *   - pg_cron every 1 minute (migration_v56_check_toss_cron.sql), body: {}
  *
  * Required env vars (Supabase dashboard → Edge Functions → Secrets):
  *   SUPABASE_URL
  *   SUPABASE_SERVICE_ROLE_KEY
- *   CRICAPI_KEYS   — same comma-separated key list poll-cricapi uses. If unset
- *                    or exhausted, CricAPI is skipped for that pass (non-fatal)
- *                    and CricketAddictor is relied on alone.
+ *   CRICAPI_KEYS   — same comma-separated key list poll-cricapi uses; needs a
+ *                    key with match_info access specifically (see above). If
+ *                    unset or exhausted, CricAPI is skipped for that pass
+ *                    (non-fatal) and CricketAddictor is relied on alone.
  *
  * Deploy:
  *   supabase functions deploy check-toss --no-verify-jwt
@@ -82,14 +101,16 @@ const sb = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 const UA = 'Mozilla/5.0 (compatible; SuperSelector/1.0)'
 
 // Window opens this many minutes before start_time. Widened from 20 to 30
-// (2026-08-22) to give matches more polling passes before the T-10 delay
+// (2026-08-22) to give matches more polling passes before the delay
 // decision point below — same delay/confirm logic, just a longer runway.
 const CHECK_WINDOW_MINUTES = 30
 // ...and "no toss yet" only counts as a delay signal once we're within this
 // many minutes of start_time (i.e. start_time - DELAY_DECISION_BUFFER_MINUTES
 // has passed) — see the file header for why this needs a real buffer before
-// start_time itself, not just start_time.
-const DELAY_DECISION_BUFFER_MINUTES = 10
+// start_time itself, not just start_time. Widened from 10 to 15 (2026-08-23):
+// toss is typically confirmed by ~T-30, so a T-10 flag left too little
+// runway to actually review and push the start time before kickoff.
+const DELAY_DECISION_BUFFER_MINUTES = 15
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ─── CricketAddictor slug / URL discovery ──────────────────────────────────────
@@ -345,33 +366,67 @@ function parseCricketAddictorToss(html: string): TossResult | null {
   return { winnerName: m[1].trim(), decision: normalizeDecision(m[2]), delayText: delayM ? delayM[0] : null }
 }
 
-function parseCricApiToss(payload: any): TossResult | null {
-  const data = payload?.data ?? payload ?? {}
-  const status = String(data.status || '')
-  const m = status.match(new RegExp(`([A-Za-z][${TEAM_NAME_CHARS}]+?)\\s+won the toss.*?(?:elected|opted)\\s+to\\s+(bat|bowl|field)`, 'i'))
-  const delayM = status.match(DELAY_KEYWORDS)
-  if (!m) return null
-  return { winnerName: m[1].trim(), decision: normalizeDecision(m[2]), delayText: delayM ? delayM[0] : null }
+// CricAPI's tossWinner comes back lowercase (e.g. "guyana amazon warriors") —
+// resolve it against this match's actual home/away team names so pushes and
+// toss_source_log read with proper casing instead of a raw lowercase dump.
+// Falls back to naive title-casing if it doesn't match either team (shouldn't
+// happen in practice, but better than surfacing the lowercase string as-is).
+function resolveTeamCasing(rawName: string, homeTeam: string, awayTeam: string): string {
+  const norm = (s: string) => s.toLowerCase().trim()
+  if (homeTeam && norm(rawName) === norm(homeTeam)) return homeTeam
+  if (awayTeam && norm(rawName) === norm(awayTeam)) return awayTeam
+  return rawName.replace(/\b\w/g, c => c.toUpperCase())
 }
 
-async function fetchCricApiScorecard(externalId: string): Promise<any> {
+// 2026-08-24: switched from /v1/match_scorecard to /v1/match_info. The keys
+// this project's CricAPI subscription has actually been granted only have
+// access to match_info (confirmed live: match_scorecard returns "Subscription
+// invalid" for this account, match_info returns real data) — and match_info
+// is a better fit anyway: it returns tossWinner/tossChoice as clean top-level
+// fields instead of requiring a regex against a free-text `status` sentence,
+// which is what match_scorecard forced (see parseCricketAddictorToss below
+// for the regex approach CricketAddictor still needs, since it has no
+// structured API to fall back on).
+function parseCricApiToss(payload: any, homeTeam: string, awayTeam: string): TossResult | null {
+  const data = payload?.data ?? payload ?? {}
+  const rawWinner = data.tossWinner
+  const rawChoice = data.tossChoice
+  if (!rawWinner || !rawChoice) return null
+  const winnerName = resolveTeamCasing(String(rawWinner), homeTeam, awayTeam)
+  const decision   = normalizeDecision(String(rawChoice))
+  // match_info's `status` field is still a free-text summary (e.g. a result
+  // line, or "Match starts at ..." pre-match) — DELAY_KEYWORDS can still
+  // surface rain/delay language there even though toss itself is structured.
+  const delayM = String(data.status || '').match(DELAY_KEYWORDS)
+  return { winnerName, decision, delayText: delayM ? delayM[0] : null }
+}
+
+async function fetchCricApiMatchInfo(externalId: string): Promise<any> {
   if (!CRICAPI_KEYS.length) throw new Error('No CRICAPI_KEYS configured')
   let lastErr: Error | null = null
   for (const key of CRICAPI_KEYS) {
     try {
       const res = await fetch(
-        `https://api.cricapi.com/v1/match_scorecard?apikey=${encodeURIComponent(key)}&id=${encodeURIComponent(externalId)}`,
+        `https://api.cricapi.com/v1/match_info?apikey=${encodeURIComponent(key)}&id=${encodeURIComponent(externalId)}`,
         { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Accept': 'application/json, text/plain, */*' } },
       )
       const json = await res.json().catch(() => null)
+      // Note: CricAPI's failure payloads carry the explanation in `reason`,
+      // not `message` (e.g. {"status":"failure","reason":"Subscription
+      // invalid"}) — json?.message below is near-always undefined in
+      // practice, so `msg` mostly falls through to the generic string. That
+      // only affects the diagnostic text in a thrown/logged error, not retry
+      // behavior: every failure path here (exhausted or not) still ends up
+      // caught by this same try's `catch` below and moves on to the next
+      // key regardless, since the `throw`s are inside this try block.
       const exhausted = (msg: string) => /invalid.*key|quota|limit|not.*found.*key/i.test(msg)
       if (!res.ok) {
-        const msg = json?.message || `HTTP ${res.status}`
+        const msg = json?.message || json?.reason || `HTTP ${res.status}`
         if (exhausted(msg)) { lastErr = new Error(msg); continue }
         throw new Error(msg)
       }
       if (json?.status === 'failure') {
-        const msg = json?.message || 'CricAPI request failed'
+        const msg = json?.message || json?.reason || 'CricAPI request failed'
         if (exhausted(msg)) { lastErr = new Error(msg); continue }
         throw new Error(msg)
       }
@@ -507,8 +562,8 @@ Deno.serve(async (req) => {
       let cricApiToss: TossResult | null = null
       if (match.external_id) {
         try {
-          const payload = await fetchCricApiScorecard(match.external_id)
-          cricApiToss = parseCricApiToss(payload)
+          const payload = await fetchCricApiMatchInfo(match.external_id)
+          cricApiToss = parseCricApiToss(payload, homeTeam, awayTeam)
         } catch (e: any) {
           console.warn(`[check-toss] CricAPI check failed for M${match.match_number}:`, e.message)
         }
@@ -541,6 +596,34 @@ Deno.serve(async (req) => {
         }
       } catch (e: any) {
         console.warn(`[check-toss] CricketAddictor check failed for M${match.match_number}:`, e.message)
+      }
+
+      // ── Persist each source's independent read, for corroboration ──────────
+      // (migration_v60_toss_source_log.sql). This runs regardless of which
+      // source ends up "winning" below — the point is to keep BOTH sources'
+      // results and arrival times, not just whichever answered first. One row
+      // per (match, source): the unique constraint plus ignoreDuplicates means
+      // only the FIRST successful read from each source is kept, even though
+      // this block runs again on every subsequent minute's tick.
+      if (cricApiToss) {
+        try {
+          await sb.from('toss_source_log').upsert(
+            { match_id: match.id, source: 'cricapi', winner_name: cricApiToss.winnerName, decision: cricApiToss.decision, received_at: nowISO },
+            { onConflict: 'match_id,source', ignoreDuplicates: true },
+          )
+        } catch (e: any) {
+          console.warn(`[check-toss] toss_source_log write failed (cricapi) M${match.match_number}:`, e.message)
+        }
+      }
+      if (addictorToss) {
+        try {
+          await sb.from('toss_source_log').upsert(
+            { match_id: match.id, source: 'cricketaddictor', winner_name: addictorToss.winnerName, decision: addictorToss.decision, received_at: nowISO },
+            { onConflict: 'match_id,source', ignoreDuplicates: true },
+          )
+        } catch (e: any) {
+          console.warn(`[check-toss] toss_source_log write failed (cricketaddictor) M${match.match_number}:`, e.message)
+        }
       }
 
       const toss   = cricApiToss ?? addictorToss
@@ -600,7 +683,7 @@ Deno.serve(async (req) => {
       const update: Record<string, unknown> = { toss_status: 'delay_flagged', toss_checked_at: nowISO }
 
       if (shouldNotify) {
-        // Positive = still before start_time (we're inside the 10-minute
+        // Positive = still before start_time (we're inside the 15-minute
         // decision buffer); negative = start_time has also passed.
         const minutesToStart = Math.round((startMs - nowMs) / 60000)
         const timingText = minutesToStart >= 0
