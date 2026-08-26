@@ -2,9 +2,9 @@
  * check-toss — Supabase Edge Function
  *
  * Confirms the toss (winner + bat/bowl decision) for any match starting
- * within the next 30 minutes, from two independent sources — CricAPI and
- * CricketAddictor — so the admin has an early, corroborated signal well
- * before lock-matches freezes squads at start_time.
+ * within the next 30 minutes, from three independent sources — CricAPI,
+ * CricketAddictor, and Cricbuzz — so the admin has an early, corroborated
+ * signal well before lock-matches freezes squads at start_time.
  *
  * Trigger conditions and what happens:
  *   1. Toss confirmed by either source → matches.toss_status = 'confirmed'.
@@ -62,15 +62,36 @@
  * regardless, since it returns tossWinner/tossChoice as clean top-level
  * fields instead of a free-text sentence to regex against.
  *
+ * Even with that fix, CricAPI has yet to successfully land a toss_source_log
+ * row in production — every attempt fails with "Connection reset by peer
+ * (os error 104)" during connect (confirmed via M16's function logs), even
+ * though the exact same URL/key returns clean data outside Supabase's edge
+ * runtime and this account is well under CricAPI's daily hit limit. That
+ * points to a block on Supabase's edge egress specifically (see
+ * fetchCricApiMatchInfo/fetchWithRetry below), not a key, quota, or endpoint
+ * problem. CricketAddictor is unaffected — different host entirely — so the
+ * toss pipeline as a whole still works end-to-end off that one source; this
+ * is specifically about restoring CricAPI's contribution.
+ *
+ * A fourth candidate source, ESPNcricinfo's internal API, was tried and ruled
+ * out (2026-08-26): it returns a hard HTTP 403 "Access Denied" from
+ * Supabase's edge egress (confirmed live) — a WAF-level block, not something
+ * a retry gets past, unlike CricAPI's transport-level reset. Cricbuzz, by
+ * contrast, came back clean from that same egress and turned out to have
+ * genuinely structured toss data (see the Cricbuzz section below) — better
+ * than either existing source's text-scraping, and from a host that isn't
+ * blocked either way CricAPI's issue eventually resolves.
+ *
  * "Corroborated" above is aspirational, not yet enforced: matches.toss_status
  * still confirms off whichever ONE source answers first (cricApiToss ??
- * addictorToss) — the two sources are not currently cross-checked against
- * each other before confirming. What IS new: every successful read from
- * EITHER source, not just the winning one, is also written to
- * toss_source_log (migration_v60_toss_source_log.sql) — one row per
- * (match, source), stamped with when that source first reported it. That
- * table is what a real "do the sources agree, and how far apart in time"
- * corroboration check would query; this function doesn't gate on it yet.
+ * addictorToss ?? cricbuzzToss) — the three sources are not currently
+ * cross-checked against each other before confirming. What IS new: every
+ * successful read from ANY source, not just the winning one, is also written
+ * to toss_source_log (migration_v60_toss_source_log.sql, widened to allow
+ * 'cricbuzz' by migration_v61) — one row per (match, source), stamped with
+ * when that source first reported it. That table is what a real "do the
+ * sources agree, and how far apart in time" corroboration check would query;
+ * this function doesn't gate on it yet.
  *
  * Triggered by:
  *   - pg_cron every 1 minute (migration_v56_check_toss_cron.sql), body: {}
@@ -81,7 +102,8 @@
  *   CRICAPI_KEYS   — same comma-separated key list poll-cricapi uses; needs a
  *                    key with match_info access specifically (see above). If
  *                    unset or exhausted, CricAPI is skipped for that pass
- *                    (non-fatal) and CricketAddictor is relied on alone.
+ *                    (non-fatal) and the other two sources are relied on.
+ *                    (Cricbuzz needs no key/env var — it's a public page.)
  *
  * Deploy:
  *   supabase functions deploy check-toss --no-verify-jwt
@@ -401,14 +423,185 @@ function parseCricApiToss(payload: any, homeTeam: string, awayTeam: string): Tos
   return { winnerName, decision, delayText: delayM ? delayM[0] : null }
 }
 
+// 2026-08-26: M16 confirmed live what fetchCricApiMatchInfo's header comment
+// only speculated about — the failure is a transport-level reset, not an API
+// error. The function's own log for that run:
+//   "CricAPI check failed for M16: error sending request for url
+//   (https://api.cricapi.com/v1/match_info?...): client error (Connect):
+//   Connection reset by peer (os error 104)"
+// happening on the SAME key/endpoint/match id that returns clean data when
+// fetched from outside Supabase's edge runtime (confirmed by hand). The user
+// also confirmed this project is nowhere near CricAPI's daily hit limit, so
+// this isn't rate-limiting — it's the connection itself being refused during
+// connect, which is the signature of a firewall/WAF/bot-protection layer in
+// front of api.cricapi.com rejecting Supabase's edge egress specifically
+// (cloud/datacenter IP ranges are a common target for that kind of block),
+// not a fluke of this one run — CricAPI has never once landed a
+// toss_source_log row since the endpoint/key fix, while CricketAddictor
+// (different host) has succeeded on every run.
+//
+// fetchWithRetry below is a best-effort mitigation, not a fix: a reset during
+// connect can occasionally succeed a few hundred ms later even against a
+// flaky network path, so it's worth doing regardless. But if this really is
+// a deliberate IP-based block (as opposed to something transient), no amount
+// of retrying from the same egress fixes it — that needs either CricAPI
+// confirming/lifting the block, or routing this call through a different
+// egress path (a proxy) that isn't recognized as Supabase's edge network.
+async function fetchWithRetry(url: string, options: RequestInit, maxAttempts = 3): Promise<Response> {
+  let lastErr: Error | null = null
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fetch(url, options)
+    } catch (e) {
+      lastErr = e as Error
+      if (attempt < maxAttempts) await new Promise(r => setTimeout(r, 300 * attempt))
+    }
+  }
+  throw lastErr ?? new Error('fetch failed with no error captured')
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ─── Cricbuzz (Source 3) ────────────────────────────────────────────────────
+// 2026-08-26: added after confirming (a) ESPNcricinfo's internal API is
+// blocked outright — a real HTTP 403 "Access Denied" from Supabase's edge
+// egress, a WAF-level block, not something a retry gets past — and (b)
+// Cricbuzz is NOT blocked from that same egress, confirmed live.
+//
+// Rather than scraping a per-match page for a toss sentence (CricketAddictor's
+// approach, needed because it has no structured API), Cricbuzz's own
+// cricket-match/live-scores listing page embeds a structured JSON blob of
+// every live/upcoming/recently-finished match it's currently tracking, each
+// with a `matchInfo.state` field ("Preview" → "Toss" → "In Progress"/"Live" →
+// "Complete"/"Stumps"/etc.) and a `matchInfo.status` free-text field whose
+// CONTENTS depend on state. When state is exactly "Toss", status IS the toss
+// line (confirmed live: {"state":"Toss","status":"Guernsey Women opt to
+// bowl"} for an unrelated match on the same page) — so this is read as a
+// structured signal (state === 'Toss'), same tier of reliability as CricAPI's
+// tossWinner/tossChoice fields, just sourced from a host that isn't blocked.
+//
+// One real limitation: this only catches the toss during the narrow window
+// where state stays "Toss" — once play starts, state moves on and `status`
+// stops being the toss line. Given check-toss polls every minute and there's
+// normally a real gap between toss and first ball, this should catch it in
+// practice, but it's not guaranteed the way CricAPI/CricketAddictor's toss
+// text (which doesn't disappear once the match progresses) is. That's fine
+// here: Cricbuzz is a third source, not a replacement for the other two.
+//
+// One page covers everything check-toss might be polling for (confirmed live:
+// CPL, TNPL, DPL, ETPL, County Championship, Duleep Trophy, Women's
+// Continental Cup, and a Bangladesh A tour all appeared on one fetch) — so
+// unlike CricketAddictor's per-tournament slug-guessing, this needs exactly
+// one fetch per check-toss invocation, cached and reused across every match
+// in that run's loop.
+
+const CRICBUZZ_LIVE_SCORES_URL = 'https://www.cricbuzz.com/cricket-match/live-scores'
+
+interface CricbuzzMatchInfo {
+  matchId: number
+  state: string
+  status: string
+  startDate: string
+  team1: { teamName: string }
+  team2: { teamName: string }
+}
+
+// NOT module-level state (unlike CricketAddictor's listingCache above) —
+// this holds live state/status data that goes stale within seconds, not
+// just static URL-discovery data. CricketAddictor's cache is safe as a
+// module-level Map because a warm Deno isolate reusing it across separate
+// cron ticks only costs a redundant URL guess; the same pattern here would
+// mean serving a Toss/Preview/Complete snapshot from a PREVIOUS minute's
+// invocation on ticks where the isolate stayed warm. So this cache is
+// instead a plain object created fresh inside Deno.serve's handler (see
+// `cricbuzzCache` below) and threaded through as a parameter — guaranteed
+// to be empty at the start of every invocation, reused only across the
+// matches looped over within that same invocation.
+interface CricbuzzCache { data: CricbuzzMatchInfo[] | null }
+
+// The listing page embeds its match data as a JSON string nested inside a
+// larger JS/JSON payload (a `"matches":[...]` array whose own quotes are
+// backslash-escaped, i.e. double-encoded) rather than as directly-parseable
+// JSON. Un-escaping `\"` → `"` first turns that substring into ordinary JSON,
+// which is far more robust than regexing individual fields out of it by hand.
+async function getCricbuzzMatches(cache: CricbuzzCache): Promise<CricbuzzMatchInfo[]> {
+  if (cache.data) return cache.data
+  try {
+    const res = await fetch(CRICBUZZ_LIVE_SCORES_URL, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Accept': 'text/html,*/*' },
+    })
+    if (!res.ok) { cache.data = []; return [] }
+    const html = await res.text()
+    const unescaped = html.replace(/\\"/g, '"')
+    const markerIdx = unescaped.indexOf('"matches":[')
+    if (markerIdx === -1) { cache.data = []; return [] }
+    const arrStart = unescaped.indexOf('[', markerIdx)
+    let depth = 0, i = arrStart
+    for (; i < unescaped.length; i++) {
+      if (unescaped[i] === '[') depth++
+      else if (unescaped[i] === ']') { depth--; if (depth === 0) { i++; break } }
+    }
+    const parsed = JSON.parse(unescaped.slice(arrStart, i))
+    const out: CricbuzzMatchInfo[] = Array.isArray(parsed)
+      ? parsed.map((m: any) => m?.matchInfo).filter(Boolean)
+      : []
+    cache.data = out
+    return out
+  } catch (e) {
+    console.warn('[check-toss] Cricbuzz listing fetch/parse failed:', (e as Error).message)
+    cache.data = []
+    return []
+  }
+}
+
+function findCricbuzzMatch(
+  matches: CricbuzzMatchInfo[], homeTeam: string, awayTeam: string, startTimeISO: string | null,
+): CricbuzzMatchInfo | null {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const h = norm(homeTeam), a = norm(awayTeam)
+  if (!h || !a) return null
+  const targetMs = startTimeISO ? new Date(startTimeISO).getTime() : NaN
+
+  let best: CricbuzzMatchInfo | null = null
+  let bestDiff = Infinity
+  for (const info of matches) {
+    const t1 = norm(info.team1?.teamName ?? ''), t2 = norm(info.team2?.teamName ?? '')
+    if (!t1 || !t2) continue
+    const teamsMatch = (t1 === h && t2 === a) || (t1 === a && t2 === h)
+    if (!teamsMatch) continue
+    // Cricbuzz's own human-readable status text has shown date display
+    // quirks (e.g. "Match starts at Aug 27" for a match whose structured
+    // startDate is actually the 26th) — startDate itself (epoch ms) matched
+    // our start_time exactly when checked live, so trust that field, not the
+    // display string, for disambiguation when team names alone aren't enough.
+    const diff = !isNaN(targetMs) && info.startDate ? Math.abs(Number(info.startDate) - targetMs) : 0
+    if (diff < bestDiff) { bestDiff = diff; best = info }
+  }
+  // Same-tournament rematches within ~48h of each other are the only
+  // realistic ambiguity here; reject a match whose start time is that far
+  // off rather than risk pairing the wrong fixture.
+  if (best && !isNaN(targetMs) && bestDiff > 48 * 60 * 60 * 1000) return null
+  return best
+}
+
+const CRICBUZZ_TOSS_TEXT = /([A-Za-z][A-Za-z .'&-]+?)\s+(?:won the toss and )?(?:opt(?:s|ed)?|elected)\s+to\s+(bat|bowl|field)/i
+
+function parseCricbuzzToss(info: CricbuzzMatchInfo | null, homeTeam: string, awayTeam: string): TossResult | null {
+  // status only IS the toss line while state === 'Toss' — see header comment.
+  if (!info || info.state !== 'Toss') return null
+  const m = String(info.status || '').match(CRICBUZZ_TOSS_TEXT)
+  if (!m) return null
+  return { winnerName: resolveTeamCasing(m[1].trim(), homeTeam, awayTeam), decision: normalizeDecision(m[2]), delayText: null }
+}
+
 async function fetchCricApiMatchInfo(externalId: string): Promise<any> {
   if (!CRICAPI_KEYS.length) throw new Error('No CRICAPI_KEYS configured')
   let lastErr: Error | null = null
   for (const key of CRICAPI_KEYS) {
     try {
-      const res = await fetch(
+      const res = await fetchWithRetry(
         `https://api.cricapi.com/v1/match_info?apikey=${encodeURIComponent(key)}&id=${encodeURIComponent(externalId)}`,
         { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Accept': 'application/json, text/plain, */*' } },
+        3,
       )
       const json = await res.json().catch(() => null)
       // Note: CricAPI's failure payloads carry the explanation in `reason`,
@@ -551,6 +744,10 @@ Deno.serve(async (req) => {
     console.warn('[check-toss] Could not load toss_auto_push setting, defaulting to disabled:', e.message)
   }
 
+  // Fresh every invocation — see the CricbuzzCache comment above for why this
+  // can't be module-level state like CricketAddictor's listingCache.
+  const cricbuzzCache: CricbuzzCache = { data: null }
+
   for (const match of (matches as unknown as Match[])) {
     summary.matchesChecked++
     try {
@@ -598,37 +795,41 @@ Deno.serve(async (req) => {
         console.warn(`[check-toss] CricketAddictor check failed for M${match.match_number}:`, e.message)
       }
 
-      // ── Persist each source's independent read, for corroboration ──────────
-      // (migration_v60_toss_source_log.sql). This runs regardless of which
-      // source ends up "winning" below — the point is to keep BOTH sources'
-      // results and arrival times, not just whichever answered first. One row
-      // per (match, source): the unique constraint plus ignoreDuplicates means
-      // only the FIRST successful read from each source is kept, even though
-      // this block runs again on every subsequent minute's tick.
-      if (cricApiToss) {
-        try {
-          await sb.from('toss_source_log').upsert(
-            { match_id: match.id, source: 'cricapi', winner_name: cricApiToss.winnerName, decision: cricApiToss.decision, received_at: nowISO },
-            { onConflict: 'match_id,source', ignoreDuplicates: true },
-          )
-        } catch (e: any) {
-          console.warn(`[check-toss] toss_source_log write failed (cricapi) M${match.match_number}:`, e.message)
-        }
+      // ── Source 3: Cricbuzz ───────────────────────────────────────────────
+      let cricbuzzToss: TossResult | null = null
+      try {
+        const cbMatches = await getCricbuzzMatches(cricbuzzCache)
+        const cbInfo = findCricbuzzMatch(cbMatches, homeTeam, awayTeam, match.start_time)
+        cricbuzzToss = parseCricbuzzToss(cbInfo, homeTeam, awayTeam)
+      } catch (e: any) {
+        console.warn(`[check-toss] Cricbuzz check failed for M${match.match_number}:`, e.message)
       }
-      if (addictorToss) {
+
+      // ── Persist each source's independent read, for corroboration ──────────
+      // (migration_v60_toss_source_log.sql, widened to allow 'cricbuzz' by
+      // migration_v61). This runs regardless of which source ends up
+      // "winning" below — the point is to keep every source's result and
+      // arrival time, not just whichever answered first. One row per (match,
+      // source): the unique constraint plus ignoreDuplicates means only the
+      // FIRST successful read from each source is kept, even though this
+      // block runs again on every subsequent minute's tick.
+      for (const [source, result] of [
+        ['cricapi', cricApiToss], ['cricketaddictor', addictorToss], ['cricbuzz', cricbuzzToss],
+      ] as const) {
+        if (!result) continue
         try {
           await sb.from('toss_source_log').upsert(
-            { match_id: match.id, source: 'cricketaddictor', winner_name: addictorToss.winnerName, decision: addictorToss.decision, received_at: nowISO },
+            { match_id: match.id, source, winner_name: result.winnerName, decision: result.decision, received_at: nowISO },
             { onConflict: 'match_id,source', ignoreDuplicates: true },
           )
         } catch (e: any) {
-          console.warn(`[check-toss] toss_source_log write failed (cricketaddictor) M${match.match_number}:`, e.message)
+          console.warn(`[check-toss] toss_source_log write failed (${source}) M${match.match_number}:`, e.message)
         }
       }
 
-      const toss   = cricApiToss ?? addictorToss
-      const source = cricApiToss ? 'cricapi' : addictorToss ? 'cricketaddictor' : null
-      const delayText = cricApiToss?.delayText ?? addictorToss?.delayText ?? null
+      const toss   = cricApiToss ?? addictorToss ?? cricbuzzToss
+      const source = cricApiToss ? 'cricapi' : addictorToss ? 'cricketaddictor' : cricbuzzToss ? 'cricbuzz' : null
+      const delayText = cricApiToss?.delayText ?? addictorToss?.delayText ?? cricbuzzToss?.delayText ?? null
       const teamsLabel = homeTeam && awayTeam ? `${homeTeam} vs ${awayTeam}` : `Match ${match.match_number}`
 
       // ── Case 1: toss confirmed ───────────────────────────────────────────
