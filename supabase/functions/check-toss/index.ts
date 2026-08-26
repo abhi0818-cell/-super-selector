@@ -541,8 +541,18 @@ async function getCricbuzzMatches(cache: CricbuzzCache): Promise<CricbuzzMatchIn
       else if (unescaped[i] === ']') { depth--; if (depth === 0) { i++; break } }
     }
     const parsed = JSON.parse(unescaped.slice(arrStart, i))
+    // 2026-08-26, M17: the page has 44 separate "matches":[...] blocks (one
+    // per widget/section), and the FIRST one — the one indexOf above grabs —
+    // shapes its items as {"match":{"matchInfo":{...}}}, one level deeper
+    // than a LATER block's {"matchInfo":{...}} shape (which is what this
+    // parser was originally built against, from inspecting a different block
+    // than the one actually used at runtime). Confirmed live: that first
+    // block's data was complete and correct (state "Toss", right status
+    // text) — only the extraction was wrong, silently reading undefined off
+    // every item. Handling both shapes here is more robust than switching
+    // marker/block, in case the shape varies again.
     const out: CricbuzzMatchInfo[] = Array.isArray(parsed)
-      ? parsed.map((m: any) => m?.matchInfo).filter(Boolean)
+      ? parsed.map((m: any) => m?.matchInfo ?? m?.match?.matchInfo).filter(Boolean)
       : []
     cache.data = out
     return out
