@@ -145,7 +145,7 @@
       else if (tab === 'contests') renderContestsAdmin();
       else if (tab === 'dangerzone') renderDangerZone();
       else if (tab === 'review')   { renderTeamsMismatchBanner(); renderReviewQueues?.(); wireDuplicatePlayersToggle?.(); }
-      else if (tab === 'live')     { /* content added in a later phase */ }
+      else if (tab === 'live')     { renderLiveTournamentBar(); renderLiveMatchTrackControls(); }
       else if (tab === 'reference') { /* static content, no render needed */ }
       else                         renderAdmin();
     }
@@ -690,12 +690,39 @@
       const fresh = sw.cloneNode(true);
       sw.parentNode.replaceChild(fresh, sw);
       fresh.addEventListener('change', e => {
-        if (state.db) {
-          switchTournament(e.target.value);
-          const picker = $('#tournamentPicker');
-          if (picker) picker.value = e.target.value;
-          renderContestsAdmin();
-        }
+        if (state.db) switchTournament(e.target.value); // syncs every other picker itself
+      });
+    }
+
+    /**
+     * Live tab's own tournament context bar — same rationale as
+     * renderContestsTournamentBar above: lets an admin switch which
+     * tournament's live scoring they're monitoring without leaving the tab.
+     * The badge surfaces the one piece of tournament-level config actually
+     * relevant here — whether matches on "Auto" resolve to the scraper or
+     * CricAPI by default (see resolveMatchTrack) — so it's visible before
+     * even picking a match in #matchId.
+     */
+    function renderLiveTournamentBar() {
+      const sw    = $('#liveTournamentSwitch');
+      const badge = $('#liveTournamentTrackBadge');
+      if (!sw) return;
+      sw.innerHTML = state.tournaments.length
+        ? state.tournaments.map(t =>
+            `<option value="${t.id}" ${t.id === state.activeTournamentId ? 'selected' : ''}>${escapeHtml(t.name)} (${t.format || 'T20'})</option>`
+          ).join('')
+        : '<option value="">— no tournaments loaded —</option>';
+      if (badge) {
+        const active = state.tournaments.find(t => t.id === state.activeTournamentId);
+        badge.textContent = active
+          ? (active.scraper_enabled ? '🕷 Scraper by default' : '📡 CricAPI by default')
+          : '';
+      }
+      // Wire switcher (only once — avoid duplicate listeners by replacing the node)
+      const fresh = sw.cloneNode(true);
+      sw.parentNode.replaceChild(fresh, sw);
+      fresh.addEventListener('change', e => {
+        if (state.db) switchTournament(e.target.value); // syncs every other picker itself
       });
     }
 
@@ -2655,6 +2682,113 @@
       } catch (err) {
         toast('Scrape failed: ' + err.message, 5000);
       }
+    }
+
+    /**
+     * Poll CricAPI now for one match — calls the poll-cricapi edge function
+     * (the same one the cron runs) and refreshes whatever's on screen. This
+     * is the CricAPI-track sibling of scrapeMatchNow() above, used by the
+     * Live tab's manual fetch button (see renderLiveMatchTrackControls).
+     */
+    async function pollMatchNow(matchId) {
+      try {
+        const supabaseUrl = state.db._supabaseUrl?.() ?? '';
+        const anonKey     = state.db._anonKey?.() ?? '';
+        const edgeFnUrl   = supabaseUrl.replace('.supabase.co', '.supabase.co/functions/v1') + '/poll-cricapi';
+        const res = await fetch(edgeFnUrl, {
+          method : 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${anonKey}` },
+          body   : JSON.stringify({ matchId }),
+        });
+        const json = await res.json();
+        if (!json.ok) throw new Error(json.error ?? 'Poll failed');
+        const r = json.results?.[0];
+        if (r?.status === 'ok') {
+          toast(`📡 Polled CricAPI — ${r.matched} player${r.matched===1?'':'s'} scored. ` +
+            `Unmatched: ${r.unmatched?.length ?? 0}.` +
+            (r.matchCompleted ? ' Match completed — finalized.' : ''), 5000);
+          renderMatchesAdmin();
+          if (state.activeMatchId === matchId || $('#matchId')?.value === state.matches.find(x => x.id===matchId)?.external_id) {
+            connectLive().catch(() => {});
+          }
+        } else {
+          toast(`Poll: ${r?.status ?? json.message ?? 'no live matches'} — ${r?.error ?? ''}`, 6000);
+        }
+      } catch (err) {
+        toast('Poll failed: ' + err.message, 5000);
+      }
+    }
+
+    /**
+     * Live tab — keeps the data-source indicator + manual fetch button next
+     * to the API key row in sync with whichever match is selected in
+     * #matchId. Independent of whether a poller is currently connected, so
+     * an admin can trigger a fresh Poll/Scrape without hitting Connect first
+     * — the same actions the Schedule tab's per-row buttons offer, just in
+     * the context of the Live tab. Called from setAdminTab('live') and, from
+     * index.html, whenever #matchId changes or is re-defaulted.
+     */
+    function renderLiveMatchTrackControls() {
+      const indicator = $('#liveTrackIndicator');
+      const btn       = $('#liveScrapeNowBtn');
+      if (!indicator || !btn) return;
+
+      const extId = $('#matchId')?.value;
+      const m     = extId ? state.matches?.find(x => x.external_id === extId) : null;
+
+      if (!m) {
+        indicator.style.display = 'none';
+        btn.style.display = 'none';
+        return;
+      }
+
+      const matchTournament = state.tournaments?.find(t => t.id === m.tournament_id);
+      const track = resolveMatchTrack(m, matchTournament);
+
+      indicator.style.display     = 'inline-block';
+      indicator.style.borderRadius = '10px';
+      indicator.style.padding      = '3px 8px';
+      indicator.style.fontSize     = '11px';
+      indicator.style.whiteSpace   = 'nowrap';
+      if (track === 'scraper') {
+        indicator.textContent = '🕷 Scraper-tracked — no API key needed';
+        indicator.style.background = 'rgba(120,200,80,0.10)';
+        indicator.style.border     = '1px solid rgba(120,200,80,0.4)';
+        indicator.style.color      = 'rgba(100,180,60,0.95)';
+      } else {
+        indicator.textContent = '📡 CricAPI-tracked';
+        indicator.style.background = 'rgba(80,160,255,0.10)';
+        indicator.style.border     = '1px solid rgba(80,160,255,0.4)';
+        indicator.style.color      = 'rgba(80,160,255,0.95)';
+      }
+
+      // Only offer a manual fetch while the match is actually in play — same
+      // gate renderMatchesAdmin() uses for the Schedule tab's row Poll/Scrape.
+      const isPastStart = m.start_time && new Date(m.start_time) <= new Date();
+      const isInPlay = isPastStart && m.status !== 'completed' && m.status !== 'delayed'
+                       && m.status !== 'abandoned' && m.status !== 'cancelled';
+
+      if (!isInPlay || !state.db) {
+        btn.style.display = 'none';
+        return;
+      }
+      btn.style.display = 'inline-block';
+      btn.textContent = track === 'scraper' ? '🕷 Scrape now' : '📡 Poll now';
+      btn.title = track === 'scraper'
+        ? "Fetch this match's scorecard now from the scraper"
+        : 'Poll CricAPI now for this match';
+      btn.onclick = async () => {
+        btn.disabled = true;
+        const original = btn.textContent;
+        btn.textContent = '⏳';
+        try {
+          if (track === 'scraper') await scrapeMatchNow(m.id);
+          else await pollMatchNow(m.id);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = original;
+        }
+      };
     }
 
     /**
@@ -5041,6 +5175,8 @@
     renderApiPill,
     getApiKeys,
     setActiveApiKey,
+    renderLiveMatchTrackControls,
+    renderLiveTournamentBar,
     isKeyExhaustedError,
     get CRIC_TEAM_CODE_MAP() { return CRIC_TEAM_CODE_MAP; },
     syncMatchesFromCricAPI,

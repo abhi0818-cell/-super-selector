@@ -2174,9 +2174,19 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
 
       <!-- Live tab — matchday connect/monitor actions -->
       <div class="modal-body" id="adminLiveView" style="display:none; padding:16px;">
+        <!-- Live scoring tournament context bar — mirrors Schedule/Contests -->
+        <div id="liveTournamentBar" style="display:flex; align-items:center; gap:10px; padding:8px 10px; margin:0 0 10px; border-radius:6px; background:rgba(201,168,76,0.07); border:1px solid var(--border); flex-wrap:wrap;">
+          <span style="font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; white-space:nowrap;">Live scoring for</span>
+          <select id="liveTournamentSwitch" style="font-size:13px; font-weight:600; flex:1; min-width:160px; border:none; background:transparent; color:var(--text); cursor:pointer;">
+            <option value="">— no tournament selected —</option>
+          </select>
+          <span id="liveTournamentTrackBadge" style="font-size:11px; color:var(--muted); white-space:nowrap;"></span>
+        </div>
+
         <!-- Live match connect -->
         <div style="display:flex; gap:8px; align-items:center; padding:6px 6px 10px; flex-wrap:wrap; border-bottom:1px solid var(--border); margin-bottom:10px;">
           <strong style="font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.5px; white-space:nowrap;">Live scoring</strong>
+          <span id="liveTrackIndicator" style="display:none;"></span>
           <select id="apiKeyPicker" style="font-size:12px; padding:6px 10px;">
             <option value="">— pick a saved key —</option>
             <option value="42c7c79b-b82d-4164-9699-0fb43b29a089">Key 1 (…0089)</option>
@@ -2188,6 +2198,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
             <option value="">— pick a match —</option>
           </select>
           <button id="liveBtn">Connect</button>
+          <button id="liveScrapeNowBtn" style="display:none; font-size:12px; padding:6px 10px;"></button>
           <small style="color:var(--muted); font-size:11px;">Proxy on port 8081 · polls every 30 min · stops when match ends.</small>
         </div>
 
@@ -4984,10 +4995,7 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
         const fresh = headerPicker.cloneNode(true);
         headerPicker.parentNode.replaceChild(fresh, headerPicker);
         fresh.addEventListener('change', async e => {
-          await switchTournament(e.target.value);
-          // Keep settings picker in sync
-          const sp = $('#tournamentPicker');
-          if (sp) sp.value = e.target.value;
+          await switchTournament(e.target.value); // syncs every other picker itself
           // Jump to Contest tab so the user immediately sees the selected tournament's contests
           switchPageTab('contest');
         });
@@ -6421,6 +6429,14 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       window.__admin?.renderTournamentScoringRules?.();
       window.__admin?.renderRulesEditor?.();
       render();   // update squadList, liveLabel, saveBar with restored (or empty) XI
+      // Single sync point: every tournament picker/context bar across the app
+      // (header, Tournament tab, Schedule bar, Contests bar, Live bar) reflects
+      // the switch from here — once all the async loads above have actually
+      // resolved — instead of each individual onchange handler manually
+      // re-syncing whichever siblings it happened to know about.
+      renderTournamentSelector();                  // header + Tournament tab picker + Schedule bar
+      window.__admin?.renderContestsAdmin?.();     // Contests bar + list
+      window.__admin?.renderLiveTournamentBar?.(); // Live tab's tournament bar
       // If already on Season Long tab, re-init so slLoadDraft runs for the new tournament
       if (state.mode === 'season_long') {
         initSeasonLong();
@@ -9378,24 +9394,35 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
         // Preserve an existing selection
         sel.value = cur;
       } else {
-        // Default to the active match first, then fall back to heuristics.
-        const activeMatch = state.activeMatchId
-          ? sorted.find(m => m.id === state.activeMatchId)
-          : null;
+        // Default purely by match lifecycle — NOT by state.activeMatchId, which
+        // just tracks whichever match the operator's own saved fantasy XI
+        // happens to be linked to. That's unrelated to live scoring and easily
+        // gets stuck pointing at a stale early-testing match (e.g. M1) forever.
+        const liveMatch = sorted
+          .filter(m => m.status === 'live' || m.status === 'in_progress')
+          .sort((a, b) => new Date(a.start_time || 0) - new Date(b.start_time || 0))[0];
+        const lastCompleted = sorted
+          .filter(m => m.status === 'completed')
+          .sort((a, b) => new Date(b.played_on || b.start_time || 0) - new Date(a.played_on || a.start_time || 0))[0];
+        const nextUpcoming = sorted
+          .filter(m => !isMatchOver(m) && effectiveLockTime(m) && new Date(effectiveLockTime(m)).getTime() > Date.now())
+          .sort((a, b) => new Date(effectiveLockTime(a)) - new Date(effectiveLockTime(b)))[0];
         const next =
-          // 1st choice: whatever match is active in the main UI
-          activeMatch ||
-          // 2nd choice: a match currently in progress
-          sorted.find(m => m.status === 'in_progress') ||
+          // 1st choice: a match currently live/in progress
+          liveMatch ||
+          // 2nd choice: the most recently completed match — e.g. M15 once CPL
+          // has finished matches but nothing else is live yet
+          lastCompleted ||
           // 3rd choice: the soonest scheduled match that hasn't started yet
           // (effectiveLockTime accounts for lock_time/delayed status)
-          sorted
-            .filter(m => !isMatchOver(m) && effectiveLockTime(m) && new Date(effectiveLockTime(m)).getTime() > Date.now())
-            .sort((a, b) => new Date(effectiveLockTime(a)) - new Date(effectiveLockTime(b)))[0] ||
+          nextUpcoming ||
           // 4th choice: the closest match by date regardless of status
           sorted[0];
         if (next) sel.value = next.external_id;
       }
+      // Keep the Live tab's data-source indicator + manual fetch button in
+      // sync with whatever match this dropdown just landed on.
+      window.__admin?.renderLiveMatchTrackControls?.();
     }
 
     function activeMatch() {
@@ -13118,6 +13145,12 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
     $('#saveFantasyScorecardBtn').addEventListener('click', () => window.__admin?.saveFantasyScorecard?.());
     $('#rescoreBtn').addEventListener('click', () => window.__admin?.rescoreCurrentMatch?.());
     $('#fetchNowBtn').addEventListener('click', forcePollNow);
+    // Keep the Live tab's data-source indicator + manual fetch button in sync
+    // when the operator manually switches matches. (Programmatic .value sets
+    // — e.g. renderMatchIdDropdown's own default — don't fire 'change', so
+    // that function calls window.__admin?.renderLiveMatchTrackControls?.()
+    // directly instead of relying on this listener.)
+    $('#matchId').addEventListener('change', () => window.__admin?.renderLiveMatchTrackControls?.());
     // API key quick-pick: fills the input + persists across reloads
     const API_KEY_LS = 'ss_cricapi_key';
     const APIKEY_PICK_LS = 'ss_cricapi_key_pick';
@@ -13167,22 +13200,18 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       if (dbForm)    dbForm.style.display = 'flex';
       if (dbSummary) dbSummary.style.display = 'none';
     });
+    // Every tournament-picker's onchange now just calls switchTournament() —
+    // it owns keeping every other picker/context bar in sync itself (see its
+    // tail). Previously each handler manually re-synced whichever sibling
+    // elements it happened to know about (e.g. neither Schedule's nor
+    // Contests' switcher ever updated the header picker, and Contests' own
+    // list only refreshed when its own switcher was the one used) — that
+    // per-handler approach is exactly how they drifted out of sync.
     $('#tournamentPicker').addEventListener('change', e => {
-      if (state.db) {
-        switchTournament(e.target.value);
-        // Keep header picker in sync
-        const hp = $('#headerTournamentPicker');
-        if (hp) hp.value = e.target.value;
-      }
+      if (state.db) switchTournament(e.target.value);
     });
-    // Schedule tab tournament switcher — mirrors the Tournament tab picker
     $('#scheduleTorunamentSwitch').addEventListener('change', e => {
-      if (state.db) {
-        switchTournament(e.target.value);
-        // Keep the Tournament tab picker in sync
-        const picker = $('#tournamentPicker');
-        if (picker) picker.value = e.target.value;
-      }
+      if (state.db) switchTournament(e.target.value);
     });
     $('#addTournamentBtn').addEventListener('click', addTournamentHandler);
 
