@@ -69,12 +69,12 @@ before anyone knew about the delay.
 **Action (must happen before the old gate fires):**
 1. Click 🌧 Delay if not already delayed (auto-promotes `scheduled` → `delayed` the
    first time a lock_time changes too, so this step is sometimes automatic).
-2. Set the lock gate to the real new time:
-   - If `lock_time` already had a value, the **+15m/+30m** buttons push it forward
-     — repeat as needed, or type an exact value into the `lock_time` field directly.
-   - If `lock_time` was **never set** on this match, +15/+30 will silently push
-     `start_time` instead and leave `lock_time` null (Trap 1) — **type the real
-     restart time directly into the `lock_time` input**, not the quick-push buttons.
+2. Set the lock gate to the real new time: the **+15m/+30m** buttons always push
+   `lock_time` forward now (from `lock_time` if already set, otherwise from
+   `start_time` as the base) — repeat as needed, or type an exact value into the
+   `lock_time` field directly. (Previously, on a match with no `lock_time` yet,
+   +15/+30 silently pushed `start_time` instead and left `lock_time` null — see
+   the historical note under Trap 1 below. Fixed as of Aug 2026.)
 3. Confirm the badge still reads 🌧 Delayed with a `lock_time` populated (check the
    raw field, not just the badge) before walking away.
 
@@ -188,9 +188,14 @@ exists to make sure matches land here instead of Scenario 4 or 6.
 ## Traps to remember
 
 **Trap 1 — "Delayed" with no `lock_time` has no gate at all.** Not "gate pushed to
-start_time," not "locks eventually" — it simply never locks until someone types a
-real `lock_time` in. The +15/+30 buttons will not create one for you if it didn't
-already exist; they push `start_time` instead in that case, silently.
+start_time," not "locks eventually" — it simply never locks until someone sets a
+real `lock_time`. Historical note: before Aug 2026, the +15/+30 buttons would not
+create one for you if it didn't already exist — they pushed `start_time` instead in
+that case, silently, which combined with this trap to make a freshly-pushed match
+show "no lock gate set." Both the mobile admin screen and the web admin panel now
+have +15/+30 always write `lock_time`, so this can no longer happen via those
+buttons — it can still happen if a match is manually marked `delayed` (via the
+🌧 Delay toggle or a direct status edit) without ever setting `lock_time` at all.
 
 **Trap 2 — the push buttons disappear once locked.** `canPush` excludes `live`/
 `in_progress`/`completed`/`abandoned`/`cancelled`. Once the gate fires and status

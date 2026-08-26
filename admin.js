@@ -1604,14 +1604,13 @@
               // Scrape button — that always bypasses staleness for a manual
               // matchId call and will set stats_verified_at once it succeeds.
               const needsVerification = m.status === 'completed' && !m.stats_verified_at;
-              // Quick time-push targets lock_time if one's already set (the
-              // active gate once delayed — see effectiveLockTime()), else
-              // start_time (still just the informational kickoff). First use
-              // also promotes 'scheduled' → 'delayed', since the lock-matches
-              // cron job only checks lock_time for status='delayed' matches —
-              // pushing a time without that flip would silently no-op.
-              const canPush         = !isOver && m.status !== 'live' && m.status !== 'in_progress';
-              const pushTargetLabel = m.lock_time ? 'lock' : 'start';
+              // Quick time-push always targets lock_time — pushing from
+              // lock_time if one's already set, otherwise from start_time as
+              // the base. First use also promotes 'scheduled' → 'delayed',
+              // since the lock-matches cron job only checks lock_time for
+              // status='delayed' matches — pushing without that flip would
+              // silently no-op.
+              const canPush = !isOver && m.status !== 'live' && m.status !== 'in_progress';
               return `
                 <div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">
                   <span style="font-size:11px;font-weight:600;color:${badgeColor};">${badge}</span>
@@ -1631,9 +1630,9 @@
                     ${isDelayed ? '✕ Delayed' : '🌧 Delay'}
                   </button>
                   ${canPush ? `
-                    <button class="push-time-btn" data-id="${m.id}" data-min="15" title="Push ${pushTargetLabel} time +15 min"
+                    <button class="push-time-btn" data-id="${m.id}" data-min="15" title="Push lock time +15 min"
                       style="font-size:10px;padding:2px 6px;border-radius:4px;background:transparent;border:1px solid var(--border);color:var(--muted);cursor:pointer;">+15m</button>
-                    <button class="push-time-btn" data-id="${m.id}" data-min="30" title="Push ${pushTargetLabel} time +30 min"
+                    <button class="push-time-btn" data-id="${m.id}" data-min="30" title="Push lock time +30 min"
                       style="font-size:10px;padding:2px 6px;border-radius:4px;background:transparent;border:1px solid var(--border);color:var(--muted);cursor:pointer;">+30m</button>
                   ` : ''}
                   <button class="abandon-toggle-btn" data-id="${m.id}" data-abandoned="${isAbandoned}"
@@ -1819,13 +1818,17 @@
             if (!m) return;
             const base = m.lock_time || m.start_time;
             if (!base) { toast('No start time set on this match yet — set one first.'); return; }
-            const targetField = m.lock_time ? 'lockTime' : 'startTime';
+            // Always push lockTime forward from the current effective gate —
+            // never startTime. Previously this pushed startTime instead on a
+            // match's first push (when lock_time wasn't set yet) while still
+            // flipping status to 'delayed', and effectiveLockTime() treats a
+            // delayed match with no lock_time as having NO gate at all — so
+            // the row would show "no lock gate set" right after being pushed.
             const newTime = new Date(new Date(base).getTime() + minutes * 60000).toISOString();
-            const patch = { [targetField]: newTime };
+            const patch = { lockTime: newTime };
             // First push declares the delay — the lock-matches cron job only
-            // checks lock_time for status='delayed' matches, and only checks
-            // start_time for 'scheduled'/'in_progress' ones, so this makes
-            // sure a start_time push doesn't just get silently ignored by it.
+            // checks lock_time for status='delayed' matches, so this makes
+            // sure the push doesn't just get silently ignored by it.
             if (m.status === 'scheduled') patch.status = 'delayed';
             btn.disabled = true;
             try {
@@ -1834,7 +1837,7 @@
               if (idx >= 0) state.matches[idx] = upd;
               renderMatchesAdmin();
               renderMatchSelector();
-              toast(`⏱ Pushed ${targetField === 'lockTime' ? 'lock' : 'start'} time +${minutes} min for M${m.match_number ?? '?'}.`);
+              toast(`⏱ Pushed lock time +${minutes} min for M${m.match_number ?? '?'}.`);
             } catch (err) {
               toast('Push failed: ' + err.message, 4000);
               btn.disabled = false;

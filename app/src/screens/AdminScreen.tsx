@@ -12,9 +12,13 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, Pressable, ActivityIndicator,
-  TextInput, FlatList, Alert, StyleSheet, SafeAreaView,
+  TextInput, FlatList, Alert, StyleSheet,
   KeyboardAvoidingView, Keyboard, Platform, TouchableWithoutFeedback,
 } from 'react-native';
+// NOTE: must come from react-native-safe-area-context, not the react-native
+// built-in — the built-in SafeAreaView is a no-op on Android, which is why
+// the "⚙️ Admin" heading was overlapping the status bar there.
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../store/authStore';
@@ -56,6 +60,15 @@ function formatRelative(iso: string): string {
   const m = mins % 60;
   const label = h > 0 ? `${h}h ${m}m` : `${m}m`;
   return diffMs > 0 ? `locks in ${label}` : `overdue by ${label}`;
+}
+
+// Absolute scheduled lock time, e.g. "Thu 8:45 PM" — shown alongside the
+// relative countdown so admins can see the actual gate, not just "in 2h 15m".
+function formatAbsolute(iso: string): string {
+  const d = new Date(iso);
+  const datePart = d.toLocaleDateString(undefined, { weekday: 'short' });
+  const timePart = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return `${datePart} ${timePart}`;
 }
 
 interface UnmatchedRow {
@@ -178,21 +191,23 @@ function MatchLockSection({
     }
   }
 
-  // Pushes lock_time if one's already set (the active gate once delayed),
-  // otherwise start_time (still just the informational kickoff). First push
-  // also promotes 'scheduled' → 'delayed' — the lock-matches Edge Function
-  // only checks lock_time for status='delayed' matches, so a start_time push
-  // alone wouldn't otherwise change when the match actually locks.
+  // Always pushes lock_time forward from whatever the current effective gate
+  // is (lock_time if already set, otherwise start_time) — never leaves
+  // lock_time null. Promotes 'scheduled' → 'delayed' on first push, since the
+  // lock-matches Edge Function only checks lock_time for status='delayed'
+  // matches. (Previously this pushed start_time on a first press and left
+  // lock_time null, which combined with effectiveLockTime() treating a
+  // delayed-with-no-lock_time match as having no gate at all — so the row
+  // showed "no lock gate set" immediately after an admin pushed it forward.)
   async function pushTime(m: AdminMatch, minutes: number) {
     const base = m.lock_time || m.start_time;
     if (!base) { Alert.alert('No start time set', 'Set a start time first (web admin).'); return; }
-    const target   = m.lock_time ? 'lock_time' : 'start_time';
-    const newTime  = new Date(new Date(base).getTime() + minutes * 60000).toISOString();
-    const patch: Record<string, any> = { [target]: newTime };
+    const newTime = new Date(new Date(base).getTime() + minutes * 60000).toISOString();
+    const patch: Record<string, any> = { lock_time: newTime };
     if (m.status === 'scheduled') patch.status = 'delayed';
     await applyPatch(
       m, patch,
-      `Pushed ${target === 'lock_time' ? 'lock' : 'start'} time +${minutes} min.`,
+      `Pushed lock time +${minutes} min.`,
       `Match M${m.match_number ?? '?'} delayed`,
       `${matchLabel(m)} delayed — team lock pushed back ${minutes} min.`,
     );
@@ -200,6 +215,10 @@ function MatchLockSection({
 
   // Sets a firm lock_time (e.g. a known toss/inspection time) rather than
   // nudging it in 15/30-min steps — same day as the match's start_time.
+  // If the typed time lands back on the original start_time, treat that as
+  // "never mind, it's on time after all" and clear the delay instead of
+  // leaving status='delayed' with lock_time == start_time — same effective
+  // gate, but a stale 🌧 Delayed badge otherwise sticks around forever.
   async function setLockTime(m: AdminMatch) {
     const hhmm = manualTime.trim();
     if (!/^\d{1,2}:\d{2}$/.test(hhmm)) { Alert.alert('Invalid time', 'Use 24h HH:MM, e.g. 20:45.'); return; }
@@ -207,13 +226,23 @@ function MatchLockSection({
     const [hh, mm] = hhmm.split(':');
     const d = new Date(`${baseDate}T${hh.padStart(2, '0')}:${mm}:00`); // parsed as device-local time
     if (isNaN(d.getTime())) { Alert.alert('Invalid time', 'Could not parse that time.'); return; }
-    const patch: Record<string, any> = { lock_time: d.toISOString() };
-    if (m.status === 'scheduled') patch.status = 'delayed';
+
+    const toMinute = (ms: number) => Math.floor(ms / 60000);
+    const backToSchedule = m.start_time != null
+      && toMinute(d.getTime()) === toMinute(new Date(m.start_time).getTime());
+
+    const patch: Record<string, any> = backToSchedule
+      ? { lock_time: null, status: 'scheduled' }
+      : { lock_time: d.toISOString() };
+    if (!backToSchedule && m.status === 'scheduled') patch.status = 'delayed';
+
     await applyPatch(
       m, patch,
-      `Lock time set to ${hhmm}.`,
-      `Match M${m.match_number ?? '?'} delayed`,
-      `${matchLabel(m)} delayed — team lock now set for ${hhmm}.`,
+      backToSchedule ? 'Delay cleared — back to original schedule.' : `Lock time set to ${hhmm}.`,
+      backToSchedule ? `Match M${m.match_number ?? '?'} on schedule` : `Match M${m.match_number ?? '?'} delayed`,
+      backToSchedule
+        ? `${matchLabel(m)} is back on its original schedule — delay cleared.`
+        : `${matchLabel(m)} delayed — team lock now set for ${hhmm}.`,
     );
   }
 
@@ -242,8 +271,10 @@ function MatchLockSection({
     <View>
       <Text style={s.hint}>
         Showing the live match (if any) plus the next upcoming one — tap a match to push its
-        time or mark it delayed/abandoned. "Run Lock Now" still processes every match whose
-        lock gate has passed, tournament-wide, regardless of the cron schedule.
+        time or mark it delayed/abandoned. "Run Lock Now" below is not scoped to the match(es)
+        shown here — it runs the same tournament-wide check as the once-a-minute cron job, and
+        only locks matches whose gate has already passed (future matches are untouched, and
+        already-locked matches are safely skipped).
       </Text>
 
       {visible.length === 0 ? (
@@ -261,7 +292,9 @@ function MatchLockSection({
                 <View style={{ flex: 1 }}>
                   <Text style={s.matchLabel}>{matchLabel(m)}</Text>
                   <Text style={s.matchSub}>
-                    {lockAt ? formatRelative(lockAt) : 'no lock gate set — will not auto-lock'}
+                    {lockAt
+                      ? `Locks ${formatAbsolute(lockAt)} · ${formatRelative(lockAt)}`
+                      : 'no lock gate set — will not auto-lock'}
                   </Text>
                 </View>
                 <View style={[s.statusPill, { backgroundColor: statusColor(m.status) }]}>
@@ -272,7 +305,7 @@ function MatchLockSection({
               {isExpanded && (
                 <View style={s.delayPanel}>
                   <Text style={s.delayPanelLabel}>
-                    Push {m.lock_time ? 'lock' : 'start'} time
+                    Push lock time
                   </Text>
                   <View style={s.delayBtnRow}>
                     <Pressable style={s.delayBtn} onPress={() => pushTime(m, 15)} disabled={busyId === m.id}>
@@ -319,7 +352,7 @@ function MatchLockSection({
       >
         {running
           ? <ActivityIndicator color="#1C1F26" />
-          : <Text style={s.primaryBtnText}>🔒 Run Lock Now (all matches)</Text>
+          : <Text style={s.primaryBtnText}>🔒 Run Lock Now (all overdue matches)</Text>
         }
       </Pressable>
 
@@ -354,9 +387,24 @@ function FetchScoresSection({ matches, loading }: { matches: AdminMatch[]; loadi
 
   if (loading) return <ActivityIndicator color={C.accent} style={{ margin: spacing.md }} />;
 
-  const liveMatches = matches.filter(m =>
+  // Only the next 2 actionable matches (live/in-progress first, then soonest
+  // upcoming by lock gate) — this list used to include every non-completed
+  // match in the tournament, which made it grow unbounded as a season went
+  // on. Mirrors the "live + next upcoming" cap used in Match Lock above.
+  const eligible = matches.filter(m =>
     ['live', 'in_progress', 'scheduled', 'delayed'].includes(m.status)
   );
+  const liveMatches = eligible
+    .slice()
+    .sort((a, b) => {
+      const ta = effectiveLockTime(a);
+      const tb = effectiveLockTime(b);
+      if (!ta && !tb) return (a.match_number ?? 0) - (b.match_number ?? 0);
+      if (!ta) return 1;
+      if (!tb) return -1;
+      return new Date(ta).getTime() - new Date(tb).getTime();
+    })
+    .slice(0, 2);
 
   if (liveMatches.length === 0) {
     return <Text style={s.empty}>No active matches to fetch scores for.</Text>;
@@ -364,7 +412,7 @@ function FetchScoresSection({ matches, loading }: { matches: AdminMatch[]; loadi
 
   return (
     <View>
-      <Text style={s.hint}>Manually trigger a score fetch for a specific match.</Text>
+      <Text style={s.hint}>Manually trigger a score fetch for the next 2 matches.</Text>
       {liveMatches.map(m => {
         const cricKey   = m.id + 'cricapi';
         const scrapeKey = m.id + 'scrape';
@@ -774,7 +822,7 @@ export default function AdminScreen() {
   // Guard — should never render for non-admins (tab is hidden), but belt + suspenders
   if (user?.email !== ADMIN_EMAIL) {
     return (
-      <SafeAreaView style={s.screen}>
+      <SafeAreaView style={s.screen} edges={['top']}>
         <Text style={{ color: C.muted, textAlign: 'center', margin: spacing.xl }}>
           Admin access only.
         </Text>
@@ -814,7 +862,7 @@ export default function AdminScreen() {
   const unmatchedCount = 0; // loaded inside PlayerMapSection; badge shown generically
 
   return (
-    <SafeAreaView style={s.screen}>
+    <SafeAreaView style={s.screen} edges={['top']}>
       <Text style={s.title}>⚙️ Admin</Text>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
