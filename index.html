@@ -5509,10 +5509,6 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
             const sortedPlayersUm = [...tPlayers].sort((a, b) =>
               a.team === b.team ? a.name.localeCompare(b.name) : a.team.localeCompare(b.team)
             );
-            const playerOpts = sortedPlayersUm.map(p =>
-              `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name)} (${p.team}, ${p.role}${p.overseas ? ', ✈️' : ''})</option>`
-            ).join('');
-
             // Build team options
             const teamSet = new Map();
             tPlayers.forEach(p => { if (p.team) teamSet.set(p.team, p.team); });
@@ -5568,18 +5564,21 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
                                          background:transparent; border:1px solid var(--border);
                                          color:var(--muted); cursor:pointer; white-space:nowrap;">Ignore</button>
                         </div>
-                        <!-- Map form (hidden by default) -->
-                        <div class="ua-map-form" style="display:none; margin-top:4px; display:none;">
-                          <select class="ua-player-select" style="font-size:11px; max-width:200px;">
-                            <option value="">— select player —</option>
-                            ${playerOpts}
-                          </select>
+                        <!-- Map form (hidden by default) — type-to-search combobox, same
+                             idea as the Players tab's search box, instead of browsing a full
+                             tournament-wide dropdown. -->
+                        <div class="ua-map-form" style="display:none; margin-top:4px; position:relative;">
+                          <input type="text" class="ua-player-search" placeholder="Search player…" autocomplete="off"
+                                 style="font-size:11px; padding:3px 6px; width:190px;" />
                           <button class="ua-map-save"
                                   style="font-size:10px; padding:2px 8px; margin-left:4px; border-radius:4px;
                                          background:var(--accent); color:#000; border:none; cursor:pointer;">Save alias</button>
                           <button class="ua-cancel"
                                   style="font-size:10px; padding:2px 6px; margin-left:2px; border-radius:4px;
                                          background:transparent; border:1px solid var(--border); color:var(--muted); cursor:pointer;">✕</button>
+                          <div class="ua-player-results" style="display:none; position:absolute; top:100%; left:0; z-index:30;
+                               background:var(--panel); border:1px solid var(--border); border-radius:4px; max-height:180px;
+                               overflow-y:auto; min-width:220px; box-shadow:0 4px 12px rgba(0,0,0,0.3); margin-top:2px;"></div>
                         </div>
                         <!-- Add new player form (hidden by default) -->
                         <div class="ua-add-form" style="display:none; margin-top:4px; background:rgba(80,180,120,0.06);
@@ -5646,6 +5645,51 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
                 actions.style.display = 'flex';
               }
 
+              // Type-to-search combobox for the Map form — filters the same
+              // tournament-wide player list the old <select> held (sortedPlayersUm,
+              // built once above for this whole panel), instead of a full dropdown
+              // to browse. Picking a result stores its id on the input's own
+              // dataset so Save alias below doesn't need a separate hidden field.
+              const playerSearch  = row.querySelector('.ua-player-search');
+              const playerResults = row.querySelector('.ua-player-results');
+              if (playerSearch && playerResults) {
+                const renderPlayerResults = (term) => {
+                  const q = term.trim().toLowerCase();
+                  if (!q) { playerResults.style.display = 'none'; playerResults.innerHTML = ''; return; }
+                  const matches = sortedPlayersUm.filter(p =>
+                    p.name.toLowerCase().includes(q) || (p.team || '').toLowerCase().includes(q)
+                  ).slice(0, 25);
+                  playerResults.innerHTML = matches.length
+                    ? matches.map(p => `
+                        <div class="ua-player-result" data-id="${escapeHtml(p.id)}"
+                             style="padding:4px 8px; cursor:pointer; font-size:11px; border-bottom:1px solid var(--border);">
+                          ${escapeHtml(p.name)} <span style="color:var(--muted);">(${escapeHtml(p.team)}, ${escapeHtml(p.role)}${p.overseas ? ', ✈️' : ''})</span>
+                        </div>`).join('')
+                    : '<div style="padding:5px 8px; color:var(--muted); font-size:11px;">No matches</div>';
+                  playerResults.style.display = 'block';
+                };
+                playerSearch.addEventListener('input', () => {
+                  playerSearch.dataset.playerId = ''; // typing invalidates any previously picked result
+                  renderPlayerResults(playerSearch.value);
+                });
+                playerSearch.addEventListener('focus', () => {
+                  if (playerSearch.value) renderPlayerResults(playerSearch.value);
+                });
+                // mousedown (not click) fires before blur's hide below, so the pick registers
+                playerResults.addEventListener('mousedown', (e) => {
+                  const item = e.target.closest('.ua-player-result');
+                  if (!item) return;
+                  const p = sortedPlayersUm.find(x => x.id === item.dataset.id);
+                  if (!p) return;
+                  playerSearch.value = p.name;
+                  playerSearch.dataset.playerId = p.id;
+                  playerResults.style.display = 'none';
+                });
+                playerSearch.addEventListener('blur', () => {
+                  setTimeout(() => { playerResults.style.display = 'none'; }, 150);
+                });
+              }
+
               // Map/Add buttons (and their forms/save handlers) are omitted entirely
               // for placeholder rows like "Player Not Found" — guard with ?. so
               // wiring the rest of the row doesn't throw when they're absent.
@@ -5655,8 +5699,8 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
 
               // Save alias
               row.querySelector('.ua-map-save')?.addEventListener('click', async () => {
-                const playerId = row.querySelector('.ua-player-select').value;
-                if (!playerId) { toast('Select a player first.'); return; }
+                const playerId = row.querySelector('.ua-player-search')?.dataset.playerId;
+                if (!playerId) { toast('Search and pick a player first.'); return; }
                 try {
                   await state.db.resolveUnmatchedAsAlias(uid, playerId, tid, rawName, src);
                   // Cascade the now-linked player's stats into every user team's
