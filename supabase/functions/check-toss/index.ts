@@ -82,16 +82,22 @@
  * than either existing source's text-scraping, and from a host that isn't
  * blocked either way CricAPI's issue eventually resolves.
  *
- * "Corroborated" above is aspirational, not yet enforced: matches.toss_status
- * still confirms off whichever ONE source answers first (cricApiToss ??
- * addictorToss ?? cricbuzzToss) — the three sources are not currently
- * cross-checked against each other before confirming. What IS new: every
- * successful read from ANY source, not just the winning one, is also written
- * to toss_source_log (migration_v60_toss_source_log.sql, widened to allow
- * 'cricbuzz' by migration_v61) — one row per (match, source), stamped with
- * when that source first reported it. That table is what a real "do the
- * sources agree, and how far apart in time" corroboration check would query;
- * this function doesn't gate on it yet.
+ * "Corroborated" above is still aspirational for the CONFIRM/notify decision:
+ * matches.toss_status confirms off whichever ONE source answers first
+ * (cricApiToss ?? addictorToss ?? cricbuzzToss) — the three sources are not
+ * cross-checked against each other before confirming or before the admin's
+ * push goes out. What changed (2026-08-26, after M17 showed the gap live):
+ * every successful read from ANY source, not just the winning one, is
+ * written to toss_source_log (migration_v60_toss_source_log.sql, widened to
+ * allow 'cricbuzz' by migration_v61) — one row per (match, source), stamped
+ * with when that source first reported it — and a CONFIRMED match now stays
+ * in the polling query for CORROBORATION_WINDOW_MINUTES past its
+ * confirmation timestamp specifically so the source(s) that didn't win still
+ * get logged, instead of being cut off the instant the first one answered.
+ * That table is what a real "do the sources agree, and how far apart in
+ * time" corroboration check would query; this function still doesn't gate
+ * confirmation on it — it now just guarantees the data actually gets
+ * collected for that check to be built on top of later.
  *
  * Triggered by:
  *   - pg_cron every 1 minute (migration_v56_check_toss_cron.sql), body: {}
@@ -133,6 +139,25 @@ const CHECK_WINDOW_MINUTES = 30
 // toss is typically confirmed by ~T-30, so a T-10 flag left too little
 // runway to actually review and push the start time before kickoff.
 const DELAY_DECISION_BUFFER_MINUTES = 15
+
+// 2026-08-26: added after M17 exposed the gap directly — CricketAddictor
+// confirmed the toss, which immediately excluded the match from every future
+// tick (old query: `.neq('toss_status','confirmed')`), so Cricbuzz never got
+// a chance to log its own read for that match even though its data was
+// sitting there correctly a minute or two later. That made toss_source_log
+// useless for real corroboration: it only ever captured whichever source
+// happened to win a given tick, never a second opinion.
+//
+// Fix: once a match confirms, keep it in the query (see corroborationWindowStartISO
+// below) for this many minutes past the ORIGINAL confirmation timestamp, so
+// every source still gets fetched and still gets a chance to write to
+// toss_source_log — see the "alreadyConfirmed" branch in the main loop for
+// what's actually skipped on those ticks (no re-notify, no status rewrite).
+// Not unbounded: Cricbuzz's toss signal in particular stops being available
+// once match state moves past "Toss", so polling indefinitely past
+// confirmation buys nothing once every source that will ever answer has had
+// its chance. 30 minutes mirrors CHECK_WINDOW_MINUTES's pre-match window.
+const CORROBORATION_WINDOW_MINUTES = 30
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ─── CricketAddictor slug / URL discovery ──────────────────────────────────────
@@ -710,6 +735,9 @@ Deno.serve(async (req) => {
   // that never got a toss recorded (abandoned without a ball, data gap,
   // whatever) doesn't sit in this query forever.
   const giveUpISO = new Date(nowMs - 6 * 60 * 60 * 1000).toISOString()
+  // See CORROBORATION_WINDOW_MINUTES above — bounds how long a CONFIRMED
+  // match still gets polled for corroboration purposes.
+  const corroborationWindowStartISO = new Date(nowMs - CORROBORATION_WINDOW_MINUTES * 60 * 1000).toISOString()
 
   const { data: matches, error: mErr } = await sb
     .from('matches')
@@ -721,7 +749,15 @@ Deno.serve(async (req) => {
       tournament:tournaments!tournament_id(id, name)
     `)
     .in('status', ['scheduled', 'delayed'])
-    .neq('toss_status', 'confirmed')
+    // Previously `.neq('toss_status','confirmed')` dropped a match from every
+    // future tick the instant ONE source confirmed it — silently cutting off
+    // any other source's chance to log its own read, even one that would've
+    // landed a minute later (this is exactly what happened to Cricbuzz on
+    // M17). Now: still skip a match confirmed long ago (nothing to gain
+    // re-polling something confirmed hours back), but keep a FRESHLY
+    // confirmed match in the query for CORROBORATION_WINDOW_MINUTES past its
+    // confirmation timestamp, purely so the other sources get logged too.
+    .or(`toss_status.neq.confirmed,and(toss_status.eq.confirmed,toss_checked_at.gte.${corroborationWindowStartISO})`)
     .lte('start_time', windowStartISO)
     .gte('start_time', giveUpISO)
     .order('start_time', { ascending: true })
@@ -732,11 +768,12 @@ Deno.serve(async (req) => {
   }
 
   const summary = {
-    matchesChecked: 0,
-    tossConfirmed  : 0,
-    delayFlagged   : 0,
-    notified       : 0,
-    errors         : [] as string[],
+    matchesChecked      : 0,
+    tossConfirmed       : 0,
+    delayFlagged        : 0,
+    notified            : 0,
+    corroborationPolled : 0,   // already-confirmed matches re-checked only to log other sources
+    errors              : [] as string[],
   }
 
   if (!matches?.length) {
@@ -764,6 +801,10 @@ Deno.serve(async (req) => {
       const homeTeam = match.home_team?.name ?? ''
       const awayTeam = match.away_team?.name ?? ''
       const tournamentName = match.tournament?.name ?? ''
+      // See CORROBORATION_WINDOW_MINUTES / the query's `.or(...)` above — a
+      // match can now show up here already confirmed, purely so the sources
+      // that didn't win the original confirmation still get a chance to log.
+      const alreadyConfirmed = match.toss_status === 'confirmed'
 
       // ── Source 1: CricAPI ────────────────────────────────────────────────
       let cricApiToss: TossResult | null = null
@@ -835,6 +876,17 @@ Deno.serve(async (req) => {
         } catch (e: any) {
           console.warn(`[check-toss] toss_source_log write failed (${source}) M${match.match_number}:`, e.message)
         }
+      }
+
+      // ── Already confirmed: this tick exists only to give the other
+      // sources a chance to log to toss_source_log — nothing else to do.
+      // Deliberately does NOT touch toss_checked_at: that timestamp is what
+      // anchors corroborationWindowStartISO above, so writing to it here
+      // would keep re-arming the window forever instead of letting it expire
+      // CORROBORATION_WINDOW_MINUTES after the match's ORIGINAL confirmation.
+      if (alreadyConfirmed) {
+        summary.corroborationPolled++
+        continue
       }
 
       const toss   = cricApiToss ?? addictorToss ?? cricbuzzToss
