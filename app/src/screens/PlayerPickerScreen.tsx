@@ -14,6 +14,7 @@ import {
   Animated,
   Dimensions,
   FlatList,
+  LayoutChangeEvent,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -165,6 +166,15 @@ export default function PlayerPickerScreen({
     { key: 'MID',  label: 'Between 8 & 10' },
     { key: 'GT10', label: 'Greater than 10' },
   ];
+
+  // Height of the pinned header block (context banner + budget/OS/role-stats/
+  // search+pills) — measured via onLayout so the My XI drawer can anchor its
+  // `top` here instead of to "whatever's left after the filter panels",
+  // which is what let expanding Type/Teams/Matches/Credits squeeze the pitch.
+  const [pinnedH, setPinnedH] = useState(0);
+  const handlePinnedLayout = useCallback((e: LayoutChangeEvent) => {
+    setPinnedH(e.nativeEvent.layout.height);
+  }, []);
 
   // ── Filter disclosure pills (Type / Teams / Matches / Credits) ────────────
   // Each panel toggles independently; multiple can be open at once. Mirrors the
@@ -452,6 +462,11 @@ export default function PlayerPickerScreen({
   return (
     <View style={styles.container}>
 
+      {/* Pinned block — context banner + budget/OS-counter/role-stats/search+pills.
+          Measured above via handlePinnedLayout; the My XI drawer anchors its
+          `top` to this height alone, not to the filter panels that follow. */}
+      <View onLayout={handlePinnedLayout}>
+
       {/* Match + league context banner */}
       {(activeContext || currentMatchLabel) && (
         <View style={styles.contextBanner}>
@@ -582,6 +597,13 @@ export default function PlayerPickerScreen({
             </Text>
           </Pressable>
         </View>
+      </View>
+      </View>
+
+      {/* Collapsible filter panels — variable height. Deliberately NOT part of
+          the pinned block above: opening these must never resize the My XI
+          drawer, it should just sit on top of whichever of these are open. */}
+      <View style={styles.filterPanels}>
 
         {/* Type panel: Role filter chips + OS — hidden until its pill is open */}
         {panelOpen.type && (
@@ -780,78 +802,81 @@ export default function PlayerPickerScreen({
           maxToRenderPerBatch={10}
           windowSize={5}
         />
+      </View>
 
-        {/* "My XI" preview drawer — same mechanics as the Schedule drawer
-            below (scrim + slide, opened from MyXIScreen's modal header,
-            mutually exclusive with Schedule there), but anchored to
-            listContainer (not the whole screen) and sized from top/bottom
-            insets rather than a hardcoded height, so it can never overshoot
-            upward past its own header or get clipped against the modal's
-            header above — it only ever covers the list, leaving the
-            search/filter bar above it visible and untouched. Shows the full
-            `selected` list regardless of role/team/match/credits filters or
-            search, so the XI can never hide behind a filter — tap a player
-            to remove (captaincy stays off this sheet; see hideCaptaincy on
-            CricketPitch). Re-tapping "My XI" (or the ✕, or the scrim)
-            closes it and returns to the pool exactly where it was left. */}
-        {myxiMounted && (
-          <>
-            {myXIOpen && (
+      {/* "My XI" preview drawer — same mechanics as the Schedule drawer below
+          (scrim + slide, opened from MyXIScreen's modal header, mutually
+          exclusive with Schedule there). Sibling of listContainer (not
+          nested inside it) and anchored with `top: pinnedH + 8`, where
+          pinnedH is measured from the context banner + budget/OS/role-stats/
+          search+pills block ONLY — deliberately excluding the collapsible
+          filter panels below it. That keeps this drawer's height constant
+          whether 0 or all 4 of Type/Teams/Matches/Credits are expanded; it
+          just overlays whichever panels happen to be open instead of being
+          squeezed by them. Filters themselves are untouched — roleFilter/
+          teamFilter/creditsFilter/panelOpen are plain screen state that
+          nothing here resets — so closing this drawer returns to the pool
+          exactly where it was left. Shows the full `selected` list
+          regardless of role/team/match/credits filters or search, so the XI
+          can never hide behind a filter — tap a player to remove (captaincy
+          stays off this sheet; see hideCaptaincy on CricketPitch). */}
+      {myxiMounted && (
+        <>
+          {myXIOpen && (
+            <Pressable
+              style={StyleSheet.absoluteFill}
+              onPress={onCloseMyXI}
+              accessibilityLabel="Close My XI preview"
+            >
+              <View style={styles.scheduleScrim} />
+            </Pressable>
+          )}
+          <Animated.View
+            style={[
+              styles.myxiDrawer,
+              { top: pinnedH + 8, transform: [{ translateY: myxiTranslateY }] },
+            ]}
+            pointerEvents={myXIOpen ? 'auto' : 'none'}
+          >
+            <View style={styles.scheduleDrawerHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.scheduleDrawerTitle}>Your XI</Text>
+                <Text style={styles.scheduleDrawerSub}>
+                  {selected.length} of {RULES.total} picked · tap a player to remove
+                </Text>
+              </View>
               <Pressable
-                style={StyleSheet.absoluteFill}
                 onPress={onCloseMyXI}
+                style={styles.scheduleCloseBtn}
                 accessibilityLabel="Close My XI preview"
               >
-                <View style={styles.scheduleScrim} />
+                <Text style={styles.scheduleCloseBtnText}>✕</Text>
               </Pressable>
-            )}
-            <Animated.View
-              style={[
-                styles.myxiDrawer,
-                { transform: [{ translateY: myxiTranslateY }] },
-              ]}
-              pointerEvents={myXIOpen ? 'auto' : 'none'}
-            >
-              <View style={styles.scheduleDrawerHeader}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.scheduleDrawerTitle}>Your XI</Text>
-                  <Text style={styles.scheduleDrawerSub}>
-                    {selected.length} of {RULES.total} picked · tap a player to remove
-                  </Text>
-                </View>
-                <Pressable
-                  onPress={onCloseMyXI}
-                  style={styles.scheduleCloseBtn}
-                  accessibilityLabel="Close My XI preview"
-                >
-                  <Text style={styles.scheduleCloseBtnText}>✕</Text>
-                </Pressable>
+            </View>
+
+            {selected.length === 0 ? (
+              <View style={styles.myxiEmpty}>
+                <Text style={styles.myxiEmptyText}>
+                  No players picked yet — close this and tap players below to start building your XI.
+                </Text>
               </View>
+            ) : (
+              <View style={styles.myxiPitchWrap}>
+                <CricketPitch
+                  players={selected}
+                  onSetCaptaincy={() => {}}
+                  onRemove={(id) => removePlayer(id)}
+                  hideCaptaincy
+                />
+              </View>
+            )}
 
-              {selected.length === 0 ? (
-                <View style={styles.myxiEmpty}>
-                  <Text style={styles.myxiEmptyText}>
-                    No players picked yet — close this and tap players below to start building your XI.
-                  </Text>
-                </View>
-              ) : (
-                <View style={styles.myxiPitchWrap}>
-                  <CricketPitch
-                    players={selected}
-                    onSetCaptaincy={() => {}}
-                    onRemove={(id) => removePlayer(id)}
-                    hideCaptaincy
-                  />
-                </View>
-              )}
-
-              <Text style={styles.myxiHint}>
-                Filters above are untouched — tap 🏏 My XI again to go back to picking.
-              </Text>
-            </Animated.View>
-          </>
-        )}
-      </View>
+            <Text style={styles.myxiHint}>
+              Filters above are untouched — tap 🏏 My XI again to go back to picking.
+            </Text>
+          </Animated.View>
+        </>
+      )}
 
       <PlayerStatsModal
         visible={!!statsPlayer}
@@ -937,6 +962,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   header: {
+    flexShrink: 0,
+  },
+  filterPanels: {
     flexShrink: 0,
   },
   listContainer: {
@@ -1371,17 +1399,15 @@ const styles = StyleSheet.create({
 
   // "My XI" preview drawer — reuses scheduleScrim/scheduleDrawerHeader/
   // scheduleCloseBtn styles above (same visual language), just its own
-  // panel shape (top sheet vs. side panel). Anchored on all four sides
-  // within listContainer (not given an explicit height) so it always fills
-  // exactly the space available below the search/filter bar on this
-  // device — it can't overshoot past the header above or get clipped
-  // against the modal chrome below, whatever this device's actual layout
-  // works out to.
+  // panel shape (top sheet vs. side panel). `top` is overridden per-render
+  // in the JSX (top: pinnedH + 8) rather than fixed here, so it always
+  // starts right below the pinned header block regardless of whether any
+  // filter panel is expanded — see handlePinnedLayout/pinnedH above and
+  // the comment where this style is used.
   myxiDrawer: {
     position:        'absolute',
     left:            8,
     right:           8,
-    top:             8,
     bottom:          8,
     backgroundColor: '#F5F0E0',
     borderRadius:    18,
