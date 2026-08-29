@@ -2175,6 +2175,22 @@
       const xiSaved = await computeAndSaveXIScoresForMatch(matchId);
       await computeAndSaveSLScoresForMatch(matchId);
 
+      // Persist anything fromCricAPI() couldn't resolve into the same queue
+      // the CricAPI/scraper Finalize path already writes to (see Finalize's
+      // own insertFieldingIssues call above), tagged source='manual' so it's
+      // distinguishable from scraped/API-sourced issues — otherwise a manually
+      // entered scorecard's unresolved fielding credit never reaches Review →
+      // Fielding Issues at all, and "check Review" is a dead end for admins.
+      // Best-effort: a failure here shouldn't fail the save itself — the
+      // credit for everyone who DID resolve is already saved.
+      if (apiPlayers.fieldingIssues?.length) {
+        try {
+          await state.db.insertFieldingIssues(local.tournament_id, matchId, apiPlayers.fieldingIssues, 'manual');
+        } catch (fiErr) {
+          console.warn('[Manual scorecard] insertFieldingIssues failed (fielding issues still reported below, just not queued in Review):', fiErr.message);
+        }
+      }
+
       // Wire it into the Live tab exactly like a real connected match: same
       // state.lastScorecard the live poller would have produced, so the raw
       // Live scorecard panel, the Fantasy Scorecard panel (with its
@@ -2203,7 +2219,7 @@
       if (typeof renderScorecard === 'function') renderScorecard();
       renderMatchesAdmin();
 
-      return { saved: n, unmatched: unmatched.map(p => p.name), xiSaved };
+      return { saved: n, unmatched: unmatched.map(p => p.name), xiSaved, fieldingIssues: apiPlayers.fieldingIssues || [] };
     }
 
     async function toggleManualScorecardRow(matchId, tr) {
@@ -2277,6 +2293,7 @@
           const bits = [`✓ Saved ${result.saved} player row${result.saved===1?'':'s'}`];
           if (result.xiSaved) bits.push(`${result.xiSaved} XI total${result.xiSaved===1?'':'s'} updated`);
           if (result.unmatched.length) bits.push(`⚠ ${result.unmatched.length} unmatched: ${result.unmatched.join(', ')} — open Live → Fantasy Scorecard to Link them`);
+          if (result.fieldingIssues.length) bits.push(`⚠ ${result.fieldingIssues.length} fielding event${result.fieldingIssues.length===1?'':'s'} queued in Review → Fielding Issues`);
           toast(bits.join(' · '), 8000);
           formRow.remove();
         } catch (err) {
