@@ -29,6 +29,14 @@ interface OnboardingState extends OnboardingFlags {
   resetBoostersTip: () => Promise<void>;
   resetCaptainVcTip: () => Promise<void>;
   resetAll: () => Promise<void>;
+  /** Transient (not persisted) — set by RulesScreen's "Replay Walkthrough"
+   * so the target screen can show its tour/tip even for a user who has
+   * already "graduated" past the point where it'd normally auto-suppress
+   * (e.g. Home's tour skips itself for anyone who already has a saved XI).
+   * Cleared by the screen once it picks the request up. */
+  replayRequest: 'home' | 'pickerTips' | 'boosters' | 'captainVc' | null;
+  requestReplay: (section: 'home' | 'pickerTips' | 'boosters' | 'captainVc') => Promise<void>;
+  clearReplayRequest: () => void;
 }
 
 async function persist(flags: OnboardingFlags) {
@@ -42,6 +50,7 @@ async function persist(flags: OnboardingFlags) {
 export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   ...DEFAULT_FLAGS,
   hydrated: false,
+  replayRequest: null,
 
   hydrate: async () => {
     try {
@@ -107,4 +116,16 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
     set({ ...DEFAULT_FLAGS });
     await persist({ ...DEFAULT_FLAGS });
   },
+
+  requestReplay: async (section) => {
+    set({ replayRequest: section });
+    const resetFn = {
+      home:       get().resetHomeTour,
+      pickerTips: get().resetPlayerPickerTips,
+      boosters:   get().resetBoostersTip,
+      captainVc:  get().resetCaptainVcTip,
+    }[section];
+    await resetFn();
+  },
+  clearReplayRequest: () => set({ replayRequest: null }),
 }));

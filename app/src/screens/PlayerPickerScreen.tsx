@@ -184,7 +184,7 @@ export default function PlayerPickerScreen({
   // gets its own tip on MyXIScreen (where BoostersBar actually lives), not
   // here, since Tier 2 tips fire per-screen/moment rather than as one long
   // forced sequence.
-  const { hasSeenPlayerPickerTips, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completePlayerPickerTips } = useOnboardingStore();
+  const { hasSeenPlayerPickerTips, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completePlayerPickerTips, replayRequest, clearReplayRequest } = useOnboardingStore();
   const [tipsActive, setTipsActive] = useState(false);
   const [tipStep, setTipStep]       = useState(0);
   const [tipTarget, setTipTarget]   = useState<CoachmarkTarget | null>(null);
@@ -196,9 +196,13 @@ export default function PlayerPickerScreen({
 
   useEffect(() => {
     if (!onboardingHydrated || hasSeenPlayerPickerTips) return;
-    const t = setTimeout(() => { setTipsActive(true); setTipStep(0); }, 500);
+    const t = setTimeout(() => {
+      setTipsActive(true);
+      setTipStep(0);
+      if (replayRequest === 'pickerTips') clearReplayRequest();
+    }, 500);
     return () => clearTimeout(t);
-  }, [onboardingHydrated, hasSeenPlayerPickerTips]);
+  }, [onboardingHydrated, hasSeenPlayerPickerTips, replayRequest, clearReplayRequest]);
 
   useEffect(() => {
     if (!tipsActive) return;

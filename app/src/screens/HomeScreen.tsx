@@ -664,7 +664,7 @@ export default function HomeScreen() {
   // user has ever picked a team. "Primary tile" is whichever contest we
   // walk them through — SL when available (it also has the Private
   // Leagues row for step 3), otherwise Daily (2-step tour, no step 3).
-  const { hasSeenHomeTour, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completeHomeTour } = useOnboardingStore();
+  const { hasSeenHomeTour, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completeHomeTour, replayRequest, clearReplayRequest } = useOnboardingStore();
   const [tourActive, setTourActive] = useState(false);
   const [tourStep, setTourStep]     = useState(0);
   const [tourTarget, setTourTarget] = useState<CoachmarkTarget | null>(null);
@@ -740,14 +740,19 @@ export default function HomeScreen() {
     if (!onboardingHydrated || contestsLoading) return;
     if (hasSeenHomeTour) return;
     if (!primaryTileId) return;
+    const isReplay = replayRequest === 'home';
     const alreadyExperienced = teamReady || dailyXIReady || slXIReady || selected.length > 0;
-    if (alreadyExperienced) {
+    if (alreadyExperienced && !isReplay) {
       completeHomeTour();
       return;
     }
-    const t = setTimeout(() => { setTourActive(true); setTourStep(0); }, 500);
+    const t = setTimeout(() => {
+      setTourActive(true);
+      setTourStep(0);
+      if (isReplay) clearReplayRequest();
+    }, 500);
     return () => clearTimeout(t);
-  }, [onboardingHydrated, contestsLoading, hasSeenHomeTour, primaryTileId, teamReady, dailyXIReady, slXIReady, selected.length, completeHomeTour]);
+  }, [onboardingHydrated, contestsLoading, hasSeenHomeTour, primaryTileId, teamReady, dailyXIReady, slXIReady, selected.length, completeHomeTour, replayRequest, clearReplayRequest]);
 
   // Re-measure the current step's target in window coordinates whenever the
   // step (or the tile's open/closed state, which changes what's on screen)

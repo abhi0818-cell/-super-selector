@@ -15,6 +15,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -22,17 +23,24 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useNavigation } from '@react-navigation/native';
+import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { supabase } from '../lib/supabase';
+import { RootTabParamList } from '../types';
 import { useTournamentStore } from '../store/tournamentStore';
 import { useContestStore }    from '../store/contestStore';
 import { getBoosterMeta }     from '../store/boosterStore';
+import { useOnboardingStore } from '../store/onboardingStore';
 import BoosterIcon            from '../components/BoosterIcon';
+import ReplayWalkthroughSheet from '../components/ReplayWalkthroughSheet';
 import {
   fetchContestTransferConfig,
   fetchTournamentMatches,
   type ContestTransferConfig,
 } from '../lib/transferCap';
 import { colors, fontSize, radius, spacing } from '../theme';
+
+type NavProp = BottomTabNavigationProp<RootTabParamList>;
 
 // ─── Gradient palette (matches rest of app) ───────────────────────────────────
 
@@ -205,8 +213,37 @@ function RuleCard({ title, children }: { title: string; children: React.ReactNod
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function RulesScreen() {
+  const navigation = useNavigation<NavProp>();
   const { selectedTournamentId, tournaments } = useTournamentStore();
   const { contests } = useContestStore();
+  const { requestReplay } = useOnboardingStore();
+
+  // ── Replay Walkthrough (Tier 3) ────────────────────────────────────────
+  const [replaySheetOpen, setReplaySheetOpen] = useState(false);
+  const jumpToHomeTour = () => {
+    setReplaySheetOpen(false);
+    requestReplay('home');
+    navigation.navigate('Home');
+  };
+  const jumpToPickerTips = () => {
+    setReplaySheetOpen(false);
+    requestReplay('pickerTips');
+    requestReplay('boosters');
+    navigation.navigate('MyXI', { openPicker: true });
+  };
+  const jumpToCaptainVc = () => {
+    setReplaySheetOpen(false);
+    requestReplay('captainVc');
+    navigation.navigate('MyXI');
+  };
+  const replayEverything = () => {
+    setReplaySheetOpen(false);
+    requestReplay('home');
+    requestReplay('pickerTips');
+    requestReplay('boosters');
+    requestReplay('captainVc');
+    navigation.navigate('Home');
+  };
 
   const tournament = tournaments.find(t => t.id === selectedTournamentId);
 
@@ -363,6 +400,18 @@ export default function RulesScreen() {
                 New to Maestro? Here's the flow from joining a contest to your squad locking in for a match.
               </Text>
             </InfoCard>
+
+            <Pressable
+              style={({ pressed }) => [styles.replayCard, pressed && { opacity: 0.85 }]}
+              onPress={() => setReplaySheetOpen(true)}
+            >
+              <Text style={styles.replayIcon}>🎓</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.replayTitle}>Replay Walkthrough</Text>
+                <Text style={styles.replaySub}>Revisit the first-login tour, in full or by section</Text>
+              </View>
+              <Text style={styles.replayArrow}>›</Text>
+            </Pressable>
 
             <Text style={styles.subTitle}>Join a Contest</Text>
             <BulletItem>Pick the tournament you want to play from the <Text style={styles.infoEmph}>Home</Text> tab.</BulletItem>
@@ -565,6 +614,15 @@ export default function RulesScreen() {
           </ScrollView>
         )}
       </SafeAreaView>
+
+      <ReplayWalkthroughSheet
+        visible={replaySheetOpen}
+        onDismiss={() => setReplaySheetOpen(false)}
+        onJumpHome={jumpToHomeTour}
+        onJumpPickerTips={jumpToPickerTips}
+        onJumpCaptainVc={jumpToCaptainVc}
+        onReplayAll={replayEverything}
+      />
     </LinearGradient>
   );
 }
@@ -572,6 +630,21 @@ export default function RulesScreen() {
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+  replayCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    backgroundColor: 'rgba(201,168,76,0.1)',
+    borderWidth: 1,
+    borderColor: colors.accent,
+    borderRadius: radius.lg,
+    padding: spacing.md,
+    marginBottom: spacing.lg,
+  },
+  replayIcon: { fontSize: 20 },
+  replayTitle: { color: colors.text, fontSize: fontSize.base, fontWeight: '700' },
+  replaySub: { color: colors.muted, fontSize: fontSize.xs, marginTop: 2 },
+  replayArrow: { color: colors.accent, fontSize: fontSize.lg, fontWeight: '700' },
   // Layout
   centred: {
     flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl,

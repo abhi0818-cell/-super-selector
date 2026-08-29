@@ -333,7 +333,7 @@ export default function MyXIScreen({ route }: Props) {
   const [squadId, setSquadId] = useState<string | null>(null);
 
   // ── Onboarding: Boosters contextual tip (first visit, SL/private only) ──
-  const { hasSeenBoostersTip, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completeBoostersTip } = useOnboardingStore();
+  const { hasSeenBoostersTip, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completeBoostersTip, replayRequest, clearReplayRequest } = useOnboardingStore();
   const [boostersTipActive, setBoostersTipActive] = useState(false);
   const [boostersTipTarget, setBoostersTipTarget] = useState<CoachmarkTarget | null>(null);
   const boostersBarRef = useRef<View>(null);
@@ -343,9 +343,12 @@ export default function MyXIScreen({ route }: Props) {
 
   useEffect(() => {
     if (!onboardingHydrated || hasSeenBoostersTip || !boostersEligible) return;
-    const t = setTimeout(() => setBoostersTipActive(true), 500);
+    const t = setTimeout(() => {
+      setBoostersTipActive(true);
+      if (replayRequest === 'boosters') clearReplayRequest();
+    }, 500);
     return () => clearTimeout(t);
-  }, [onboardingHydrated, hasSeenBoostersTip, boostersEligible]);
+  }, [onboardingHydrated, hasSeenBoostersTip, boostersEligible, replayRequest, clearReplayRequest]);
 
   useEffect(() => {
     if (!boostersTipActive) return;
