@@ -28,6 +28,8 @@ import CricketPitch from '../components/CricketPitch';
 import ConfirmXIModal from '../components/ConfirmXIModal';
 import BudgetBar from '../components/BudgetBar';
 import BoostersBar from '../components/BoostersBar';
+import Coachmark, { CoachmarkTarget } from '../components/Coachmark';
+import { useOnboardingStore } from '../store/onboardingStore';
 import RoleStats from '../components/RoleStats';
 import ContestPicker from '../components/ContestPicker';
 import NameSquadModal from '../components/NameSquadModal';
@@ -329,6 +331,37 @@ export default function MyXIScreen({ route }: Props) {
     used: number; total: number | null; free: number;
   } | null>(null);
   const [squadId, setSquadId] = useState<string | null>(null);
+
+  // ── Onboarding: Boosters contextual tip (first visit, SL/private only) ──
+  const { hasSeenBoostersTip, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completeBoostersTip } = useOnboardingStore();
+  const [boostersTipActive, setBoostersTipActive] = useState(false);
+  const [boostersTipTarget, setBoostersTipTarget] = useState<CoachmarkTarget | null>(null);
+  const boostersBarRef = useRef<View>(null);
+  const boostersEligible = activeContext?.contestType === 'sl' || activeContext?.contestType === 'private';
+
+  useEffect(() => { hydrateOnboarding(); }, [hydrateOnboarding]);
+
+  useEffect(() => {
+    if (!onboardingHydrated || hasSeenBoostersTip || !boostersEligible) return;
+    const t = setTimeout(() => setBoostersTipActive(true), 500);
+    return () => clearTimeout(t);
+  }, [onboardingHydrated, hasSeenBoostersTip, boostersEligible]);
+
+  useEffect(() => {
+    if (!boostersTipActive) return;
+    const raf = requestAnimationFrame(() => {
+      boostersBarRef.current?.measureInWindow((x: number, y: number, width: number, height: number) => {
+        if (width > 0 && height > 0) setBoostersTipTarget({ x, y, width, height });
+      });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [boostersTipActive]);
+
+  const finishBoostersTip = useCallback(() => {
+    setBoostersTipActive(false);
+    setBoostersTipTarget(null);
+    completeBoostersTip();
+  }, [completeBoostersTip]);
   // Transfers pending for the CURRENT (not-yet-locked) match. Two sources,
   // checked in order:
   //   1. user_transfers (match_id = currentMatchId) — set once this match
@@ -902,14 +935,16 @@ export default function MyXIScreen({ route }: Props) {
         {activeContext && <>
 
           {/* Boosters — SL / private leagues only */}
-          <BoostersBar
-            contestType={activeContext?.contestType}
-            squadId={squadId}
-            matchId={currentMatchId}
-            onStaged={showToast}
-            previousLockedXI={previousLockedXI}
-            restoreXI={restoreXI}
-          />
+          <View ref={boostersBarRef}>
+            <BoostersBar
+              contestType={activeContext?.contestType}
+              squadId={squadId}
+              matchId={currentMatchId}
+              onStaged={showToast}
+              previousLockedXI={previousLockedXI}
+              restoreXI={restoreXI}
+            />
+          </View>
 
           {/* Budget bar */}
           <BudgetBar
@@ -1118,6 +1153,18 @@ export default function MyXIScreen({ route }: Props) {
         submitting={namingSubmitting}
         error={namingError}
         onConfirm={handleConfirmSquadName}
+      />
+
+      {/* First-visit Boosters tip — see onboardingStore/Coachmark. */}
+      <Coachmark
+        visible={boostersTipActive && !!boostersTipTarget}
+        target={boostersTipTarget}
+        variant="tip"
+        chipLabel="Quick tip"
+        title="Boosters"
+        body="Boosters give your squad a one-time edge — extra points, a free hit, or a bench swap. Tap one to stage it, then Save XI to lock it in."
+        primaryLabel="Got it →"
+        onPrimary={finishBoostersTip}
       />
     </View>
   );
