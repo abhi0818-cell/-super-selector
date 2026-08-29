@@ -9996,8 +9996,13 @@ Sunil Narine,230558,Trinbago Knight Riders,https://...supabase.co/.../230558.png
       const formTournamentId = PLAYERS[0]?.tournamentId ?? state.activeTournamentId;
       const key = formTournamentId + ':' + ids.length + ':' + ids[0] + ':' + ids[ids.length - 1];
       if (state.recentFormKey === key) return;
+      // Team codes for each player, so the form strip aligns to each
+      // player's own team's last matches (not just the player's own stats
+      // rows) — a match his team played but he sat out still claims a slot,
+      // rendered as '-' instead of being skipped over.
+      const teamByPlayerId = Object.fromEntries(PLAYERS.map(p => [p.id, p.team]));
       try {
-        const form = await state.db.getRecentFormForPlayers(ids, 3, formTournamentId);
+        const form = await state.db.getRecentFormForPlayers(ids, 3, formTournamentId, teamByPlayerId);
         state.recentForm    = form || {};
         state.recentFormKey = key;
         renderPool();

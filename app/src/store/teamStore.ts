@@ -560,7 +560,12 @@ export const useTeamStore = create<TeamState>((set, get) => ({
     const { players, tournamentId } = get();
     if (!players.length) return;
     try {
-      const form = await getRecentFormForPlayers(players.map(p => p.id), 3, tournamentId);
+      // Team codes for each player, so the form strip aligns to each
+      // player's own team's last matches (not just the player's own stats
+      // rows) — a match his team played but he sat out still claims a slot,
+      // rendered as '-' instead of being skipped over.
+      const teamByPlayerId = Object.fromEntries(players.map(p => [p.id, p.team]));
+      const form = await getRecentFormForPlayers(players.map(p => p.id), 3, tournamentId, teamByPlayerId);
       set({ recentForm: form });
     } catch (err) {
       console.warn('[teamStore] loadRecentForm failed:', err);

@@ -2805,9 +2805,23 @@ export function createDb(cfg = {}) {
 
     /**
      * Batched "recent form" lookup for many players at once — last `matchLimit`
-     * fantasy-point totals per player, newest match first. Used by the XI picker
-     * grid so showing a form strip on every card costs one round trip instead of
-     * one query per player.
+     * performances per player, aligned to each player's OWN TEAM'S most recent
+     * matches (not the player's own stats rows). This matters because a
+     * player who was rested/dropped for a match has no player_match_stats row
+     * for it at all — there's no "did not play" sentinel row, the row is
+     * simply absent. Aligning to the player's stats rows directly (the old
+     * approach) silently skipped any match he sat out and pulled in an older
+     * match to fill the slot instead, so a benched player's strip never
+     * showed a gap. Aligning to the team's match list instead means a missed
+     * match still claims its slot — the player just has no points for it,
+     * which the caller renders as "-" / DNP.
+     *
+     * Any match with a result counts as a used slot — completed, abandoned,
+     * or cancelled all occupy a place in "the team's last N fixtures";
+     * upcoming/live matches don't yet.
+     *
+     * Used by the XI picker grid so showing a form strip on every card costs
+     * one round trip instead of one query per player.
      *
      * @param {string[]} playerIds
      * @param {number} [matchLimit=3]
@@ -2815,76 +2829,94 @@ export function createDb(cfg = {}) {
      *   Without this, a player who has stats rows from another tournament (e.g. the same
      *   global player_id reused/shared across competitions) would leak those into the form
      *   strip. Always pass the active tournament's id from the caller.
-     * @returns {Promise<Object<string, number[]>>} playerId → [pts most-recent..older]
+     * @param {Object<string,string>} [teamByPlayerId] - playerId → team_id map. The picker
+     *   already has this on each PLAYERS row (p.team), so passing it in avoids an extra
+     *   players-table round trip; when omitted, it's looked up here instead.
+     * @returns {Promise<Object<string, (number|null)[]>>} playerId → [pts most-recent..older],
+     *   with `null` for a team match the player has no stats row for (DNP or not yet scored —
+     *   both render the same "-" in the strip).
      */
-    async getRecentFormForPlayers(playerIds, matchLimit = 3, tournamentId = null) {
+    async getRecentFormForPlayers(playerIds, matchLimit = 3, tournamentId = null, teamByPlayerId = null) {
       if (!playerIds?.length) return {};
       const sb = await getClient();
 
-      // Fetch the candidate matches FIRST and scope the stats query to just
-      // those match ids. Querying player_match_stats by player_id alone (no
-      // match/tournament bound) pulls every stats row those players have ever
-      // had across every tournament they've ever played — with dozens of
-      // players that can be thousands of rows, and PostgREST silently caps
-      // unbounded results at 1000. Rows can get truncated before the most
-      // recent match's row even appears, so a player's latest points can
-      // vanish from this batched form-strip lookup while still showing up
-      // fine in the single-player getPlayerMatchHistory() (which only ever
-      // queries one player_id, so it never gets near the cap). Scoping by
-      // tournament's matches up front keeps the result set small and bounded
-      // instead of "all history for all players".
-      let matchQuery = sb.from('matches').select('id, match_number');
-      matchQuery = tournamentId
-        ? matchQuery.eq('tournament_id', tournamentId)
-        : matchQuery; // no tournament given: fall back to old (unbounded) behavior below
-      const { data: tMatches, error: tMatchErr } = await matchQuery;
-      if (tMatchErr) throw tMatchErr;
-
-      let stats, matches;
-      if (tournamentId) {
-        const matchIds = (tMatches || []).map(m => m.id);
-        if (!matchIds.length) return {};
-        const { data, error: statsErr } = await sb
-          .from('player_match_stats')
-          .select('player_id, match_id, raw_points')
-          .in('player_id', playerIds)
-          .in('match_id', matchIds);
-        if (statsErr) throw statsErr;
-        stats   = data;
-        matches = tMatches;
-      } else {
-        // No tournament given — keep prior (unbounded) behavior as a fallback.
-        const { data, error: statsErr } = await sb
-          .from('player_match_stats')
-          .select('player_id, match_id, raw_points')
-          .in('player_id', playerIds);
-        if (statsErr) throw statsErr;
-        stats = data;
-        if (!stats?.length) return {};
-        const matchIds = [...new Set(stats.map(s => s.match_id))];
-        const { data: mData, error: matchErr } = await sb
-          .from('matches').select('id, match_number').in('id', matchIds);
-        if (matchErr) throw matchErr;
-        matches = mData;
+      // Resolve each player's team so slots can be aligned to the team's
+      // fixture list. Prefer the caller-supplied map; fall back to a
+      // players-table lookup if it wasn't given.
+      let teamByPlayer = teamByPlayerId;
+      if (!teamByPlayer) {
+        const { data: prows, error: pErr } = await sb
+          .from('players').select('id, team_id').in('id', playerIds);
+        if (pErr) throw pErr;
+        teamByPlayer = Object.fromEntries((prows || []).map(p => [p.id, p.team_id]));
       }
-      if (!stats?.length) return {};
+      const teamIds = [...new Set(playerIds.map(pid => teamByPlayer[pid]).filter(Boolean))];
+      if (!teamIds.length) return {};
 
-      const matchNumMap = Object.fromEntries((matches || []).map(m => [m.id, m.match_number || 0]));
-      const validMatchIds = new Set((matches || []).map(m => m.id));
+      // Fetch every match involving these teams (any status) up front and
+      // scope everything else to it — this keeps the query bounded instead
+      // of pulling all player_match_stats rows for these players, which
+      // PostgREST silently caps at 1000 and can truncate before the newest
+      // match's row even appears (a player's latest points could otherwise
+      // vanish from this batched lookup while still showing up fine in the
+      // single-player getPlayerMatchHistory(), which never gets near the cap).
+      const teamList = teamIds.map(t => `"${t}"`).join(',');
+      let matchQuery = sb
+        .from('matches')
+        .select('id, match_number, home_team_id, away_team_id, status')
+        .or(`home_team_id.in.(${teamList}),away_team_id.in.(${teamList})`);
+      if (tournamentId) matchQuery = matchQuery.eq('tournament_id', tournamentId);
+      const { data: allMatches, error: matchErr } = await matchQuery;
+      if (matchErr) throw matchErr;
+      if (!allMatches?.length) return {};
 
-      const byPlayer = {};
-      stats.filter(s => validMatchIds.has(s.match_id)).forEach(s => {
-        (byPlayer[s.player_id] = byPlayer[s.player_id] || []).push({
-          matchNumber: matchNumMap[s.match_id] ?? 0,
-          points: s.raw_points != null ? Number(s.raw_points) : null,
+      // A match "counts" toward a team's fixture history once it has a
+      // result — completed, or a no-result (abandoned/cancelled). Still
+      // upcoming/live matches don't claim a slot yet.
+      const playedStatuses = new Set(['completed', 'abandoned', 'cancelled']);
+      const finished = allMatches.filter(m => playedStatuses.has(m.status));
+
+      // Per team, the last `matchLimit` finished matches, newest first.
+      const matchesByTeam = {};
+      finished.forEach(m => {
+        [m.home_team_id, m.away_team_id].forEach(t => {
+          if (!t || !teamIds.includes(t)) return;
+          (matchesByTeam[t] = matchesByTeam[t] || []).push(m);
         });
       });
+      Object.keys(matchesByTeam).forEach(t => {
+        matchesByTeam[t] = matchesByTeam[t]
+          .sort((a, b) => (b.match_number || 0) - (a.match_number || 0))
+          .slice(0, matchLimit);
+      });
+
+      const relevantMatchIds = [...new Set(Object.values(matchesByTeam).flat().map(m => m.id))];
+      if (!relevantMatchIds.length) return {};
+
+      const { data: stats, error: statsErr } = await sb
+        .from('player_match_stats')
+        .select('player_id, match_id, raw_points')
+        .in('player_id', playerIds)
+        .in('match_id', relevantMatchIds);
+      if (statsErr) throw statsErr;
+
+      // player_id:match_id → points, only for rows that actually exist —
+      // a missing key means the player has no stats row for that match
+      // (DNP, or not yet scored), which the caller renders as "-".
+      const pointsByKey = {};
+      (stats || []).forEach(s => {
+        pointsByKey[`${s.player_id}:${s.match_id}`] =
+          s.raw_points != null ? Number(s.raw_points) : null;
+      });
+
       const out = {};
-      Object.entries(byPlayer).forEach(([pid, rows]) => {
-        out[pid] = rows
-          .sort((a, b) => b.matchNumber - a.matchNumber)
-          .slice(0, matchLimit)
-          .map(r => r.points);
+      playerIds.forEach(pid => {
+        const team = teamByPlayer[pid];
+        const teamMatches = team ? (matchesByTeam[team] || []) : [];
+        out[pid] = teamMatches.map(m => {
+          const key = `${pid}:${m.id}`;
+          return key in pointsByKey ? pointsByKey[key] : null;
+        });
       });
       return out;
     },
