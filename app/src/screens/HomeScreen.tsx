@@ -38,6 +38,8 @@ import { useLiveMatch, useLiveScore, formatLiveScoreLine } from '../lib/liveScor
 import { fontSize, radius, spacing, shadow } from '../theme';
 import { fetchContestTransferConfig, fetchTournamentMatches, getTransferUsage, MatchLite } from '../lib/transferCap';
 import { findNextUnlockedMatch } from '../lib/matchLock';
+import Coachmark, { CoachmarkTarget } from '../components/Coachmark';
+import { useOnboardingStore } from '../store/onboardingStore';
 
 type NavProp  = BottomTabNavigationProp<RootTabParamList, 'Home'>;
 type TileType = 'daily' | 'sl' | 'private' | null;
@@ -413,9 +415,9 @@ function CountdownBanner({ match }: { match: NextMatch }) {
 
 // ─── Pick Team button ─────────────────────────────────────────────────────────
 
-function PickTeamButton({ onPress, onView, teamReady }: { onPress: () => void; onView: () => void; teamReady: boolean }) {
+function PickTeamButton({ onPress, onView, teamReady, anchorRef }: { onPress: () => void; onView: () => void; teamReady: boolean; anchorRef?: React.RefObject<View | null> }) {
   return (
-    <Pressable onPress={teamReady ? onView : onPress} style={({ pressed }) => pressed && { opacity: 0.82 }}>
+    <Pressable ref={anchorRef as any} onPress={teamReady ? onView : onPress} style={({ pressed }) => pressed && { opacity: 0.82 }}>
       <LinearGradient colors={G.btnPick} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.pickBtn}>
         <Text style={styles.pickBtnIcon}>🏏</Text>
         <View style={styles.pickBtnMeta}>
@@ -447,14 +449,14 @@ function LiveScorePill({ scoreLine, onPress }: { scoreLine: string | null; onPre
 }
 
 function ActionBlock({
-  onPickTeam, onViewTeam, teamReady, liveMatchLabel, onOpenLiveScore,
+  onPickTeam, onViewTeam, teamReady, liveMatchLabel, onOpenLiveScore, pickButtonRef,
 }: {
   onPickTeam: () => void; onViewTeam: () => void; teamReady: boolean;
-  liveMatchLabel: string | null; onOpenLiveScore: () => void;
+  liveMatchLabel: string | null; onOpenLiveScore: () => void; pickButtonRef?: React.RefObject<View | null>;
 }) {
   return (
     <View style={styles.actionBlock}>
-      <PickTeamButton onPress={onPickTeam} onView={onViewTeam} teamReady={teamReady} />
+      <PickTeamButton onPress={onPickTeam} onView={onViewTeam} teamReady={teamReady} anchorRef={pickButtonRef} />
       <LiveScorePill scoreLine={liveMatchLabel} onPress={onOpenLiveScore} />
     </View>
   );
@@ -657,6 +659,19 @@ export default function HomeScreen() {
   // ticker_hours window) if the app is fully restarted.
   const [dismissedTickerIds, setDismissedTickerIds] = useState<Set<string>>(new Set());
 
+  // ── Onboarding: first-time Home tour ──────────────────────────────────
+  // 3-step coachmark tour shown once (per device/AsyncStorage) before the
+  // user has ever picked a team. "Primary tile" is whichever contest we
+  // walk them through — SL when available (it also has the Private
+  // Leagues row for step 3), otherwise Daily (2-step tour, no step 3).
+  const { hasSeenHomeTour, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completeHomeTour } = useOnboardingStore();
+  const [tourActive, setTourActive] = useState(false);
+  const [tourStep, setTourStep]     = useState(0);
+  const [tourTarget, setTourTarget] = useState<CoachmarkTarget | null>(null);
+  const primaryTileRef = useRef<View>(null);
+  const pickBtnRef      = useRef<View>(null);
+  const createJoinRef   = useRef<View>(null);
+
   // Prefer the real first name from the profiles row; only fall back to the
   // raw email prefix (e.g. "abhi0818") if the profile hasn't loaded yet or
   // has no first_name set — this used to be the ONLY source, since the
@@ -687,6 +702,10 @@ export default function HomeScreen() {
   const slContest       = contests.find(c => c.contestType === 'sl'    && !c.isPrivate) ?? null;
   const privateContests = contests.filter(c => c.isPrivate);
 
+  const primaryTileId: TileType = slContest ? 'sl' : (dailyContest ? 'daily' : null);
+  const primaryTileName = primaryTileId === 'sl' ? slContest?.name : dailyContest?.name;
+  const homeTourStepCount = primaryTileId === 'sl' ? 3 : 2;
+
   // Real SL squad stats
   const slStats = useSlSquadStats(slContest?.id ?? null, user?.id ?? null);
 
@@ -708,6 +727,81 @@ export default function HomeScreen() {
   // Rank from leaderboard
   const myLbEntry = slContest ? (lbEntries[slContest.id] ?? []).find(e => e.isCurrentUser) : null;
   const myRank    = myLbEntry?.rank ?? null;
+
+  // Hydrate persisted onboarding flags once on mount.
+  useEffect(() => { hydrateOnboarding(); }, [hydrateOnboarding]);
+
+  // Auto-start the first-time Home tour once we know: flags are hydrated,
+  // contests have loaded, and there's at least one contest to walk through.
+  // If the flag is unset but the person clearly already has a saved XI
+  // (existing users from before this shipped), mark it seen silently
+  // instead of surprising a repeat visitor with a "first-time" tour.
+  useEffect(() => {
+    if (!onboardingHydrated || contestsLoading) return;
+    if (hasSeenHomeTour) return;
+    if (!primaryTileId) return;
+    const alreadyExperienced = teamReady || dailyXIReady || slXIReady || selected.length > 0;
+    if (alreadyExperienced) {
+      completeHomeTour();
+      return;
+    }
+    const t = setTimeout(() => { setTourActive(true); setTourStep(0); }, 500);
+    return () => clearTimeout(t);
+  }, [onboardingHydrated, contestsLoading, hasSeenHomeTour, primaryTileId, teamReady, dailyXIReady, slXIReady, selected.length, completeHomeTour]);
+
+  // Re-measure the current step's target in window coordinates whenever the
+  // step (or the tile's open/closed state, which changes what's on screen)
+  // changes. requestAnimationFrame lets the just-triggered layout settle
+  // first — e.g. step 0 → 1 expands the tile in the same tap that advances
+  // the step, so the Pick XI button doesn't exist yet on the frame we're on.
+  useEffect(() => {
+    if (!tourActive) return;
+    const targetRef = tourStep === 0 ? primaryTileRef : tourStep === 1 ? pickBtnRef : createJoinRef;
+    const raf = requestAnimationFrame(() => {
+      targetRef.current?.measureInWindow((x: number, y: number, width: number, height: number) => {
+        if (width > 0 && height > 0) setTourTarget({ x, y, width, height });
+      });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [tourActive, tourStep, openTile]);
+
+  const finishHomeTour = useCallback(() => {
+    setTourActive(false);
+    setTourTarget(null);
+    setTourStep(0);
+    setOpenTile(null);
+    completeHomeTour();
+  }, [completeHomeTour]);
+
+  const advanceHomeTour = useCallback(() => {
+    if (tourStep === 0) {
+      if (primaryTileId) setOpenTile(primaryTileId);
+      setTourStep(1);
+    } else if (tourStep === 1 && homeTourStepCount === 3) {
+      setTourStep(2);
+    } else {
+      finishHomeTour();
+    }
+  }, [tourStep, primaryTileId, homeTourStepCount, finishHomeTour]);
+
+  const homeTourCopy = (() => {
+    if (tourStep === 0) {
+      return {
+        title: 'Contests live here',
+        body: `Tap ${primaryTileName ?? 'a contest'} to open it — that's where matches, stats and your Pick Your XI button show up.`,
+      };
+    }
+    if (tourStep === 1) {
+      return {
+        title: 'Pick Your XI',
+        body: 'Tap here to build your fantasy team — choose 11 players within budget, then save to lock them in.',
+      };
+    }
+    return {
+      title: 'Create or join a league',
+      body: "Scroll down inside this contest to start a private league with friends, or join one with an invite code.",
+    };
+  })();
 
   // Load contests on tournament change
   useEffect(() => {
@@ -922,6 +1016,7 @@ export default function HomeScreen() {
 
         {/* ── Daily Contest ──────────────────────────────────────────────── */}
         {dailyContest && (
+          <View ref={primaryTileId === 'daily' ? primaryTileRef : undefined}>
           <ContestTile
             id="daily"
             icon="📅"
@@ -939,12 +1034,15 @@ export default function HomeScreen() {
               teamReady={dailyXIReady}
               liveMatchLabel={liveMatchPillLabel}
               onOpenLiveScore={() => setLiveModalVisible(true)}
+              pickButtonRef={primaryTileId === 'daily' ? pickBtnRef : undefined}
             />
           </ContestTile>
+          </View>
         )}
 
         {/* ── Season Long ────────────────────────────────────────────────── */}
         {slContest && (
+          <View ref={primaryTileId === 'sl' ? primaryTileRef : undefined}>
           <ContestTile
             id="sl"
             icon="🏅"
@@ -983,6 +1081,7 @@ export default function HomeScreen() {
               teamReady={slXIReady}
               liveMatchLabel={liveMatchPillLabel}
               onOpenLiveScore={() => setLiveModalVisible(true)}
+              pickButtonRef={primaryTileId === 'sl' ? pickBtnRef : undefined}
             />
 
             {/* Private leagues nested under SL — always shown (not gated on
@@ -1000,6 +1099,7 @@ export default function HomeScreen() {
               <NestedLeagueRow key={c.id} contest={c} onPress={() => handleTapPrivateLeague(c)} />
             ))}
             <Pressable
+              ref={createJoinRef as any}
               style={({ pressed }) => [styles.nestedRow, styles.nestedAddRow, pressed && { opacity: 0.8 }]}
               onPress={() => setLeagueModalOpen(true)}
             >
@@ -1011,6 +1111,7 @@ export default function HomeScreen() {
               <Text style={styles.nestedArrow}>›</Text>
             </Pressable>
           </ContestTile>
+          </View>
         )}
 
         {/* ── Empty state ─────────────────────────────────────────────────── */}
@@ -1056,6 +1157,21 @@ export default function HomeScreen() {
         tournamentId={selectedTournamentId ?? null}
         onDismiss={() => setLeagueModalOpen(false)}
         onJoined={handleLeagueJoined}
+      />
+
+      {/* First-time Home tour — see onboardingStore/Coachmark. */}
+      <Coachmark
+        visible={tourActive && !!tourTarget}
+        target={tourTarget}
+        variant="tour"
+        stepIndex={tourStep + 1}
+        stepCount={homeTourStepCount}
+        title={homeTourCopy.title}
+        body={homeTourCopy.body}
+        primaryLabel={tourStep === homeTourStepCount - 1 ? "Got it, let's go →" : 'Next →'}
+        onPrimary={advanceHomeTour}
+        onSkip={finishHomeTour}
+        skipLabel="Skip tour"
       />
     </SafeAreaView>
   );
