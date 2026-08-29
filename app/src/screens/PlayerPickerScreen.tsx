@@ -30,6 +30,8 @@ import PlayerCard from '../components/PlayerCard';
 import PlayerStatsModal from '../components/PlayerStatsModal';
 import CricketPitch from '../components/CricketPitch';
 import BudgetBar from '../components/BudgetBar';
+import Coachmark, { CoachmarkTarget } from '../components/Coachmark';
+import { useOnboardingStore } from '../store/onboardingStore';
 import RoleStats from '../components/RoleStats';
 import Jersey from '../components/Jersey';
 import { fontSize, radius, spacing } from '../theme';
@@ -175,6 +177,61 @@ export default function PlayerPickerScreen({
   const handlePinnedLayout = useCallback((e: LayoutChangeEvent) => {
     setPinnedH(e.nativeEvent.layout.height);
   }, []);
+
+  // ── Onboarding: contextual tips (first visit to this screen) ────────────
+  // Two sequential tips — Budget bar, then My XI + Schedule together — shown
+  // once per account the first time the player pool is reached. Boosters
+  // gets its own tip on MyXIScreen (where BoostersBar actually lives), not
+  // here, since Tier 2 tips fire per-screen/moment rather than as one long
+  // forced sequence.
+  const { hasSeenPlayerPickerTips, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completePlayerPickerTips } = useOnboardingStore();
+  const [tipsActive, setTipsActive] = useState(false);
+  const [tipStep, setTipStep]       = useState(0);
+  const [tipTarget, setTipTarget]   = useState<CoachmarkTarget | null>(null);
+  const budgetBarRef      = useRef<View>(null);
+  const myxiScheduleRef   = useRef<View>(null);
+  const PICKER_TIP_COUNT = 2;
+
+  useEffect(() => { hydrateOnboarding(); }, [hydrateOnboarding]);
+
+  useEffect(() => {
+    if (!onboardingHydrated || hasSeenPlayerPickerTips) return;
+    const t = setTimeout(() => { setTipsActive(true); setTipStep(0); }, 500);
+    return () => clearTimeout(t);
+  }, [onboardingHydrated, hasSeenPlayerPickerTips]);
+
+  useEffect(() => {
+    if (!tipsActive) return;
+    const targetRef = tipStep === 0 ? budgetBarRef : myxiScheduleRef;
+    const raf = requestAnimationFrame(() => {
+      targetRef.current?.measureInWindow((x: number, y: number, width: number, height: number) => {
+        if (width > 0 && height > 0) setTipTarget({ x, y, width, height });
+      });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [tipsActive, tipStep]);
+
+  const finishPickerTips = useCallback(() => {
+    setTipsActive(false);
+    setTipTarget(null);
+    setTipStep(0);
+    completePlayerPickerTips();
+  }, [completePlayerPickerTips]);
+
+  const advancePickerTips = useCallback(() => {
+    if (tipStep < PICKER_TIP_COUNT - 1) setTipStep(s => s + 1);
+    else finishPickerTips();
+  }, [tipStep, finishPickerTips]);
+
+  const pickerTipCopy = tipStep === 0
+    ? {
+        title: 'Your budget',
+        body: `You've got ${RULES.budget} credits to build your XI — spend them wisely across all ${RULES.total} picks.`,
+      }
+    : {
+        title: 'Preview, remove, and check fixtures',
+        body: 'Tap 🏏 My XI anytime to see your picks laid out on the pitch — tap a player there to remove them. Tap 📅 to check the upcoming match schedule without losing your place.',
+      };
 
   // ── Filter disclosure pills (Type / Teams / Matches / Credits) ────────────
   // Each panel toggles independently; multiple can be open at once. Mirrors the
@@ -493,6 +550,7 @@ export default function PlayerPickerScreen({
               "Custom rules" badge's old spot (dropped from this screen per
               request — the underlying custom scoring/boosters still apply
               to the contest, this just isn't the place to surface it). */}
+          <View ref={myxiScheduleRef} style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
           <Pressable
             onPress={onToggleMyXI}
             style={[styles.myxiBtn, myXIOpen && styles.myxiBtnActive]}
@@ -515,6 +573,7 @@ export default function PlayerPickerScreen({
               📅
             </Text>
           </Pressable>
+          </View>
         </View>
       )}
 
@@ -522,11 +581,13 @@ export default function PlayerPickerScreen({
       <View style={styles.header}>
 
         {/* Budget bar */}
-        <BudgetBar
-          creditsSpent={creditsSpent}
-          creditsLeft={creditsLeft}
-          playerCount={selected.length}
-        />
+        <View ref={budgetBarRef}>
+          <BudgetBar
+            creditsSpent={creditsSpent}
+            creditsLeft={creditsLeft}
+            playerCount={selected.length}
+          />
+        </View>
 
         {/* OS counter — only when tournament has a cap */}
         {showOsCounter && (
@@ -950,6 +1011,21 @@ export default function PlayerPickerScreen({
           </Animated.View>
         </>
       )}
+
+      {/* First-visit contextual tips — see onboardingStore/Coachmark. */}
+      <Coachmark
+        visible={tipsActive && !!tipTarget}
+        target={tipTarget}
+        variant="tip"
+        stepIndex={tipStep + 1}
+        stepCount={PICKER_TIP_COUNT}
+        title={pickerTipCopy.title}
+        body={pickerTipCopy.body}
+        primaryLabel={tipStep === PICKER_TIP_COUNT - 1 ? "Got it, let's build →" : 'Next →'}
+        onPrimary={advancePickerTips}
+        onSkip={finishPickerTips}
+        skipLabel="Skip remaining tips"
+      />
     </View>
   );
 }
