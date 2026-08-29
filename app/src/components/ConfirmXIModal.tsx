@@ -6,7 +6,7 @@
  * Requires: expo-linear-gradient
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
@@ -25,6 +25,8 @@ import Jersey from './Jersey';
 import { getBoosterMeta, TRANSFER_BOOSTERS } from '../store/boosterStore';
 import BoosterIcon from './BoosterIcon';
 import { fontSize, radius, spacing, shadow } from '../theme';
+import Coachmark, { CoachmarkTarget } from './Coachmark';
+import { useOnboardingStore } from '../store/onboardingStore';
 
 // ─── Role colours (fallback when no teamColor set) ────────────────────────────
 
@@ -69,11 +71,12 @@ function shortenName(name: string) {
 interface CaptainStepProps {
   players:  SelectedPlayer[];
   onAssign: (id: string, role: CaptaincyRole) => void;
+  assignRowRef?: React.RefObject<View | null>;
 }
 
 const ROLE_ORDER: Record<string, number> = { wk: 0, bat: 1, ar: 2, bowl: 3 };
 
-function CaptainStep({ players, onAssign }: CaptainStepProps) {
+function CaptainStep({ players, onAssign, assignRowRef }: CaptainStepProps) {
   const sorted      = [...players].sort((a, b) => (ROLE_ORDER[a.role] ?? 9) - (ROLE_ORDER[b.role] ?? 9));
   const captain     = players.find(p => p.captaincy === 'captain');
   const viceCaptain = players.find(p => p.captaincy === 'vice_captain');
@@ -92,7 +95,7 @@ function CaptainStep({ players, onAssign }: CaptainStepProps) {
     <View style={styles.stepContainer}>
 
       {/* Assignment slots */}
-      <View style={styles.assignRow}>
+      <View style={styles.assignRow} ref={assignRowRef}>
         {/* Captain slot */}
         <View style={[styles.assignSlot, captain ? styles.assignSlotSet : styles.assignSlotEmpty]}>
           <View style={[styles.assignBadge, styles.assignBadgeC]}>
@@ -406,6 +409,39 @@ export default function ConfirmXIModal({
     if (visible) setStep('captain');
   }, [visible]);
 
+  // ── Onboarding: Captain/VC contextual tip (first time this modal opens) ──
+  const { hasSeenCaptainVcTip, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completeCaptainVcTip } = useOnboardingStore();
+  const [vcTipActive, setVcTipActive] = useState(false);
+  const [vcTipTarget, setVcTipTarget] = useState<CoachmarkTarget | null>(null);
+  const assignRowRef = useRef<View>(null);
+
+  useEffect(() => { hydrateOnboarding(); }, [hydrateOnboarding]);
+
+  useEffect(() => {
+    if (!visible || step !== 'captain' || !onboardingHydrated || hasSeenCaptainVcTip) {
+      if (!visible) setVcTipActive(false);
+      return;
+    }
+    const t = setTimeout(() => setVcTipActive(true), 400);
+    return () => clearTimeout(t);
+  }, [visible, step, onboardingHydrated, hasSeenCaptainVcTip]);
+
+  useEffect(() => {
+    if (!vcTipActive) return;
+    const raf = requestAnimationFrame(() => {
+      assignRowRef.current?.measureInWindow((x: number, y: number, width: number, height: number) => {
+        if (width > 0 && height > 0) setVcTipTarget({ x, y, width, height });
+      });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [vcTipActive]);
+
+  const finishVcTip = useCallback(() => {
+    setVcTipActive(false);
+    setVcTipTarget(null);
+    completeCaptainVcTip();
+  }, [completeCaptainVcTip]);
+
   const stepLabel   = step === 'captain' ? 'Choose C & VC' : 'Review & Save';
   const captain     = current.find(p => p.captaincy === 'captain');
   const viceCaptain = current.find(p => p.captaincy === 'vice_captain');
@@ -472,6 +508,7 @@ export default function ConfirmXIModal({
             <CaptainStep
               players={current}
               onAssign={onSetCaptaincy}
+              assignRowRef={assignRowRef}
             />
           ) : (
             <SummaryStep
@@ -488,6 +525,18 @@ export default function ConfirmXIModal({
           )}
 
         </SafeAreaView>
+
+        {/* First-time Captain/Vice-Captain tip — see onboardingStore/Coachmark. */}
+        <Coachmark
+          visible={vcTipActive && !!vcTipTarget}
+          target={vcTipTarget}
+          variant="tip"
+          chipLabel="Quick tip"
+          title="Pick your Captain and Vice-Captain"
+          body="Your Captain scores double points, Vice-Captain 1.5x. Tap a player below to set Captain, then tap another for Vice-Captain."
+          primaryLabel="Got it, I'll pick →"
+          onPrimary={finishVcTip}
+        />
       </View>
     </Modal>
   );
