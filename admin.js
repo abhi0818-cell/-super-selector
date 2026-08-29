@@ -1677,6 +1677,13 @@
                 ${(isFinished || isInPlay) && hasSourceId
                   ? `<button class="row-finalize" data-act="finalize" title="${finalizeTitle}">Finalize</button>`
                   : ''}
+                ${(isFinished || isInPlay)
+                  ? `<button class="row-manual-sc" data-act="manual-sc"
+                       style="font-size:11px;padding:2px 7px;border-radius:4px;
+                              background:rgba(160,110,220,0.10);border:1px solid rgba(160,110,220,0.45);
+                              color:rgba(160,110,220,0.95);cursor:pointer;"
+                       title="Paste a scorecard by hand — for when CricAPI/scraper have no data for this match, or to fix unmatched players / fielding credit directly. Scores through the same engine and shows up in the Live tab like any other match.">📋 Manual</button>`
+                  : ''}
                 ${isFinished
                   ? `<button class="row-fielding" data-act="fielding"
                        style="font-size:11px;padding:2px 7px;border-radius:4px;
@@ -1793,6 +1800,7 @@
           }
         });
         tr.querySelector('[data-act="fielding"]')?.addEventListener('click', () => toggleFieldingCreditRow(id, tr));
+        tr.querySelector('[data-act="manual-sc"]')?.addEventListener('click', () => toggleManualScorecardRow(id, tr));
         tr.querySelector('.delay-toggle-btn')?.addEventListener('click', async (e) => {
           const btn       = e.currentTarget;
           const isDelayed = btn.dataset.delayed === 'true';
@@ -1968,6 +1976,314 @@
         formRow.querySelector('td').innerHTML =
           `<span style="font-size:11px; color:var(--bad);">Failed to load players: ${escapeHtml(err.message)}</span>`;
       }
+    }
+
+
+    // ─── MANUAL SCORECARD ENTRY ─────────────────────────────────────────────
+    // Fallback path for when NEITHER CricAPI nor the scraper has a match's
+    // data (source outage, a fixture neither provider carries, a scorecard
+    // an admin only has as a spreadsheet/photo/etc). An admin pastes the
+    // scorecard (tab-separated — i.e. copied straight out of Excel/Sheets)
+    // in the same shape CricketAddictor/ESPN scorecards already use: a team
+    // name header, a "Batting" block, a "Bowling" block (that innings'
+    // BOWLING TEAM's figures — standard scorecard convention), repeated for
+    // the second innings.
+    //
+    // The parsed result is deliberately built in the exact shape CricAPI's
+    // own match_scorecard payload uses (batter/bowler objects, r/b/4s/6s,
+    // dismissal-text, o/m/r/w/dots/wd/nb) and fed through the SAME
+    // fromCricAPI() → mergeApiPlayersByLocalId() → calculateScore() pipeline
+    // a live CricAPI connection already uses. That's what makes this behave
+    // "like any other match" afterwards: unmatched-name Link, fielding-issue
+    // surfacing, Rescore, the Live tab's raw scorecard and Fantasy Scorecard
+    // panels — all of it is the existing machinery, not a parallel one.
+
+    function _msSplitCells(line) {
+      if (line.indexOf('\t') !== -1) return line.split('\t');
+      // Fallback for a paste that lost its tabs (e.g. re-typed by hand) —
+      // treat 2+ spaces as a column break.
+      return line.split(/ {2,}/);
+    }
+    function _msClean(s) { return String(s ?? '').replace(/\s+/g, ' ').trim(); }
+    function _msStripMarkers(name) {
+      // "(c)", "(vc)", captain/keeper markers — never part of a real name.
+      return _msClean(String(name ?? '').replace(/\(c\)/gi, '').replace(/\(vc\)/gi, '').replace(/[†‡]/g, ''));
+    }
+    const MS_BAT_HEADER_MAP = { 'R': 'r', 'B': 'b', '4S': '4s', '6S': '6s' }; // SR/M ignored — recomputed / not scored
+    const MS_BOWL_HEADER_MAP = { 'O': 'o', 'M': 'm', 'R': 'r', 'W': 'w', '0S': 'dots', 'DOTS': 'dots', 'WD': 'wd', 'NB': 'nb' }; // ECON ignored — derived
+
+
+    /** Lazily inject the SheetJS (xlsx) library — only when an admin actually
+     * uses the Manual Scorecard's "Upload Excel" option, so ordinary sessions
+     * never pay for it. Mirrors loadAdminModule()'s lazy-inject-once pattern
+     * in index.html, and the jsdelivr→unpkg fallback used for the Supabase SDK. */
+    function loadXlsxLib() {
+      return new Promise((resolve, reject) => {
+        if (window.XLSX) { resolve(); return; }
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+        s.onload = resolve;
+        s.onerror = () => {
+          const s2 = document.createElement('script');
+          s2.src = 'https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js';
+          s2.onload = resolve;
+          s2.onerror = () => reject(new Error('Could not load the Excel-reading library (jsdelivr and unpkg both blocked/unreachable) — paste the scorecard as text instead.'));
+          document.head.appendChild(s2);
+        };
+        document.head.appendChild(s);
+      });
+    }
+
+    /** Converts every sheet of an uploaded workbook into the same tab-separated
+     * text parseManualScorecardPaste() already expects from a clipboard paste —
+     * one parser, whichever way the data came in. Blank rows are preserved
+     * (they're what tells the parser where one section/innings ends). */
+    function xlsxWorkbookToPasteText(wb) {
+      return wb.SheetNames
+        .map(name => XLSX.utils.sheet_to_csv(wb.Sheets[name], { FS: '\t', blankrows: true }))
+        .join('\n\n');
+    }
+
+    /**
+     * Parses a pasted scorecard into a CricAPI-shaped payload:
+     * { data: { matchInfo: {name}, status, scorecard: [ {inning, r, w, o, batting:[...], bowling:[...]} ] } }
+     * Throws with a human-readable message if nothing parseable was found.
+     */
+    function parseManualScorecardPaste(text, matchLabel) {
+      const lines = String(text || '').replace(/\r/g, '').split('\n');
+      const innings = [];
+      let cur = null;              // current innings block
+      let section = null;          // 'batting' | 'bowling' | null
+      let battingCols = null;      // header cells from the "Batting" row, index-aligned (index 0/1 reserved for name/dismissal)
+      let bowlingCols = null;      // header cells from the "Bowling" row, index-aligned (index 0 reserved for name)
+
+      for (const raw of lines) {
+        const cells = _msSplitCells(raw).map(_msClean);
+        const nonEmpty = cells.filter(Boolean);
+        if (!nonEmpty.length) { section = null; continue; } // blank line ends whatever section we were in
+
+        const first = cells[0] || '';
+        const restEmpty = cells.slice(1).every(c => !c);
+
+        if (/^(batting)$/i.test(first)) { section = 'batting'; battingCols = cells; continue; }
+        if (/^(bowling)$/i.test(first)) { section = 'bowling'; bowlingCols = cells; continue; }
+        if (/^(extras)$/i.test(first)) {
+          if (cur) { const n = nonEmpty.slice(1).map(v => parseInt(v, 10)).find(v => Number.isFinite(v)); cur._extras = n || 0; }
+          continue;
+        }
+        if (/^(total)$/i.test(first)) {
+          if (cur) {
+            const joined = nonEmpty.join(' ');
+            const rw = joined.match(/(\d+)\s*\/\s*(\d+)/);
+            const ov = joined.match(/(\d+(?:\.\d+)?)\s*(?:ov|overs)?/i);
+            if (rw) { cur.r = parseInt(rw[1], 10); cur.w = parseInt(rw[2], 10); }
+            if (ov) cur.o = ov[1];
+          }
+          continue;
+        }
+        if (/^(did not bat|yet to bat|dnb)/i.test(first)) { continue; }
+
+        if (restEmpty && !section) {
+          // A bare name with nothing else on the line, outside any section,
+          // and not "Batting"/"Bowling"/"Extras"/"Total" — treat as a team
+          // header, starting a new innings block.
+          cur = { inning: first, r: null, w: null, o: null, batting: [], bowling: [], _extras: 0 };
+          innings.push(cur);
+          section = null; battingCols = null; bowlingCols = null;
+          continue;
+        }
+
+        if (!cur) continue; // stray line before any team header — ignore
+        if (section === 'batting') {
+          const name = _msStripMarkers(cells[0]);
+          if (!name) continue;
+          const dismissalText = _msClean(cells[1]) || 'not out';
+          const row = { batter: { name }, r: 0, b: 0, '4s': 0, '6s': 0, 'dismissal-text': dismissalText };
+          for (let i = 2; i < cells.length; i++) {
+            const key = MS_BAT_HEADER_MAP[(battingCols?.[i] || '').toUpperCase()];
+            if (key && cells[i] !== '') row[key] = parseFloat(cells[i]) || 0;
+          }
+          cur.batting.push(row);
+        } else if (section === 'bowling') {
+          const name = _msStripMarkers(cells[0]);
+          if (!name) continue;
+          const row = { bowler: { name }, o: 0, m: 0, r: 0, w: 0, dots: 0, wd: 0, nb: 0 };
+          for (let i = 1; i < cells.length; i++) {
+            const key = MS_BOWL_HEADER_MAP[(bowlingCols?.[i] || '').toUpperCase()];
+            if (key && cells[i] !== '') row[key] = key === 'o' ? cells[i] : (parseFloat(cells[i]) || 0);
+          }
+          cur.bowling.push(row);
+        }
+      }
+
+      if (!innings.length) {
+        throw new Error('Could not find any team/innings in that paste. Expected a team name on its own line, then "Batting", then rows, then "Bowling", then rows — same layout as a normal scorecard.');
+      }
+
+      // Fill in r/w/o for any innings whose "Total" line wasn't present or
+      // didn't parse, from the batting/bowling rows themselves. Cosmetic
+      // only — scoring never depends on these team totals.
+      const oversToBalls = (o) => { const [a, b] = String(o ?? 0).split('.'); return (parseInt(a, 10) || 0) * 6 + (parseInt(b || '0', 10) || 0); };
+      const ballsToOvers = (n) => `${Math.floor(n / 6)}.${n % 6}`;
+      innings.forEach(inn => {
+        if (inn.r == null) inn.r = inn.batting.reduce((s, b) => s + (b.r || 0), 0) + (inn._extras || 0);
+        if (inn.w == null) inn.w = inn.batting.filter(b => !/not\s*out/i.test(b['dismissal-text'])).length;
+        if (inn.o == null) inn.o = ballsToOvers(inn.bowling.reduce((s, b) => s + oversToBalls(b.o), 0));
+        delete inn._extras;
+      });
+
+      return {
+        data: {
+          matchInfo: { name: matchLabel || innings.map(i => i.inning).join(' vs ') },
+          status: 'Match ended',
+          scorecard: innings,
+        },
+      };
+    }
+
+    /**
+     * Saves a manually-parsed scorecard for one match through the exact same
+     * scoring path a live CricAPI connection uses (fromCricAPI → merge →
+     * calculateScore), then optionally marks the match completed and always
+     * cascades to XI/SL totals — mirroring saveFantasyScorecard()/
+     * rescoreCurrentMatch(), but addressed by matchId instead of the Live
+     * tab's currently-selected #matchId.
+     */
+    async function saveManualScorecardForMatch(matchId, payload, { markCompleted = true } = {}) {
+      if (!state.db) throw new Error('Connect a database first.');
+      const local = state.matches.find(m => m.id === matchId);
+      if (!local) throw new Error('Match not found locally — sync first.');
+
+      const apiPlayers = fromCricAPI(payload, matchSquadFor(local), local.format || state.format);
+      const { matched, unmatched } = mergeApiPlayersByLocalId(apiPlayers, findLocalByName);
+      const rows = matched.map(({ local: lp, pl }) => {
+        const s = calculateScore({ ...pl, role: lp.role, captaincy: 'normal' }, local.format || state.format);
+        return { playerId: lp.id, batting: pl.batting ?? null, bowling: pl.bowling ?? null, fielding: pl.fielding ?? null, rawPoints: s.rawPoints };
+      });
+      if (!rows.length) {
+        throw new Error(`No pasted names matched your roster for ${local.home_team_id} vs ${local.away_team_id} (${unmatched.length} unmatched). Check spelling / that this is the right match.`);
+      }
+
+      const n = await state.db.bulkUpsertPlayerMatchStats(matchId, rows);
+
+      if (markCompleted && local.status !== 'completed') {
+        const upd = await state.db.updateMatch(matchId, { status: 'completed' });
+        const idx = state.matches.findIndex(x => x.id === matchId);
+        if (idx >= 0) state.matches[idx] = upd;
+      }
+
+      const xiSaved = await computeAndSaveXIScoresForMatch(matchId);
+      await computeAndSaveSLScoresForMatch(matchId);
+
+      // Wire it into the Live tab exactly like a real connected match: same
+      // state.lastScorecard the live poller would have produced, so the raw
+      // Live scorecard panel, the Fantasy Scorecard panel (with its
+      // unmatched-name Link buttons and fielding-issue banner), Rescore and
+      // Save-to-DB all just work on it afterwards.
+      state.lastScorecard = payload;
+      const sel = $('#matchId');
+      if (sel) {
+        if (local.external_id) {
+          if (typeof renderMatchIdDropdown === 'function') renderMatchIdDropdown();
+          sel.value = local.external_id;
+        } else {
+          const tempVal = `manual:${local.id}`;
+          if (![...sel.options].some(o => o.value === tempVal)) {
+            const opt = document.createElement('option');
+            opt.value = tempVal;
+            opt.textContent = `M${local.match_number ?? '?'} ${local.home_team_id} vs ${local.away_team_id} (manual)`;
+            sel.appendChild(opt);
+          }
+          sel.value = tempVal;
+        }
+        sel.dispatchEvent(new Event('change'));
+      }
+
+      renderFantasyScorecard();
+      if (typeof renderScorecard === 'function') renderScorecard();
+      renderMatchesAdmin();
+
+      return { saved: n, unmatched: unmatched.map(p => p.name), xiSaved };
+    }
+
+    async function toggleManualScorecardRow(matchId, tr) {
+      const existing = tr.parentElement?.querySelector(`.manual-sc-row[data-matchid="${matchId}"]`);
+      if (existing) { existing.remove(); return; }
+      $('#adminMatchesBody')?.querySelectorAll('.manual-sc-row, .fielding-credit-row').forEach(r => r.remove());
+
+      const m = state.matches.find(x => x.id === matchId);
+      if (!m) return;
+
+      const formRow = document.createElement('tr');
+      formRow.className = 'manual-sc-row';
+      formRow.dataset.matchid = matchId;
+      formRow.innerHTML = `
+        <td colspan="10" style="padding:10px; background:rgba(80,160,255,0.06); border-top:1px dashed rgba(80,160,255,0.4);">
+          <div style="font-size:11px; color:var(--muted); margin-bottom:6px;">
+            <strong style="color:var(--text);">📋 Manual scorecard</strong> for
+            M${escapeHtml(String(m.match_number ?? '?'))} (${escapeHtml(m.home_team_id||'—')} vs ${escapeHtml(m.away_team_id||'—')})
+            — upload the scorecard as an Excel file, or paste it as text: a team name on its own line, "Batting",
+            the batting rows (name · dismissal · R · B · 4s · 6s), "Bowling", the bowling rows
+            (name · O · M · R · W · Econ · 0s · Wd · Nb), then the same for the other team. Uploading fills in the
+            text box below so you can check it before saving.
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+            <label style="font-size:11px; color:var(--muted); display:flex; align-items:center; gap:6px;">
+              <span>Upload Excel:</span>
+              <input type="file" class="msc-file" accept=".xlsx,.xls,.csv" style="font-size:11px;" />
+            </label>
+          </div>
+          <textarea class="msc-paste" rows="8" spellcheck="false"
+            style="width:100%; font-family:monospace; font-size:11px; padding:6px; box-sizing:border-box;"
+            placeholder="Paste the full scorecard here (both innings)…"></textarea>
+          <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+            <label style="font-size:11px; color:var(--muted); display:flex; align-items:center; gap:4px;">
+              <input type="checkbox" class="msc-complete" ${m.status !== 'completed' ? 'checked' : ''} /> mark match completed
+            </label>
+            <button class="msc-save" style="font-size:11px; padding:4px 10px; border-radius:4px; background:rgba(80,160,255,0.15); border:1px solid rgba(80,160,255,0.5); color:var(--text); cursor:pointer;">Save &amp; score</button>
+            <button class="msc-cancel" style="font-size:11px; padding:4px 10px; border-radius:4px; background:transparent; border:1px solid var(--border); color:var(--muted); cursor:pointer;">Cancel</button>
+            <span class="msc-status" style="font-size:11px; color:var(--muted);"></span>
+          </div>
+        </td>`;
+      tr.after(formRow);
+
+      formRow.querySelector('.msc-file').addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const statusEl = formRow.querySelector('.msc-status');
+        const textarea = formRow.querySelector('.msc-paste');
+        statusEl.textContent = `Reading ${file.name}…`;
+        try {
+          await loadXlsxLib();
+          const buf = await file.arrayBuffer();
+          const wb = XLSX.read(buf, { type: 'array' });
+          textarea.value = xlsxWorkbookToPasteText(wb);
+          statusEl.textContent = `Loaded from ${file.name} — review below, then Save & score.`;
+        } catch (err) {
+          statusEl.textContent = 'Failed to read file: ' + err.message;
+        }
+      });
+      formRow.querySelector('.msc-cancel').addEventListener('click', () => formRow.remove());
+      formRow.querySelector('.msc-save').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        const statusEl = formRow.querySelector('.msc-status');
+        const text = formRow.querySelector('.msc-paste').value;
+        const markCompleted = formRow.querySelector('.msc-complete').checked;
+        btn.disabled = true; statusEl.textContent = 'Parsing…';
+        try {
+          const payload = parseManualScorecardPaste(text, `${m.home_team_id} vs ${m.away_team_id}`);
+          statusEl.textContent = 'Scoring & saving…';
+          const result = await saveManualScorecardForMatch(matchId, payload, { markCompleted });
+          const bits = [`✓ Saved ${result.saved} player row${result.saved===1?'':'s'}`];
+          if (result.xiSaved) bits.push(`${result.xiSaved} XI total${result.xiSaved===1?'':'s'} updated`);
+          if (result.unmatched.length) bits.push(`⚠ ${result.unmatched.length} unmatched: ${result.unmatched.join(', ')} — open Live → Fantasy Scorecard to Link them`);
+          toast(bits.join(' · '), 8000);
+          formRow.remove();
+        } catch (err) {
+          statusEl.textContent = 'Failed: ' + err.message;
+          btn.disabled = false;
+        }
+      });
     }
 
     // datetime-local input → ISO UTC string (Postgres timestamptz-friendly)
@@ -3315,7 +3631,9 @@
       // unmatched-player identity checks below now — actual scoring for any
       // matched player comes from saved player_match_stats, not from this.
       const externalId = $('#matchId')?.value?.trim();
-      const currentMatch = state.matches?.find(m => m.external_id === externalId);
+      const currentMatch = externalId?.startsWith('manual:')
+        ? state.matches?.find(m => m.id === externalId.slice(7))
+        : state.matches?.find(m => m.external_id === externalId);
       const players = fromCricAPI(payload, matchSquadFor(currentMatch), state.format);
       const xiIds = new Set(state.selected);
       // Merge duplicate API names resolving to the same local player before
