@@ -2480,6 +2480,14 @@ export function createDb(cfg = {}) {
       // rejected as a regression against the bad reading that caused this.
       if (patch.progressInnings !== undefined) row.progress_innings = patch.progressInnings;
       if (patch.progressBalls   !== undefined) row.progress_balls   = patch.progressBalls;
+      // Set by a successful Manual Scorecard save (see admin.js) to clear the
+      // "⚠ unverified" badge — scrape-scorecard's own staleness guard
+      // deliberately withholds this stamp for a completion it can't confirm
+      // (e.g. a rain/DLS-curtailed finish that never "looks done" to its
+      // heuristic — see its §3b comment), with no other path to set it. An
+      // admin manually confirming the final scorecard by hand is a stronger
+      // signal than that guard, so it's allowed to stamp this directly.
+      if (patch.statsVerifiedAt !== undefined) row.stats_verified_at = patch.statsVerifiedAt;
       const { data, error } = await sb.from('matches').update(row).eq('id', id).select().single();
       if (error) throw error;
       return data;

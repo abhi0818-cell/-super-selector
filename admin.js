@@ -2166,8 +2166,19 @@
 
       const n = await state.db.bulkUpsertPlayerMatchStats(matchId, rows);
 
-      if (markCompleted && local.status !== 'completed') {
-        const upd = await state.db.updateMatch(matchId, { status: 'completed' });
+      // A manual scorecard is the admin directly confirming the final result
+      // by hand -- a stronger signal than any automated scrape/poll, so a
+      // successful save also clears the "⚠ unverified" badge (stats_verified_at),
+      // not just Finalize checkbox status. Covers two cases: (a) this save is
+      // what completes the match, and (b) the match was already marked
+      // completed (e.g. by scrape-scorecard's staleness-guard bypass on a
+      // rain/DLS-curtailed finish it couldn't confirm on its own) and this
+      // save is the trustworthy confirmation that was missing.
+      if (markCompleted || local.status === 'completed') {
+        const upd = await state.db.updateMatch(matchId, {
+          status: 'completed',
+          statsVerifiedAt: new Date().toISOString(),
+        });
         const idx = state.matches.findIndex(x => x.id === matchId);
         if (idx >= 0) state.matches[idx] = upd;
       }
