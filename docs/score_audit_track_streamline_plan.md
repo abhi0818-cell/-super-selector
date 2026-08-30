@@ -166,6 +166,18 @@ This applies on **both tracks** — it's not a track-routing bug, it's a missing
 
 **Recommended fix:** before overwriting a row in the merged Finalize (§3.2, both the CricAPI branch and the scraper-track edge-function call), check the existing row's `source`. If it's `scraper_manual`, skip overwriting `fielding`/`raw_points` for that player (or merge additively instead of replacing) — mirroring the guard `scrape-scorecard/index.ts` already has. This is a small, surgical change: one existing-row lookup per player before the upsert, same shape as `applyManualFieldingCredit` already does. Now that Finalize is the only function doing this overwrite (Recalc is gone), there's exactly one place that needs the guard instead of two.
 
+### 3.7 `scraper_manual` protection never expires — mid-match manual entries need a second manual re-save at the end
+
+**Not yet implemented — follow-up, raised while building the Manual Scorecard admin feature.**
+
+Manual Scorecard (`saveManualScorecardForMatch`, admin.js) tags its rows `source: 'scraper_manual'` so a mid-match paste survives `scrape-scorecard`'s 15-min cron (§3.6's guard, and the identical one `bulkUpsertPlayerMatchStats` now honors via an optional `source` param). That protection is correct but permanent: once a row is tagged, the cron's per-player guard (`ex.source === 'scraper_manual'` → always skip) never writes to it again, full stop — there's no path back to automated updates.
+
+**The gap this creates.** An admin who pastes mid-match because the scraper is currently stuck/broken has no way to hand control back once the scraper recovers and would otherwise have legitimately caught up (or surpassed) the manually-entered state. The match's real, final result never lands automatically — the admin has to remember to come back and manually re-paste the complete scorecard once the game actually ends. Forgetting this leaves the match's fantasy points permanently frozen at whatever partial state was pasted mid-match.
+
+**Recommended fix.** Make the guard catch-up-aware instead of unconditional: for a `scraper_manual` row, compare the fresh scrape's ball-count (batting `ballsFaced` / bowling `ballsBowled`) against the stored row's. If the fresh read is *strictly ahead*, treat it as the scraper having legitimately caught up and let it overwrite normally — the same monotonic-progress reasoning §1's regression guard already uses for ordinary rows, just inverted (currently `scraper_manual` skips regardless of direction; the fix would make it skip only when the fresh read isn't ahead). This closes the loop without weakening protection during the window that actually matters — while the scraper is still stuck at or behind where the manual entry left off.
+
+Same fix would apply symmetrically to `poll-cricapi` if/when CricAPI polling is re-enabled (see the standalone note: `poll-cricapi` currently has no `scraper_manual` check of any kind, unlike `scrape-scorecard` — a separate, pre-existing gap, not introduced by this feature, but worth closing at the same time since it's the same guard).
+
 ## 4. What does NOT change
 
 - The cron pipeline (`poll-cricapi`, `scrape-scorecard`) — already correct, not touched.

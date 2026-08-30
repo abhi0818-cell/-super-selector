@@ -2166,7 +2166,9 @@
         // the moment the scraper's next read has equal-or-more balls than
         // what you entered. Trade-off: it also means the scraper will never
         // auto-correct these rows again on its own -- re-paste manually once
-        // the match actually finishes if you saved this mid-match.
+        // the match actually finishes if you saved this mid-match. Follow-up
+        // to make this catch-up-aware instead of permanent: see
+        // docs/score_audit_track_streamline_plan.md §3.7.
         return { playerId: lp.id, batting: pl.batting ?? null, bowling: pl.bowling ?? null, fielding: pl.fielding ?? null, rawPoints: s.rawPoints, source: 'scraper_manual' };
       });
       if (!rows.length) {
