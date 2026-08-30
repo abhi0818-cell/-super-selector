@@ -2768,11 +2768,17 @@ export function createDb(cfg = {}) {
       let written = 0;
       for (let i = 0; i < payload.length; i += CHUNK) {
         const slice = payload.slice(i, i + CHUNK);
-        const { data, error } = await sb
+        // Routed through withRlsRetry (see its docstring) — a write like this
+        // one, fired well after the admin panel tab was last active (e.g.
+        // after reviewing/adjusting a paste for a while), is exactly the
+        // stale-access-token scenario it exists for: one silent refresh +
+        // retry before giving up, instead of surfacing Postgres's raw
+        // "violates row-level security policy" straight to the toast.
+        const data = await withRlsRetry(sb, () => sb
           .from('player_match_stats')
           .upsert(slice, { onConflict: 'match_id,player_id' })
-          .select('player_id');
-        if (error) throw new Error(`bulkUpsertPlayerMatchStats failed on rows ${i+1}–${i+slice.length}: ${error.message}`);
+          .select('player_id'),
+          `saving match stats (rows ${i + 1}–${i + slice.length})`);
         written += Array.isArray(data) ? data.length : slice.length;
       }
       return written;
