@@ -2191,6 +2191,24 @@
         }
       }
 
+      // Persist the raw payload (dismissal text included) to match_scorecards
+      // — the same cache table scrape-scorecard writes to and connectLiveViaScraper
+      // prefers over its own stats-only reconstruction. Without this, a
+      // scraper-tracked match's poller (running every ~60s once the Live tab
+      // is open) rebuilds state.lastScorecard from player_match_stats via
+      // buildLiveScorecardFromStats(), which only carries isDismissed (a
+      // boolean) — never the "c Fielder b Bowler" text — so any dismissal
+      // detail you pasted would render fine for a few seconds and then get
+      // silently wiped by the next poll. Writing it here means the poller's
+      // own preferred source already has it. Best-effort: a cache-write
+      // failure shouldn't fail the save — the scores that matter (raw_points)
+      // are already committed above.
+      try {
+        await state.db.saveMatchScorecard(matchId, payload);
+      } catch (scErr) {
+        console.warn('[Manual scorecard] saveMatchScorecard failed (points are saved; raw scorecard cache was not updated):', scErr.message);
+      }
+
       // Wire it into the Live tab exactly like a real connected match: same
       // state.lastScorecard the live poller would have produced, so the raw
       // Live scorecard panel, the Fantasy Scorecard panel (with its
