@@ -2252,10 +2252,11 @@
           <textarea class="msc-paste" rows="8" spellcheck="false"
             style="width:100%; font-family:monospace; font-size:11px; padding:6px; box-sizing:border-box;"
             placeholder="Paste the full scorecard here (both innings)…"></textarea>
-          <div style="display:flex; gap:8px; align-items:center; margin-top:6px; flex-wrap:wrap;">
-            <label style="font-size:11px; color:var(--muted); display:flex; align-items:center; gap:4px; flex-shrink:0; white-space:nowrap;">
-              <input type="checkbox" class="msc-complete" ${m.status !== 'completed' ? 'checked' : ''} /> mark match completed
-            </label>
+          <label style="font-size:11px; color:var(--muted); display:flex; align-items:center; gap:6px; margin-top:6px;">
+            <input type="checkbox" class="msc-complete" ${m.status !== 'completed' ? 'checked' : ''} />
+            <span>mark match completed</span>
+          </label>
+          <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
             <button class="msc-save" style="font-size:11px; padding:4px 10px; border-radius:4px; background:rgba(80,160,255,0.15); border:1px solid rgba(80,160,255,0.5); color:var(--text); cursor:pointer; flex-shrink:0;">Save &amp; score</button>
             <button class="msc-cancel" style="font-size:11px; padding:4px 10px; border-radius:4px; background:transparent; border:1px solid var(--border); color:var(--muted); cursor:pointer; flex-shrink:0;">Cancel</button>
             <span class="msc-status" style="font-size:11px; color:var(--muted); flex:1 1 160px; min-width:120px;"></span>
