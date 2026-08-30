@@ -2158,7 +2158,16 @@
       const { matched, unmatched } = mergeApiPlayersByLocalId(apiPlayers, findLocalByName);
       const rows = matched.map(({ local: lp, pl }) => {
         const s = calculateScore({ ...pl, role: lp.role, captaincy: 'normal' }, local.format || state.format);
-        return { playerId: lp.id, batting: pl.batting ?? null, bowling: pl.bowling ?? null, fielding: pl.fielding ?? null, rawPoints: s.rawPoints };
+        // source:'scraper_manual' is the SAME tag applyManualFieldingCredit()
+        // already uses -- scrape-scorecard's per-player guard skips a row
+        // unconditionally once it carries this tag, so a mid-match manual
+        // paste survives the next automatic scrape (which runs every ~15
+        // min for a still-live match) instead of being silently overwritten
+        // the moment the scraper's next read has equal-or-more balls than
+        // what you entered. Trade-off: it also means the scraper will never
+        // auto-correct these rows again on its own -- re-paste manually once
+        // the match actually finishes if you saved this mid-match.
+        return { playerId: lp.id, batting: pl.batting ?? null, bowling: pl.bowling ?? null, fielding: pl.fielding ?? null, rawPoints: s.rawPoints, source: 'scraper_manual' };
       });
       if (!rows.length) {
         throw new Error(`No pasted names matched your roster for ${local.home_team_id} vs ${local.away_team_id} (${unmatched.length} unmatched). Check spelling / that this is the right match.`);

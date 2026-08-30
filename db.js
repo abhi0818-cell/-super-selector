@@ -2764,6 +2764,12 @@ export function createDb(cfg = {}) {
       const valid = (rows || []).filter(r => r.playerId);
       if (!valid.length) return 0;
       const sb = await getClient();
+      // `source` is optional and passed through only when the caller supplies
+      // it (e.g. Manual Scorecard tags its rows 'scraper_manual' — see
+      // saveManualScorecardForMatch) so it lands in the upsert's INSERT
+      // column list. Omitting it here for callers that don't pass one (the
+      // CricAPI Finalize/Rescore paths) preserves the existing row's source
+      // on conflict, same as before this change.
       const payload = valid.map(r => ({
         match_id  : matchId,
         player_id : r.playerId,
@@ -2771,6 +2777,7 @@ export function createDb(cfg = {}) {
         bowling   : r.bowling   ?? null,
         fielding  : r.fielding  ?? null,
         raw_points: Number.isFinite(r.rawPoints) ? r.rawPoints : 0,
+        ...(r.source !== undefined ? { source: r.source } : {}),
       }));
       const CHUNK = 50;
       let written = 0;
