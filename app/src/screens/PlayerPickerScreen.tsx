@@ -30,7 +30,8 @@ import PlayerCard from '../components/PlayerCard';
 import PlayerStatsModal from '../components/PlayerStatsModal';
 import CricketPitch from '../components/CricketPitch';
 import BudgetBar from '../components/BudgetBar';
-import Coachmark, { CoachmarkTarget } from '../components/Coachmark';
+import Coachmark from '../components/Coachmark';
+import { useCoachmarkTarget } from '../hooks/useCoachmarkTarget';
 import { useOnboardingStore } from '../store/onboardingStore';
 import RoleStats from '../components/RoleStats';
 import Jersey from '../components/Jersey';
@@ -187,7 +188,6 @@ export default function PlayerPickerScreen({
   const { hasSeenPlayerPickerTips, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completePlayerPickerTips, replayRequest, clearReplayRequest } = useOnboardingStore();
   const [tipsActive, setTipsActive] = useState(false);
   const [tipStep, setTipStep]       = useState(0);
-  const [tipTarget, setTipTarget]   = useState<CoachmarkTarget | null>(null);
   const budgetBarRef      = useRef<View>(null);
   const myxiScheduleRef   = useRef<View>(null);
   const PICKER_TIP_COUNT = 2;
@@ -204,20 +204,11 @@ export default function PlayerPickerScreen({
     return () => clearTimeout(t);
   }, [onboardingHydrated, hasSeenPlayerPickerTips, replayRequest, clearReplayRequest]);
 
-  useEffect(() => {
-    if (!tipsActive) return;
-    const targetRef = tipStep === 0 ? budgetBarRef : myxiScheduleRef;
-    const raf = requestAnimationFrame(() => {
-      targetRef.current?.measureInWindow((x: number, y: number, width: number, height: number) => {
-        if (width > 0 && height > 0) setTipTarget({ x, y, width, height });
-      });
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [tipsActive, tipStep]);
+  const tipTargetRef = tipStep === 0 ? budgetBarRef : myxiScheduleRef;
+  const tipTarget = useCoachmarkTarget(tipTargetRef, tipsActive, tipStep);
 
   const finishPickerTips = useCallback(() => {
     setTipsActive(false);
-    setTipTarget(null);
     setTipStep(0);
     completePlayerPickerTips();
   }, [completePlayerPickerTips]);

@@ -25,7 +25,8 @@ import Jersey from './Jersey';
 import { getBoosterMeta, TRANSFER_BOOSTERS } from '../store/boosterStore';
 import BoosterIcon from './BoosterIcon';
 import { fontSize, radius, spacing, shadow } from '../theme';
-import Coachmark, { CoachmarkTarget } from './Coachmark';
+import Coachmark from './Coachmark';
+import { useCoachmarkTarget } from '../hooks/useCoachmarkTarget';
 import { useOnboardingStore } from '../store/onboardingStore';
 
 // ─── Role colours (fallback when no teamColor set) ────────────────────────────
@@ -412,7 +413,6 @@ export default function ConfirmXIModal({
   // ── Onboarding: Captain/VC contextual tip (first time this modal opens) ──
   const { hasSeenCaptainVcTip, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completeCaptainVcTip, replayRequest, clearReplayRequest } = useOnboardingStore();
   const [vcTipActive, setVcTipActive] = useState(false);
-  const [vcTipTarget, setVcTipTarget] = useState<CoachmarkTarget | null>(null);
   const assignRowRef = useRef<View>(null);
 
   useEffect(() => { hydrateOnboarding(); }, [hydrateOnboarding]);
@@ -429,19 +429,10 @@ export default function ConfirmXIModal({
     return () => clearTimeout(t);
   }, [visible, step, onboardingHydrated, hasSeenCaptainVcTip, replayRequest, clearReplayRequest]);
 
-  useEffect(() => {
-    if (!vcTipActive) return;
-    const raf = requestAnimationFrame(() => {
-      assignRowRef.current?.measureInWindow((x: number, y: number, width: number, height: number) => {
-        if (width > 0 && height > 0) setVcTipTarget({ x, y, width, height });
-      });
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [vcTipActive]);
+  const vcTipTarget = useCoachmarkTarget(assignRowRef, vcTipActive);
 
   const finishVcTip = useCallback(() => {
     setVcTipActive(false);
-    setVcTipTarget(null);
     completeCaptainVcTip();
   }, [completeCaptainVcTip]);
 

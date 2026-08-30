@@ -38,7 +38,8 @@ import { useLiveMatch, useLiveScore, formatLiveScoreLine } from '../lib/liveScor
 import { fontSize, radius, spacing, shadow } from '../theme';
 import { fetchContestTransferConfig, fetchTournamentMatches, getTransferUsage, MatchLite } from '../lib/transferCap';
 import { findNextUnlockedMatch } from '../lib/matchLock';
-import Coachmark, { CoachmarkTarget } from '../components/Coachmark';
+import Coachmark from '../components/Coachmark';
+import { useCoachmarkTarget } from '../hooks/useCoachmarkTarget';
 import { useOnboardingStore } from '../store/onboardingStore';
 
 type NavProp  = BottomTabNavigationProp<RootTabParamList, 'Home'>;
@@ -667,7 +668,6 @@ export default function HomeScreen() {
   const { hasSeenHomeTour, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completeHomeTour, replayRequest, clearReplayRequest } = useOnboardingStore();
   const [tourActive, setTourActive] = useState(false);
   const [tourStep, setTourStep]     = useState(0);
-  const [tourTarget, setTourTarget] = useState<CoachmarkTarget | null>(null);
   const primaryTileRef = useRef<View>(null);
   const pickBtnRef      = useRef<View>(null);
   const createJoinRef   = useRef<View>(null);
@@ -756,23 +756,15 @@ export default function HomeScreen() {
 
   // Re-measure the current step's target in window coordinates whenever the
   // step (or the tile's open/closed state, which changes what's on screen)
-  // changes. requestAnimationFrame lets the just-triggered layout settle
-  // first — e.g. step 0 → 1 expands the tile in the same tap that advances
-  // the step, so the Pick XI button doesn't exist yet on the frame we're on.
-  useEffect(() => {
-    if (!tourActive) return;
-    const targetRef = tourStep === 0 ? primaryTileRef : tourStep === 1 ? pickBtnRef : createJoinRef;
-    const raf = requestAnimationFrame(() => {
-      targetRef.current?.measureInWindow((x: number, y: number, width: number, height: number) => {
-        if (width > 0 && height > 0) setTourTarget({ x, y, width, height });
-      });
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [tourActive, tourStep, openTile]);
+  // changes. Retries for a bit rather than a single one-shot attempt — see
+  // useCoachmarkTarget's doc comment: replaying from Rules navigates here,
+  // and a tab just reattached by react-native-screens can take more than
+  // one frame to lay back out.
+  const tourTargetRef = tourStep === 0 ? primaryTileRef : tourStep === 1 ? pickBtnRef : createJoinRef;
+  const tourTarget = useCoachmarkTarget(tourTargetRef, tourActive, `${tourStep}-${openTile}`);
 
   const finishHomeTour = useCallback(() => {
     setTourActive(false);
-    setTourTarget(null);
     setTourStep(0);
     setOpenTile(null);
     completeHomeTour();

@@ -28,7 +28,8 @@ import CricketPitch from '../components/CricketPitch';
 import ConfirmXIModal from '../components/ConfirmXIModal';
 import BudgetBar from '../components/BudgetBar';
 import BoostersBar from '../components/BoostersBar';
-import Coachmark, { CoachmarkTarget } from '../components/Coachmark';
+import Coachmark from '../components/Coachmark';
+import { useCoachmarkTarget } from '../hooks/useCoachmarkTarget';
 import { useOnboardingStore } from '../store/onboardingStore';
 import RoleStats from '../components/RoleStats';
 import ContestPicker from '../components/ContestPicker';
@@ -335,7 +336,6 @@ export default function MyXIScreen({ route }: Props) {
   // ── Onboarding: Boosters contextual tip (first visit, SL/private only) ──
   const { hasSeenBoostersTip, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completeBoostersTip, replayRequest, clearReplayRequest } = useOnboardingStore();
   const [boostersTipActive, setBoostersTipActive] = useState(false);
-  const [boostersTipTarget, setBoostersTipTarget] = useState<CoachmarkTarget | null>(null);
   const boostersBarRef = useRef<View>(null);
   const boostersEligible = activeContext?.contestType === 'sl' || activeContext?.contestType === 'private';
 
@@ -350,19 +350,10 @@ export default function MyXIScreen({ route }: Props) {
     return () => clearTimeout(t);
   }, [onboardingHydrated, hasSeenBoostersTip, boostersEligible, replayRequest, clearReplayRequest]);
 
-  useEffect(() => {
-    if (!boostersTipActive) return;
-    const raf = requestAnimationFrame(() => {
-      boostersBarRef.current?.measureInWindow((x: number, y: number, width: number, height: number) => {
-        if (width > 0 && height > 0) setBoostersTipTarget({ x, y, width, height });
-      });
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [boostersTipActive]);
+  const boostersTipTarget = useCoachmarkTarget(boostersBarRef, boostersTipActive);
 
   const finishBoostersTip = useCallback(() => {
     setBoostersTipActive(false);
-    setBoostersTipTarget(null);
     completeBoostersTip();
   }, [completeBoostersTip]);
   // Transfers pending for the CURRENT (not-yet-locked) match. Two sources,
