@@ -977,6 +977,15 @@ export default function HomeScreen() {
           </Pressable>
         </View>
 
+        {/* Temporary walkthrough debug readout — remove once Home tour is
+            confirmed firing reliably on-device. Shows the raw state behind
+            maybeStartHomeTour so a stuck condition is visible without a
+            debugger attached to a production build. */}
+        <Text style={styles.wtDebug}>
+          WT-9 h{onboardingHydrated ? 1 : 0} c{contestsLoading ? 1 : 0} w{walkthroughEnabled ? 1 : 0}{' '}
+          s{hasSeenHomeTour ? 1 : 0} tile={primaryTileId ?? '-'} a{tourActive ? 1 : 0} tg{tourTarget ? 1 : 0}
+        </Text>
+
         {/* ── Notification ticker ───────────────────────────────────────── */}
         {/* Time-based, not read-based — stays up for each notification's own
             ticker_hours window regardless of whether it's been tapped open. */}
@@ -1227,6 +1236,7 @@ const styles = StyleSheet.create({
   brandText:     { fontSize: fontSize.xl, letterSpacing: 0.2 },
   brandSuper:    { color: '#1C1F26', fontFamily: 'PlayfairDisplay_700Bold' },
   welcomeText: { color: C.muted, fontSize: fontSize.base, letterSpacing: 0.1, marginLeft: 18 },
+  wtDebug: { fontSize: 10, color: '#B4AA8E', marginTop: 2 },
   signOutLinkText: { color: C.muted, fontSize: fontSize.xs, fontWeight: '600', textDecorationLine: 'underline' },
 
   tournamentBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.lg, borderWidth: 1, borderColor: 'rgba(28,31,38,0.1)', backgroundColor: 'rgba(0,0,0,0.03)', marginBottom: spacing.xs },

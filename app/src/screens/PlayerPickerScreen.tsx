@@ -523,6 +523,13 @@ export default function PlayerPickerScreen({
   return (
     <View style={styles.container}>
 
+      {/* Temporary walkthrough debug readout — remove once Player Picker
+          tips are confirmed firing reliably on-device. */}
+      <Text style={styles.wtDebug}>
+        WT-9 h{onboardingHydrated ? 1 : 0} w{walkthroughEnabled ? 1 : 0} s{hasSeenPlayerPickerTips ? 1 : 0}{' '}
+        a{tipsActive ? 1 : 0} tg{tipTarget ? 1 : 0}
+      </Text>
+
       {/* Pinned block — context banner + budget/OS-counter/role-stats/search+pills.
           Measured above via handlePinnedLayout; the My XI drawer anchors its
           `top` to this height alone, not to the filter panels that follow. */}
@@ -1037,6 +1044,7 @@ export default function PlayerPickerScreen({
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
+  wtDebug: { fontSize: 10, color: '#B4AA8E', paddingHorizontal: 12, paddingTop: 4 },
   container: {
     flex:            1,
     backgroundColor: 'transparent',
