@@ -211,7 +211,7 @@ export default function RulesScreen() {
   const { selectedTournamentId, tournaments } = useTournamentStore();
   const { contests } = useContestStore();
   const {
-    walkthroughEnabled, setWalkthroughEnabled,
+    walkthroughEnabled, setWalkthroughEnabled, skipMigrationCheck,
     hasSeenHomeTour, resetHomeTour, completeHomeTour,
     hasSeenPlayerPickerTips, resetPlayerPickerTips, completePlayerPickerTips,
     hasSeenBoostersTip, resetBoostersTip, completeBoostersTip,
@@ -405,7 +405,7 @@ export default function RulesScreen() {
 
             <Pressable
               style={({ pressed }) => [styles.replayCard, pressed && { opacity: 0.85 }]}
-              onPress={() => setWalkthroughSheetOpen(true)}
+              onPress={() => { skipMigrationCheck(); setWalkthroughSheetOpen(true); }}
             >
               <Text style={styles.replayIcon}>🎓</Text>
               <View style={{ flex: 1 }}>

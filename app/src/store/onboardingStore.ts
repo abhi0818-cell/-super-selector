@@ -58,6 +58,14 @@ interface OnboardingState extends OnboardingFlags {
    * sections apply for an already-experienced account, then marks itself
    * done so it never re-runs and never fights a manual toggle again. */
   runExistingUserMigration: (signals: { anyXI: boolean; slXI: boolean }) => Promise<void>;
+  /** Permanently locks out runExistingUserMigration without applying any
+   * suppression. Called the moment the person opens Rules -> Walkthrough --
+   * the migration is a one-shot guess for someone who hasn't looked yet;
+   * once they've actually opened the settings, a delayed guess landing
+   * after their own toggle (a real race: the migration waits on async
+   * saved-XI lookups, easily ~1s+ on a real device/network) must never be
+   * allowed to silently override what they just set. */
+  skipMigrationCheck: () => Promise<void>;
 
   resetAll: () => Promise<void>;
 }
@@ -155,6 +163,12 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
       patch.hasSeenBoostersTip = true;
     }
     set(patch);
+    await persist(currentFlags(get));
+  },
+
+  skipMigrationCheck: async () => {
+    if (get().migrationChecked) return;
+    set({ migrationChecked: true });
     await persist(currentFlags(get));
   },
 

@@ -10,6 +10,7 @@
 
 import React from 'react';
 import { Modal, Pressable, StyleSheet, Switch, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fontSize, radius, spacing } from '../theme';
 
 interface SectionState {
@@ -50,10 +51,15 @@ function SectionRow({ section, disabled }: { section: SectionState; disabled: bo
 export default function WalkthroughSettingsSheet({
   visible, onDismiss, walkthroughEnabled, onToggleWalkthrough, sections,
 }: Props) {
+  // RN's Modal renders full-bleed behind Android's on-screen nav/gesture
+  // bar -- without adding the bottom inset here, the sheet's own fixed
+  // padding isn't enough to clear it, and the "Done" button ends up sitting
+  // underneath the system bar.
+  const insets = useSafeAreaInsets();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onDismiss}>
       <Pressable style={styles.backdrop} onPress={onDismiss}>
-        <Pressable style={styles.sheet} onPress={e => e.stopPropagation()}>
+        <Pressable style={[styles.sheet, { paddingBottom: spacing.xxl + insets.bottom }]} onPress={e => e.stopPropagation()}>
           <View style={styles.handle} />
           <Text style={styles.title}>Walkthrough</Text>
           <Text style={styles.subtitle}>
