@@ -341,14 +341,27 @@ export default function MyXIScreen({ route }: Props) {
 
   useEffect(() => { hydrateOnboarding(); }, [hydrateOnboarding]);
 
+  // See HomeScreen's maybeStartHomeTour comment: this also fires from a
+  // useFocusEffect, not just a plain dependency effect, since Rules'
+  // "Replay Walkthrough" -> Boosters flips the flag then navigates here —
+  // a background/frozen tab screen can lag behind a plain effect.
+  const maybeShowBoostersTip = useCallback(() => {
+    if (!onboardingHydrated || boostersTipActive || hasSeenBoostersTip || !boostersEligible) return;
+    setBoostersTipActive(true);
+    if (replayRequest === 'boosters') clearReplayRequest();
+  }, [onboardingHydrated, boostersTipActive, hasSeenBoostersTip, boostersEligible, replayRequest, clearReplayRequest]);
+
   useEffect(() => {
-    if (!onboardingHydrated || hasSeenBoostersTip || !boostersEligible) return;
-    const t = setTimeout(() => {
-      setBoostersTipActive(true);
-      if (replayRequest === 'boosters') clearReplayRequest();
-    }, 500);
+    const t = setTimeout(maybeShowBoostersTip, 500);
     return () => clearTimeout(t);
-  }, [onboardingHydrated, hasSeenBoostersTip, boostersEligible, replayRequest, clearReplayRequest]);
+  }, [maybeShowBoostersTip]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const t = setTimeout(maybeShowBoostersTip, 350);
+      return () => clearTimeout(t);
+    }, [maybeShowBoostersTip])
+  );
 
   const boostersTipTarget = useCoachmarkTarget(boostersBarRef, boostersTipActive);
 

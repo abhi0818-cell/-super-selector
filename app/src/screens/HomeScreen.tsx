@@ -736,8 +736,24 @@ export default function HomeScreen() {
   // If the flag is unset but the person clearly already has a saved XI
   // (existing users from before this shipped), mark it seen silently
   // instead of surprising a repeat visitor with a "first-time" tour.
-  useEffect(() => {
+  //
+  // Fires from two places, not just a plain mount/dependency effect:
+  //   1. A short delay after the values it needs are ready (covers the
+  //      natural case — already sitting on Home).
+  //   2. useFocusEffect, when Home actually becomes the focused tab (covers
+  //      Rules' "Replay Walkthrough", which flips the flag then navigates
+  //      here — a background/frozen tab screen can lag behind a plain
+  //      useEffect's dependency change, so this gives it another explicit
+  //      chance right when the screen is actually on screen).
+  // `tourActive` is checked first and is in the dependency list so this
+  // stops re-evaluating (and can't re-suppress via completeHomeTour) once
+  // a tour is already running — see the stale-replayRequest race this
+  // fixed: clearReplayRequest() firing mid-tour used to make this effect
+  // re-run with isReplay now false, immediately completing (hiding) the
+  // tour it had just started for an "already experienced" user.
+  const maybeStartHomeTour = useCallback(() => {
     if (!onboardingHydrated || contestsLoading) return;
+    if (tourActive) return;
     if (hasSeenHomeTour) return;
     if (!primaryTileId) return;
     const isReplay = replayRequest === 'home';
@@ -746,13 +762,22 @@ export default function HomeScreen() {
       completeHomeTour();
       return;
     }
-    const t = setTimeout(() => {
-      setTourActive(true);
-      setTourStep(0);
-      if (isReplay) clearReplayRequest();
-    }, 500);
+    setTourActive(true);
+    setTourStep(0);
+    if (isReplay) clearReplayRequest();
+  }, [onboardingHydrated, contestsLoading, tourActive, hasSeenHomeTour, primaryTileId, teamReady, dailyXIReady, slXIReady, selected.length, completeHomeTour, replayRequest, clearReplayRequest]);
+
+  useEffect(() => {
+    const t = setTimeout(maybeStartHomeTour, 500);
     return () => clearTimeout(t);
-  }, [onboardingHydrated, contestsLoading, hasSeenHomeTour, primaryTileId, teamReady, dailyXIReady, slXIReady, selected.length, completeHomeTour, replayRequest, clearReplayRequest]);
+  }, [maybeStartHomeTour]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const t = setTimeout(maybeStartHomeTour, 350);
+      return () => clearTimeout(t);
+    }, [maybeStartHomeTour])
+  );
 
   // Re-measure the current step's target in window coordinates whenever the
   // step (or the tile's open/closed state, which changes what's on screen)

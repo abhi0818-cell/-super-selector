@@ -418,7 +418,7 @@ export default function ConfirmXIModal({
   useEffect(() => { hydrateOnboarding(); }, [hydrateOnboarding]);
 
   useEffect(() => {
-    if (!visible || step !== 'captain' || !onboardingHydrated || hasSeenCaptainVcTip) {
+    if (!visible || step !== 'captain' || !onboardingHydrated || vcTipActive || hasSeenCaptainVcTip) {
       if (!visible) setVcTipActive(false);
       return;
     }
@@ -427,7 +427,7 @@ export default function ConfirmXIModal({
       if (replayRequest === 'captainVc') clearReplayRequest();
     }, 400);
     return () => clearTimeout(t);
-  }, [visible, step, onboardingHydrated, hasSeenCaptainVcTip, replayRequest, clearReplayRequest]);
+  }, [visible, step, onboardingHydrated, vcTipActive, hasSeenCaptainVcTip, replayRequest, clearReplayRequest]);
 
   const vcTipTarget = useCoachmarkTarget(assignRowRef, vcTipActive);
 

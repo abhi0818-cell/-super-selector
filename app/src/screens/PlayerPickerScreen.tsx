@@ -195,14 +195,14 @@ export default function PlayerPickerScreen({
   useEffect(() => { hydrateOnboarding(); }, [hydrateOnboarding]);
 
   useEffect(() => {
-    if (!onboardingHydrated || hasSeenPlayerPickerTips) return;
+    if (!onboardingHydrated || tipsActive || hasSeenPlayerPickerTips) return;
     const t = setTimeout(() => {
       setTipsActive(true);
       setTipStep(0);
       if (replayRequest === 'pickerTips') clearReplayRequest();
     }, 500);
     return () => clearTimeout(t);
-  }, [onboardingHydrated, hasSeenPlayerPickerTips, replayRequest, clearReplayRequest]);
+  }, [onboardingHydrated, tipsActive, hasSeenPlayerPickerTips, replayRequest, clearReplayRequest]);
 
   const tipTargetRef = tipStep === 0 ? budgetBarRef : myxiScheduleRef;
   const tipTarget = useCoachmarkTarget(tipTargetRef, tipsActive, tipStep);
