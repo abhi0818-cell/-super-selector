@@ -63,8 +63,6 @@ export function findNextUnlockedMatch<T extends MatchLockCandidate>(matches: T[]
 
 /**
  * Has this match actually been played (so it belongs in history/leaderboards)?
- * Mirrors web's own filter for this exact purpose (index.html's `scoredMatches`):
- *   status === 'completed' || status === 'in_progress'
  * Status is set reliably by the scoring pipeline (poll-cricapi / scrape-scorecard)
  * regardless of whether lock_time/start_time are populated, so this is the
  * correct gate for "should this show as a matchweek" — not isMatchLocked.
@@ -77,7 +75,19 @@ export function findNextUnlockedMatch<T extends MatchLockCandidate>(matches: T[]
  * 'in_progress' as the same "currently live" state; this was the one place
  * still missing 'live', which made a freshly-locked live match invisible to
  * history/leaderboard drill-downs until poll-cricapi caught up.
+ *
+ * Also includes 'abandoned'/'cancelled' (i.e. any isMatchOver() status, not
+ * just 'completed') — a match that locked (toss happened, squads/boosters/
+ * transfers committed) and then got called off still needs to show up as a
+ * matchweek, scored on whatever play happened before the wash-out (zero if
+ * none — see RulesScreen's "abandoned match" rule: locked transfers/boosters
+ * for it are never refunded, exactly as if it had been played in full).
+ * Previously this only checked 'completed'/'in_progress'/'live', so an
+ * abandoned match — CPL M21 being the case that surfaced it — silently
+ * vanished from every squad's matchweek history/leaderboard drill-down on
+ * mobile, even though its teams had locked and web's own SL detail view
+ * (which gates on lock time, not status) showed it fine with a 0.
  */
 export function isMatchPlayed(m: { status?: string | null }): boolean {
-  return m.status === 'completed' || m.status === 'in_progress' || m.status === 'live';
+  return isMatchOver(m) || m.status === 'in_progress' || m.status === 'live';
 }
