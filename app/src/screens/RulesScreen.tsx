@@ -23,24 +23,19 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useNavigation } from '@react-navigation/native';
-import { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import { supabase } from '../lib/supabase';
-import { RootTabParamList } from '../types';
 import { useTournamentStore } from '../store/tournamentStore';
 import { useContestStore }    from '../store/contestStore';
 import { getBoosterMeta }     from '../store/boosterStore';
 import { useOnboardingStore } from '../store/onboardingStore';
 import BoosterIcon            from '../components/BoosterIcon';
-import ReplayWalkthroughSheet from '../components/ReplayWalkthroughSheet';
+import WalkthroughSettingsSheet from '../components/WalkthroughSettingsSheet';
 import {
   fetchContestTransferConfig,
   fetchTournamentMatches,
   type ContestTransferConfig,
 } from '../lib/transferCap';
 import { colors, fontSize, radius, spacing } from '../theme';
-
-type NavProp = BottomTabNavigationProp<RootTabParamList>;
 
 // ─── Gradient palette (matches rest of app) ───────────────────────────────────
 
@@ -213,37 +208,44 @@ function RuleCard({ title, children }: { title: string; children: React.ReactNod
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function RulesScreen() {
-  const navigation = useNavigation<NavProp>();
   const { selectedTournamentId, tournaments } = useTournamentStore();
   const { contests } = useContestStore();
-  const { requestReplay } = useOnboardingStore();
+  const {
+    walkthroughEnabled, setWalkthroughEnabled,
+    hasSeenHomeTour, resetHomeTour, completeHomeTour,
+    hasSeenPlayerPickerTips, resetPlayerPickerTips, completePlayerPickerTips,
+    hasSeenBoostersTip, resetBoostersTip, completeBoostersTip,
+    hasSeenCaptainVcTip, resetCaptainVcTip, completeCaptainVcTip,
+  } = useOnboardingStore();
 
-  // ── Replay Walkthrough (Tier 3) ────────────────────────────────────────
-  const [replaySheetOpen, setReplaySheetOpen] = useState(false);
-  const jumpToHomeTour = () => {
-    setReplaySheetOpen(false);
-    requestReplay('home');
-    navigation.navigate('Home');
-  };
-  const jumpToPickerTips = () => {
-    setReplaySheetOpen(false);
-    requestReplay('pickerTips');
-    requestReplay('boosters');
-    navigation.navigate('MyXI', { openPicker: true });
-  };
-  const jumpToCaptainVc = () => {
-    setReplaySheetOpen(false);
-    requestReplay('captainVc');
-    navigation.navigate('MyXI');
-  };
-  const replayEverything = () => {
-    setReplaySheetOpen(false);
-    requestReplay('home');
-    requestReplay('pickerTips');
-    requestReplay('boosters');
-    requestReplay('captainVc');
-    navigation.navigate('Home');
-  };
+  // ── Walkthrough settings (on/off switches, not navigation) ─────────────
+  const [walkthroughSheetOpen, setWalkthroughSheetOpen] = useState(false);
+  const walkthroughSections = [
+    {
+      key: 'home', icon: '🏠', name: 'Home tour',
+      meta: 'What each button on Home does',
+      seen: hasSeenHomeTour,
+      onToggle: (on: boolean) => (on ? resetHomeTour() : completeHomeTour()),
+    },
+    {
+      key: 'picker', icon: '🎯', name: 'Player Picker tips',
+      meta: 'Budget, My XI & Schedule',
+      seen: hasSeenPlayerPickerTips,
+      onToggle: (on: boolean) => (on ? resetPlayerPickerTips() : completePlayerPickerTips()),
+    },
+    {
+      key: 'boosters', icon: '⚡', name: 'Boosters tip',
+      meta: 'Shows on an SL/private squad',
+      seen: hasSeenBoostersTip,
+      onToggle: (on: boolean) => (on ? resetBoostersTip() : completeBoostersTip()),
+    },
+    {
+      key: 'captainVc', icon: '🎖️', name: 'Captain & Vice-Captain tip',
+      meta: 'Shows in Save/Confirm XI',
+      seen: hasSeenCaptainVcTip,
+      onToggle: (on: boolean) => (on ? resetCaptainVcTip() : completeCaptainVcTip()),
+    },
+  ];
 
   const tournament = tournaments.find(t => t.id === selectedTournamentId);
 
@@ -403,12 +405,12 @@ export default function RulesScreen() {
 
             <Pressable
               style={({ pressed }) => [styles.replayCard, pressed && { opacity: 0.85 }]}
-              onPress={() => setReplaySheetOpen(true)}
+              onPress={() => setWalkthroughSheetOpen(true)}
             >
               <Text style={styles.replayIcon}>🎓</Text>
               <View style={{ flex: 1 }}>
-                <Text style={styles.replayTitle}>Replay Walkthrough</Text>
-                <Text style={styles.replaySub}>Revisit the first-login tour, in full or by section</Text>
+                <Text style={styles.replayTitle}>Walkthrough</Text>
+                <Text style={styles.replaySub}>Turn onboarding tips on or off, by section</Text>
               </View>
               <Text style={styles.replayArrow}>›</Text>
             </Pressable>
@@ -615,13 +617,12 @@ export default function RulesScreen() {
         )}
       </SafeAreaView>
 
-      <ReplayWalkthroughSheet
-        visible={replaySheetOpen}
-        onDismiss={() => setReplaySheetOpen(false)}
-        onJumpHome={jumpToHomeTour}
-        onJumpPickerTips={jumpToPickerTips}
-        onJumpCaptainVc={jumpToCaptainVc}
-        onReplayAll={replayEverything}
+      <WalkthroughSettingsSheet
+        visible={walkthroughSheetOpen}
+        onDismiss={() => setWalkthroughSheetOpen(false)}
+        walkthroughEnabled={walkthroughEnabled}
+        onToggleWalkthrough={setWalkthroughEnabled}
+        sections={walkthroughSections}
       />
     </LinearGradient>
   );

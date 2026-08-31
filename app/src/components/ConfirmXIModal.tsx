@@ -411,23 +411,22 @@ export default function ConfirmXIModal({
   }, [visible]);
 
   // ── Onboarding: Captain/VC contextual tip (first time this modal opens) ──
-  const { hasSeenCaptainVcTip, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completeCaptainVcTip, replayRequest, clearReplayRequest } = useOnboardingStore();
+  const { hasSeenCaptainVcTip, walkthroughEnabled, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completeCaptainVcTip } = useOnboardingStore();
   const [vcTipActive, setVcTipActive] = useState(false);
   const assignRowRef = useRef<View>(null);
 
   useEffect(() => { hydrateOnboarding(); }, [hydrateOnboarding]);
 
   useEffect(() => {
-    if (!visible || step !== 'captain' || !onboardingHydrated || vcTipActive || hasSeenCaptainVcTip) {
+    if (!visible || step !== 'captain' || !onboardingHydrated || vcTipActive || !walkthroughEnabled || hasSeenCaptainVcTip) {
       if (!visible) setVcTipActive(false);
       return;
     }
     const t = setTimeout(() => {
       setVcTipActive(true);
-      if (replayRequest === 'captainVc') clearReplayRequest();
     }, 400);
     return () => clearTimeout(t);
-  }, [visible, step, onboardingHydrated, vcTipActive, hasSeenCaptainVcTip, replayRequest, clearReplayRequest]);
+  }, [visible, step, onboardingHydrated, vcTipActive, walkthroughEnabled, hasSeenCaptainVcTip]);
 
   const vcTipTarget = useCoachmarkTarget(assignRowRef, vcTipActive);
 

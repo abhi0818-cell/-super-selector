@@ -3,11 +3,30 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const STORAGE_KEY = 'onboardingFlags';
 
+/**
+ * Onboarding model:
+ *  - `walkthroughEnabled` is a master kill switch. When false, nothing in
+ *    any section auto-shows, full stop, regardless of the per-section flags
+ *    below.
+ *  - Each `hasSeenX` flag is "has this section been shown/dismissed" — it's
+ *    what actually gates that section firing. Turning it back to false
+ *    (Rules -> Walkthrough) re-arms it: it'll show again next time the
+ *    person naturally reaches that screen/moment, same as a first-time
+ *    user would see it. Nothing force-navigates or jumps anywhere.
+ *  - `migrationChecked` guards a ONE-TIME pass (see HomeScreen) that
+ *    silently marks a section seen, without ever showing it, for an
+ *    account that's clearly already experienced in that area (e.g. already
+ *    has a saved XI). This runs at most once per account, ever -- after
+ *    that, every hasSeenX flag is purely under manual control via the
+ *    toggles, in both directions, forever.
+ */
 type OnboardingFlags = {
   hasSeenHomeTour: boolean;
   hasSeenPlayerPickerTips: boolean;
   hasSeenBoostersTip: boolean;
   hasSeenCaptainVcTip: boolean;
+  walkthroughEnabled: boolean;
+  migrationChecked: boolean;
 };
 
 const DEFAULT_FLAGS: OnboardingFlags = {
@@ -15,28 +34,32 @@ const DEFAULT_FLAGS: OnboardingFlags = {
   hasSeenPlayerPickerTips: false,
   hasSeenBoostersTip: false,
   hasSeenCaptainVcTip: false,
+  walkthroughEnabled: true,
+  migrationChecked: false,
 };
 
 interface OnboardingState extends OnboardingFlags {
   hydrated: boolean;
   hydrate: () => Promise<void>;
+
   completeHomeTour: () => Promise<void>;
   completePlayerPickerTips: () => Promise<void>;
   completeBoostersTip: () => Promise<void>;
   completeCaptainVcTip: () => Promise<void>;
+
   resetHomeTour: () => Promise<void>;
   resetPlayerPickerTips: () => Promise<void>;
   resetBoostersTip: () => Promise<void>;
   resetCaptainVcTip: () => Promise<void>;
+
+  setWalkthroughEnabled: (enabled: boolean) => Promise<void>;
+
+  /** One-time migration pass (see HomeScreen): suppresses whichever
+   * sections apply for an already-experienced account, then marks itself
+   * done so it never re-runs and never fights a manual toggle again. */
+  runExistingUserMigration: (signals: { anyXI: boolean; slXI: boolean }) => Promise<void>;
+
   resetAll: () => Promise<void>;
-  /** Transient (not persisted) — set by RulesScreen's "Replay Walkthrough"
-   * so the target screen can show its tour/tip even for a user who has
-   * already "graduated" past the point where it'd normally auto-suppress
-   * (e.g. Home's tour skips itself for anyone who already has a saved XI).
-   * Cleared by the screen once it picks the request up. */
-  replayRequest: 'home' | 'pickerTips' | 'boosters' | 'captainVc' | null;
-  requestReplay: (section: 'home' | 'pickerTips' | 'boosters' | 'captainVc') => Promise<void>;
-  clearReplayRequest: () => void;
 }
 
 async function persist(flags: OnboardingFlags) {
@@ -47,10 +70,17 @@ async function persist(flags: OnboardingFlags) {
   }
 }
 
+function currentFlags(get: () => OnboardingState): OnboardingFlags {
+  const {
+    hasSeenHomeTour, hasSeenPlayerPickerTips, hasSeenBoostersTip, hasSeenCaptainVcTip,
+    walkthroughEnabled, migrationChecked,
+  } = get();
+  return { hasSeenHomeTour, hasSeenPlayerPickerTips, hasSeenBoostersTip, hasSeenCaptainVcTip, walkthroughEnabled, migrationChecked };
+}
+
 export const useOnboardingStore = create<OnboardingState>((set, get) => ({
   ...DEFAULT_FLAGS,
   hydrated: false,
-  replayRequest: null,
 
   hydrate: async () => {
     try {
@@ -62,6 +92,9 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
           hasSeenPlayerPickerTips: !!parsed.hasSeenPlayerPickerTips,
           hasSeenBoostersTip: !!parsed.hasSeenBoostersTip,
           hasSeenCaptainVcTip: !!parsed.hasSeenCaptainVcTip,
+          // Master switch defaults ON for anyone who never set it explicitly.
+          walkthroughEnabled: parsed.walkthroughEnabled === undefined ? true : !!parsed.walkthroughEnabled,
+          migrationChecked: !!parsed.migrationChecked,
         });
       }
     } catch (err) {
@@ -73,59 +106,60 @@ export const useOnboardingStore = create<OnboardingState>((set, get) => ({
 
   completeHomeTour: async () => {
     set({ hasSeenHomeTour: true });
-    const { hasSeenHomeTour, hasSeenPlayerPickerTips, hasSeenBoostersTip, hasSeenCaptainVcTip } = get();
-    await persist({ hasSeenHomeTour, hasSeenPlayerPickerTips, hasSeenBoostersTip, hasSeenCaptainVcTip });
+    await persist(currentFlags(get));
   },
   completePlayerPickerTips: async () => {
     set({ hasSeenPlayerPickerTips: true });
-    const { hasSeenHomeTour, hasSeenPlayerPickerTips, hasSeenBoostersTip, hasSeenCaptainVcTip } = get();
-    await persist({ hasSeenHomeTour, hasSeenPlayerPickerTips, hasSeenBoostersTip, hasSeenCaptainVcTip });
+    await persist(currentFlags(get));
   },
   completeBoostersTip: async () => {
     set({ hasSeenBoostersTip: true });
-    const { hasSeenHomeTour, hasSeenPlayerPickerTips, hasSeenBoostersTip, hasSeenCaptainVcTip } = get();
-    await persist({ hasSeenHomeTour, hasSeenPlayerPickerTips, hasSeenBoostersTip, hasSeenCaptainVcTip });
+    await persist(currentFlags(get));
   },
   completeCaptainVcTip: async () => {
     set({ hasSeenCaptainVcTip: true });
-    const { hasSeenHomeTour, hasSeenPlayerPickerTips, hasSeenBoostersTip, hasSeenCaptainVcTip } = get();
-    await persist({ hasSeenHomeTour, hasSeenPlayerPickerTips, hasSeenBoostersTip, hasSeenCaptainVcTip });
+    await persist(currentFlags(get));
   },
 
   resetHomeTour: async () => {
     set({ hasSeenHomeTour: false });
-    const { hasSeenHomeTour, hasSeenPlayerPickerTips, hasSeenBoostersTip, hasSeenCaptainVcTip } = get();
-    await persist({ hasSeenHomeTour, hasSeenPlayerPickerTips, hasSeenBoostersTip, hasSeenCaptainVcTip });
+    await persist(currentFlags(get));
   },
   resetPlayerPickerTips: async () => {
     set({ hasSeenPlayerPickerTips: false });
-    const { hasSeenHomeTour, hasSeenPlayerPickerTips, hasSeenBoostersTip, hasSeenCaptainVcTip } = get();
-    await persist({ hasSeenHomeTour, hasSeenPlayerPickerTips, hasSeenBoostersTip, hasSeenCaptainVcTip });
+    await persist(currentFlags(get));
   },
   resetBoostersTip: async () => {
     set({ hasSeenBoostersTip: false });
-    const { hasSeenHomeTour, hasSeenPlayerPickerTips, hasSeenBoostersTip, hasSeenCaptainVcTip } = get();
-    await persist({ hasSeenHomeTour, hasSeenPlayerPickerTips, hasSeenBoostersTip, hasSeenCaptainVcTip });
+    await persist(currentFlags(get));
   },
   resetCaptainVcTip: async () => {
     set({ hasSeenCaptainVcTip: false });
-    const { hasSeenHomeTour, hasSeenPlayerPickerTips, hasSeenBoostersTip, hasSeenCaptainVcTip } = get();
-    await persist({ hasSeenHomeTour, hasSeenPlayerPickerTips, hasSeenBoostersTip, hasSeenCaptainVcTip });
+    await persist(currentFlags(get));
   },
+
+  setWalkthroughEnabled: async (enabled: boolean) => {
+    set({ walkthroughEnabled: enabled });
+    await persist(currentFlags(get));
+  },
+
+  runExistingUserMigration: async (signals) => {
+    if (get().migrationChecked) return;
+    const patch: Partial<OnboardingFlags> = { migrationChecked: true };
+    if (signals.anyXI) {
+      patch.hasSeenHomeTour = true;
+      patch.hasSeenPlayerPickerTips = true;
+      patch.hasSeenCaptainVcTip = true;
+    }
+    if (signals.slXI) {
+      patch.hasSeenBoostersTip = true;
+    }
+    set(patch);
+    await persist(currentFlags(get));
+  },
+
   resetAll: async () => {
     set({ ...DEFAULT_FLAGS });
     await persist({ ...DEFAULT_FLAGS });
   },
-
-  requestReplay: async (section) => {
-    set({ replayRequest: section });
-    const resetFn = {
-      home:       get().resetHomeTour,
-      pickerTips: get().resetPlayerPickerTips,
-      boosters:   get().resetBoostersTip,
-      captainVc:  get().resetCaptainVcTip,
-    }[section];
-    await resetFn();
-  },
-  clearReplayRequest: () => set({ replayRequest: null }),
 }));

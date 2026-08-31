@@ -334,7 +334,7 @@ export default function MyXIScreen({ route }: Props) {
   const [squadId, setSquadId] = useState<string | null>(null);
 
   // ── Onboarding: Boosters contextual tip (first visit, SL/private only) ──
-  const { hasSeenBoostersTip, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completeBoostersTip, replayRequest, clearReplayRequest } = useOnboardingStore();
+  const { hasSeenBoostersTip, walkthroughEnabled, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completeBoostersTip } = useOnboardingStore();
   const [boostersTipActive, setBoostersTipActive] = useState(false);
   const boostersBarRef = useRef<View>(null);
   const boostersEligible = activeContext?.contestType === 'sl' || activeContext?.contestType === 'private';
@@ -342,14 +342,12 @@ export default function MyXIScreen({ route }: Props) {
   useEffect(() => { hydrateOnboarding(); }, [hydrateOnboarding]);
 
   // See HomeScreen's maybeStartHomeTour comment: this also fires from a
-  // useFocusEffect, not just a plain dependency effect, since Rules'
-  // "Replay Walkthrough" -> Boosters flips the flag then navigates here —
-  // a background/frozen tab screen can lag behind a plain effect.
+  // useFocusEffect, not just a plain dependency effect — My XI is a tab
+  // screen, and a backgrounded tab can lag behind a plain effect.
   const maybeShowBoostersTip = useCallback(() => {
-    if (!onboardingHydrated || boostersTipActive || hasSeenBoostersTip || !boostersEligible) return;
+    if (!onboardingHydrated || boostersTipActive || !walkthroughEnabled || hasSeenBoostersTip || !boostersEligible) return;
     setBoostersTipActive(true);
-    if (replayRequest === 'boosters') clearReplayRequest();
-  }, [onboardingHydrated, boostersTipActive, hasSeenBoostersTip, boostersEligible, replayRequest, clearReplayRequest]);
+  }, [onboardingHydrated, boostersTipActive, walkthroughEnabled, hasSeenBoostersTip, boostersEligible]);
 
   useEffect(() => {
     const t = setTimeout(maybeShowBoostersTip, 500);

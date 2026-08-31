@@ -11,6 +11,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Dimensions,
   FlatList,
@@ -185,7 +186,7 @@ export default function PlayerPickerScreen({
   // gets its own tip on MyXIScreen (where BoostersBar actually lives), not
   // here, since Tier 2 tips fire per-screen/moment rather than as one long
   // forced sequence.
-  const { hasSeenPlayerPickerTips, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completePlayerPickerTips, replayRequest, clearReplayRequest } = useOnboardingStore();
+  const { hasSeenPlayerPickerTips, walkthroughEnabled, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completePlayerPickerTips } = useOnboardingStore();
   const [tipsActive, setTipsActive] = useState(false);
   const [tipStep, setTipStep]       = useState(0);
   const budgetBarRef      = useRef<View>(null);
@@ -195,14 +196,13 @@ export default function PlayerPickerScreen({
   useEffect(() => { hydrateOnboarding(); }, [hydrateOnboarding]);
 
   useEffect(() => {
-    if (!onboardingHydrated || tipsActive || hasSeenPlayerPickerTips) return;
+    if (!onboardingHydrated || tipsActive || !walkthroughEnabled || hasSeenPlayerPickerTips) return;
     const t = setTimeout(() => {
       setTipsActive(true);
       setTipStep(0);
-      if (replayRequest === 'pickerTips') clearReplayRequest();
     }, 500);
     return () => clearTimeout(t);
-  }, [onboardingHydrated, tipsActive, hasSeenPlayerPickerTips, replayRequest, clearReplayRequest]);
+  }, [onboardingHydrated, tipsActive, walkthroughEnabled, hasSeenPlayerPickerTips]);
 
   const tipTargetRef = tipStep === 0 ? budgetBarRef : myxiScheduleRef;
   const tipTarget = useCoachmarkTarget(tipTargetRef, tipsActive, tipStep);
@@ -212,6 +212,15 @@ export default function PlayerPickerScreen({
     setTipStep(0);
     completePlayerPickerTips();
   }, [completePlayerPickerTips]);
+
+  const skipPickerTips = useCallback(() => {
+    finishPickerTips();
+    Alert.alert(
+      'Walkthrough turned off',
+      'You can turn this back on anytime from Rules → 🎓 Walkthrough.',
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const advancePickerTips = useCallback(() => {
     if (tipStep < PICKER_TIP_COUNT - 1) setTipStep(s => s + 1);
@@ -1018,7 +1027,7 @@ export default function PlayerPickerScreen({
         body={pickerTipCopy.body}
         primaryLabel={tipStep === PICKER_TIP_COUNT - 1 ? "Got it, let's build →" : 'Next →'}
         onPrimary={advancePickerTips}
-        onSkip={finishPickerTips}
+        onSkip={skipPickerTips}
         skipLabel="Skip remaining tips"
       />
     </View>

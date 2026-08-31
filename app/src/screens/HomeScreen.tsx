@@ -665,7 +665,7 @@ export default function HomeScreen() {
   // user has ever picked a team. "Primary tile" is whichever contest we
   // walk them through — SL when available (it also has the Private
   // Leagues row for step 3), otherwise Daily (2-step tour, no step 3).
-  const { hasSeenHomeTour, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completeHomeTour, replayRequest, clearReplayRequest } = useOnboardingStore();
+  const { hasSeenHomeTour, walkthroughEnabled, migrationChecked, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completeHomeTour, runExistingUserMigration } = useOnboardingStore();
   const [tourActive, setTourActive] = useState(false);
   const [tourStep, setTourStep]     = useState(0);
   const primaryTileRef = useRef<View>(null);
@@ -731,41 +731,47 @@ export default function HomeScreen() {
   // Hydrate persisted onboarding flags once on mount.
   useEffect(() => { hydrateOnboarding(); }, [hydrateOnboarding]);
 
-  // Auto-start the first-time Home tour once we know: flags are hydrated,
-  // contests have loaded, and there's at least one contest to walk through.
-  // If the flag is unset but the person clearly already has a saved XI
-  // (existing users from before this shipped), mark it seen silently
-  // instead of surprising a repeat visitor with a "first-time" tour.
+  // One-time migration: the first time this ever evaluates (per account,
+  // ever — guarded by migrationChecked), silently mark whichever sections
+  // an already-experienced account has clearly been through as seen,
+  // without ever showing them. "Any saved XI" implies Player Picker,
+  // Budget/My XI/Schedule and Captain/VC were all necessarily used (saving
+  // is gated on Captain+VC both being set); "a saved SL/private XI"
+  // specifically implies Boosters was on screen (Daily has no Boosters).
+  // Delayed a beat so the async saved-XI lookups (useXIStatus) have time
+  // to resolve — they default to false until their query completes, and
+  // this only ever gets to run once, so a premature false negative here
+  // would be permanent (though still fixable manually from Rules).
+  useEffect(() => {
+    if (!onboardingHydrated || contestsLoading || migrationChecked) return;
+    const t = setTimeout(() => {
+      const anyXI = teamReady || dailyXIReady || slXIReady || selected.length > 0;
+      runExistingUserMigration({ anyXI, slXI: slXIReady });
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [onboardingHydrated, contestsLoading, migrationChecked, teamReady, dailyXIReady, slXIReady, selected.length, runExistingUserMigration]);
+
+  // Auto-start the Home tour once: the master switch is on, flags are
+  // hydrated, contests have loaded, there's a contest to walk through, and
+  // this section hasn't been marked seen. Purely reactive to hasSeenHomeTour
+  // — no forced navigation/jump involved (see Rules' Walkthrough settings).
   //
-  // Fires from two places, not just a plain mount/dependency effect:
-  //   1. A short delay after the values it needs are ready (covers the
-  //      natural case — already sitting on Home).
-  //   2. useFocusEffect, when Home actually becomes the focused tab (covers
-  //      Rules' "Replay Walkthrough", which flips the flag then navigates
-  //      here — a background/frozen tab screen can lag behind a plain
-  //      useEffect's dependency change, so this gives it another explicit
-  //      chance right when the screen is actually on screen).
-  // `tourActive` is checked first and is in the dependency list so this
-  // stops re-evaluating (and can't re-suppress via completeHomeTour) once
-  // a tour is already running — see the stale-replayRequest race this
-  // fixed: clearReplayRequest() firing mid-tour used to make this effect
-  // re-run with isReplay now false, immediately completing (hiding) the
-  // tour it had just started for an "already experienced" user.
+  // Fires from two places:
+  //   1. A short delay once its inputs are ready (the normal case).
+  //   2. useFocusEffect, when Home actually becomes the focused tab — a
+  //      backgrounded tab screen can lag behind a plain dependency effect,
+  //      so this gives it another explicit chance right when the screen is
+  //      actually on screen (e.g. after switching tabs post-toggle).
+  // `tourActive` short-circuits both once a tour is already running.
   const maybeStartHomeTour = useCallback(() => {
     if (!onboardingHydrated || contestsLoading) return;
     if (tourActive) return;
+    if (!walkthroughEnabled) return;
     if (hasSeenHomeTour) return;
     if (!primaryTileId) return;
-    const isReplay = replayRequest === 'home';
-    const alreadyExperienced = teamReady || dailyXIReady || slXIReady || selected.length > 0;
-    if (alreadyExperienced && !isReplay) {
-      completeHomeTour();
-      return;
-    }
     setTourActive(true);
     setTourStep(0);
-    if (isReplay) clearReplayRequest();
-  }, [onboardingHydrated, contestsLoading, tourActive, hasSeenHomeTour, primaryTileId, teamReady, dailyXIReady, slXIReady, selected.length, completeHomeTour, replayRequest, clearReplayRequest]);
+  }, [onboardingHydrated, contestsLoading, tourActive, walkthroughEnabled, hasSeenHomeTour, primaryTileId]);
 
   useEffect(() => {
     const t = setTimeout(maybeStartHomeTour, 500);
@@ -778,6 +784,15 @@ export default function HomeScreen() {
       return () => clearTimeout(t);
     }, [maybeStartHomeTour])
   );
+
+  const skipHomeTour = useCallback(() => {
+    finishHomeTour();
+    Alert.alert(
+      'Walkthrough turned off',
+      'You can turn this back on anytime from Rules → 🎓 Walkthrough.',
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Re-measure the current step's target in window coordinates whenever the
   // step (or the tile's open/closed state, which changes what's on screen)
@@ -1192,7 +1207,7 @@ export default function HomeScreen() {
         body={homeTourCopy.body}
         primaryLabel={tourStep === homeTourStepCount - 1 ? "Got it, let's go →" : 'Next →'}
         onPrimary={advanceHomeTour}
-        onSkip={finishHomeTour}
+        onSkip={skipHomeTour}
         skipLabel="Skip tour"
       />
     </SafeAreaView>
