@@ -24,8 +24,11 @@ const MAX_ATTEMPTS = 40; // ~4.8s of retrying -- generous for slower Android har
 export interface CoachmarkTargetDebug {
   attempts: number;
   refNull: boolean;
-  lastW: number;
-  lastH: number;
+  lastW: number | undefined;
+  lastH: number | undefined;
+  lastX: number | undefined;
+  lastY: number | undefined;
+  method: 'measureInWindow' | 'measure';
   gaveUp: boolean;
 }
 
@@ -63,7 +66,7 @@ export function useCoachmarkTarget(
       // Now null-ref is its own retry branch, same as a zero-size measure.
       if (!ref.current) {
         const gaveUp = attempts >= MAX_ATTEMPTS;
-        onDebug?.({ attempts, refNull: true, lastW: 0, lastH: 0, gaveUp });
+        onDebug?.({ attempts, refNull: true, lastW: 0, lastH: 0, lastX: 0, lastY: 0, method: 'measure', gaveUp });
         if (!gaveUp) {
           attempts += 1;
           timer = setTimeout(tryMeasure, RETRY_MS);
@@ -71,14 +74,29 @@ export function useCoachmarkTarget(
         return;
       }
 
-      ref.current.measureInWindow((x: number, y: number, width: number, height: number) => {
+      // measureInWindow was observed on-device consistently invoking its
+      // callback with width/height (and x/y) as `undefined` -- not 0, not
+      // an error, just undefined -- for the full retry window, on a screen
+      // that renders and is interactable. That isn't a "not laid out yet"
+      // failure (which would read as 0x0 and eventually resolve); it's
+      // measureInWindow itself misbehaving for this ref on this device.
+      // measure() is RN's other/older measurement API -- a distinct native
+      // code path -- returning (x, y, width, height, pageX, pageY), where
+      // pageX/pageY are the window-relative coordinates measureInWindow's
+      // x/y were meant to give us. Using it as the primary method here;
+      // debug output still reports raw values either way so a further
+      // failure is visible rather than another silent dead end.
+      ref.current.measure((x: number, y: number, width: number, height: number, pageX: number, pageY: number) => {
         if (cancelled) return;
-        if (width > 0 && height > 0) {
-          onDebug?.({ attempts, refNull: false, lastW: width, lastH: height, gaveUp: false });
-          setTarget({ x, y, width, height });
+        const ok = typeof width === 'number' && typeof height === 'number'
+          && typeof pageX === 'number' && typeof pageY === 'number'
+          && width > 0 && height > 0;
+        if (ok) {
+          onDebug?.({ attempts, refNull: false, lastW: width, lastH: height, lastX: pageX, lastY: pageY, method: 'measure', gaveUp: false });
+          setTarget({ x: pageX, y: pageY, width, height });
         } else {
           const gaveUp = attempts >= MAX_ATTEMPTS;
-          onDebug?.({ attempts, refNull: false, lastW: width, lastH: height, gaveUp });
+          onDebug?.({ attempts, refNull: false, lastW: width, lastH: height, lastX: pageX, lastY: pageY, method: 'measure', gaveUp });
           if (!gaveUp) {
             attempts += 1;
             timer = setTimeout(tryMeasure, RETRY_MS);

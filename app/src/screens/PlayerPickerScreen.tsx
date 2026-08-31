@@ -527,10 +527,10 @@ export default function PlayerPickerScreen({
       {/* Temporary walkthrough debug readout — remove once Player Picker
           tips are confirmed firing reliably on-device. */}
       <Text style={styles.wtDebug}>
-        WT-10 h{onboardingHydrated ? 1 : 0} w{walkthroughEnabled ? 1 : 0} s{hasSeenPlayerPickerTips ? 1 : 0}{' '}
+        WT-11 h{onboardingHydrated ? 1 : 0} w{walkthroughEnabled ? 1 : 0} s{hasSeenPlayerPickerTips ? 1 : 0}{' '}
         a{tipsActive ? 1 : 0} tg{tipTarget ? 1 : 0}{'\n'}
         {tipTargetDebug
-          ? `  rn${tipTargetDebug.refNull ? 1 : 0} w${tipTargetDebug.lastW} h${tipTargetDebug.lastH} att${tipTargetDebug.attempts} done${tipTargetDebug.gaveUp ? 1 : 0}`
+          ? `  rn${tipTargetDebug.refNull ? 1 : 0} x${tipTargetDebug.lastX} y${tipTargetDebug.lastY} w${tipTargetDebug.lastW} h${tipTargetDebug.lastH} att${tipTargetDebug.attempts} done${tipTargetDebug.gaveUp ? 1 : 0}`
           : '  (no target attempt yet)'}
       </Text>
 
