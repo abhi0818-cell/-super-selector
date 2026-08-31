@@ -32,7 +32,7 @@ import PlayerStatsModal from '../components/PlayerStatsModal';
 import CricketPitch from '../components/CricketPitch';
 import BudgetBar from '../components/BudgetBar';
 import Coachmark from '../components/Coachmark';
-import { useCoachmarkTarget } from '../hooks/useCoachmarkTarget';
+import { useCoachmarkTarget, CoachmarkTargetDebug } from '../hooks/useCoachmarkTarget';
 import { useOnboardingStore } from '../store/onboardingStore';
 import RoleStats from '../components/RoleStats';
 import Jersey from '../components/Jersey';
@@ -205,7 +205,8 @@ export default function PlayerPickerScreen({
   }, [onboardingHydrated, tipsActive, walkthroughEnabled, hasSeenPlayerPickerTips]);
 
   const tipTargetRef = tipStep === 0 ? budgetBarRef : myxiScheduleRef;
-  const tipTarget = useCoachmarkTarget(tipTargetRef, tipsActive, tipStep);
+  const [tipTargetDebug, setTipTargetDebug] = useState<CoachmarkTargetDebug | null>(null);
+  const tipTarget = useCoachmarkTarget(tipTargetRef, tipsActive, tipStep, setTipTargetDebug);
 
   const finishPickerTips = useCallback(() => {
     setTipsActive(false);
@@ -526,8 +527,11 @@ export default function PlayerPickerScreen({
       {/* Temporary walkthrough debug readout — remove once Player Picker
           tips are confirmed firing reliably on-device. */}
       <Text style={styles.wtDebug}>
-        WT-9 h{onboardingHydrated ? 1 : 0} w{walkthroughEnabled ? 1 : 0} s{hasSeenPlayerPickerTips ? 1 : 0}{' '}
-        a{tipsActive ? 1 : 0} tg{tipTarget ? 1 : 0}
+        WT-10 h{onboardingHydrated ? 1 : 0} w{walkthroughEnabled ? 1 : 0} s{hasSeenPlayerPickerTips ? 1 : 0}{' '}
+        a{tipsActive ? 1 : 0} tg{tipTarget ? 1 : 0}{'\n'}
+        {tipTargetDebug
+          ? `  rn${tipTargetDebug.refNull ? 1 : 0} w${tipTargetDebug.lastW} h${tipTargetDebug.lastH} att${tipTargetDebug.attempts} done${tipTargetDebug.gaveUp ? 1 : 0}`
+          : '  (no target attempt yet)'}
       </Text>
 
       {/* Pinned block — context banner + budget/OS-counter/role-stats/search+pills.

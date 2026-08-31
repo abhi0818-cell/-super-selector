@@ -39,7 +39,7 @@ import { fontSize, radius, spacing, shadow } from '../theme';
 import { fetchContestTransferConfig, fetchTournamentMatches, getTransferUsage, MatchLite } from '../lib/transferCap';
 import { findNextUnlockedMatch } from '../lib/matchLock';
 import Coachmark from '../components/Coachmark';
-import { useCoachmarkTarget } from '../hooks/useCoachmarkTarget';
+import { useCoachmarkTarget, CoachmarkTargetDebug } from '../hooks/useCoachmarkTarget';
 import { useOnboardingStore } from '../store/onboardingStore';
 
 type NavProp  = BottomTabNavigationProp<RootTabParamList, 'Home'>;
@@ -801,7 +801,8 @@ export default function HomeScreen() {
   // and a tab just reattached by react-native-screens can take more than
   // one frame to lay back out.
   const tourTargetRef = tourStep === 0 ? primaryTileRef : tourStep === 1 ? pickBtnRef : createJoinRef;
-  const tourTarget = useCoachmarkTarget(tourTargetRef, tourActive, `${tourStep}-${openTile}`);
+  const [tourTargetDebug, setTourTargetDebug] = useState<CoachmarkTargetDebug | null>(null);
+  const tourTarget = useCoachmarkTarget(tourTargetRef, tourActive, `${tourStep}-${openTile}`, setTourTargetDebug);
 
   const finishHomeTour = useCallback(() => {
     setTourActive(false);
@@ -982,8 +983,11 @@ export default function HomeScreen() {
             maybeStartHomeTour so a stuck condition is visible without a
             debugger attached to a production build. */}
         <Text style={styles.wtDebug}>
-          WT-9 h{onboardingHydrated ? 1 : 0} c{contestsLoading ? 1 : 0} w{walkthroughEnabled ? 1 : 0}{' '}
-          s{hasSeenHomeTour ? 1 : 0} tile={primaryTileId ?? '-'} a{tourActive ? 1 : 0} tg{tourTarget ? 1 : 0}
+          WT-10 h{onboardingHydrated ? 1 : 0} c{contestsLoading ? 1 : 0} w{walkthroughEnabled ? 1 : 0}{' '}
+          s{hasSeenHomeTour ? 1 : 0} tile={primaryTileId ?? '-'} a{tourActive ? 1 : 0} tg{tourTarget ? 1 : 0}{'\n'}
+          {tourTargetDebug
+            ? `  rn${tourTargetDebug.refNull ? 1 : 0} w${tourTargetDebug.lastW} h${tourTargetDebug.lastH} att${tourTargetDebug.attempts} done${tourTargetDebug.gaveUp ? 1 : 0}`
+            : '  (no target attempt yet)'}
         </Text>
 
         {/* ── Notification ticker ───────────────────────────────────────── */}
