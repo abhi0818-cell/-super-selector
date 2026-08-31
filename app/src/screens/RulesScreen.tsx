@@ -46,6 +46,9 @@ const G = {
   accent: ['#C9A84C', '#B8912A'] as const,
 };
 
+// Bump this string on every walkthrough-related commit — see the build tag rendered under the Walkthrough card below.
+const WALKTHROUGH_BUILD_TAG = 'WT-7';
+
 // ─── Scoring rule display config ──────────────────────────────────────────────
 
 type RuleRow = { label: string; key: string; unit?: string };
@@ -414,6 +417,13 @@ export default function RulesScreen() {
               </View>
               <Text style={styles.replayArrow}>›</Text>
             </Pressable>
+            {/* Temporary build tag — lets us confirm in-app which JS bundle
+                is actually live, since EAS Update only applies on the NEXT
+                cold start after download (a "double relaunch" is easy to
+                miss, and Expo Go always runs fresh source, so the two can
+                silently disagree). Safe to remove once walkthrough rollout
+                is confirmed stable. */}
+            <Text style={styles.buildTag}>build {WALKTHROUGH_BUILD_TAG}</Text>
 
             <Text style={styles.subTitle}>Join a Contest</Text>
             <BulletItem>Pick the tournament you want to play from the <Text style={styles.infoEmph}>Home</Text> tab.</BulletItem>
@@ -646,6 +656,7 @@ const styles = StyleSheet.create({
   replayTitle: { color: colors.text, fontSize: fontSize.base, fontWeight: '700' },
   replaySub: { color: colors.muted, fontSize: fontSize.xs, marginTop: 2 },
   replayArrow: { color: colors.accent, fontSize: fontSize.lg, fontWeight: '700' },
+  buildTag: { fontSize: 10, color: '#B4AA8E', textAlign: 'right', marginTop: -6, marginBottom: spacing.md },
   // Layout
   centred: {
     flex: 1, alignItems: 'center', justifyContent: 'center', padding: spacing.xl,
