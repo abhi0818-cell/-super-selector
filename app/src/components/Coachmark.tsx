@@ -69,7 +69,7 @@ export default function Coachmark({
   };
 
   return (
-    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+    <View style={[StyleSheet.absoluteFill, styles.overlayRoot]} pointerEvents="box-none">
       {/* dimming: 4 rectangles around the spotlight cutout */}
       <View style={[styles.dim, { top: 0, left: 0, right: 0, height: Math.max(0, spot.y) }]} pointerEvents="auto" />
       <View
@@ -138,6 +138,13 @@ export default function Coachmark({
 }
 
 const styles = StyleSheet.create({
+  // Android draws by `elevation`, not JSX/paint order — any sibling
+  // screen content with its own elevation (card shadows, an "open"
+  // tile, etc. — several screens use elevation 8-12) can render ON TOP
+  // of this overlay even though it's the last thing mounted, silently
+  // hiding the whole coachmark. A very high elevation here forces this
+  // overlay to always win. zIndex alongside it for iOS/Fabric.
+  overlayRoot: { elevation: 9999, zIndex: 9999 },
   dim: { position: 'absolute', backgroundColor: 'rgba(20,22,28,0.64)' },
   ring: {
     position: 'absolute',
