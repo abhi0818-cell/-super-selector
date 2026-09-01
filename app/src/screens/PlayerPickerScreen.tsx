@@ -72,8 +72,10 @@ const C = {
 
 // Statuses that don't belong in the "upcoming" schedule preview — mirrors
 // the same set already used by playsAfterMap below, so "upcoming" means the
-// same thing everywhere in this screen.
-const UPCOMING_HIDE_STATUS = new Set(['completed', 'live', 'in_progress']);
+// same thing everywhere in this screen. Also excludes 'abandoned'/'cancelled'
+// (mirrors matchLock.ts's isMatchOver()) — a called-off match like CPL M21
+// is over and must stop showing up as an upcoming fixture, same as web.
+const UPCOMING_HIDE_STATUS = new Set(['completed', 'live', 'in_progress', 'abandoned', 'cancelled']);
 
 // Playoff fixtures often don't have a match number assigned yet (TBD until
 // the league stage settles), so they must sort to the END of the schedule —
