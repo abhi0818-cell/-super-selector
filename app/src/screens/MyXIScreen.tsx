@@ -940,7 +940,7 @@ export default function MyXIScreen({ route }: Props) {
         {activeContext && <>
 
           {/* Boosters — SL / private leagues only */}
-          <View ref={boostersBarRef}>
+          <View ref={boostersBarRef} collapsable={false}>
             <BoostersBar
               contestType={activeContext?.contestType}
               squadId={squadId}

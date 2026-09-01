@@ -96,7 +96,7 @@ function CaptainStep({ players, onAssign, assignRowRef }: CaptainStepProps) {
     <View style={styles.stepContainer}>
 
       {/* Assignment slots */}
-      <View style={styles.assignRow} ref={assignRowRef}>
+      <View style={styles.assignRow} ref={assignRowRef} collapsable={false}>
         {/* Captain slot */}
         <View style={[styles.assignSlot, captain ? styles.assignSlotSet : styles.assignSlotEmpty]}>
           <View style={[styles.assignBadge, styles.assignBadgeC]}>

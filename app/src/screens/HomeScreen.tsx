@@ -418,7 +418,7 @@ function CountdownBanner({ match }: { match: NextMatch }) {
 
 function PickTeamButton({ onPress, onView, teamReady, anchorRef }: { onPress: () => void; onView: () => void; teamReady: boolean; anchorRef?: React.RefObject<View | null> }) {
   return (
-    <Pressable ref={anchorRef as any} onPress={teamReady ? onView : onPress} style={({ pressed }) => pressed && { opacity: 0.82 }}>
+    <Pressable ref={anchorRef as any} collapsable={false} onPress={teamReady ? onView : onPress} style={({ pressed }) => pressed && { opacity: 0.82 }}>
       <LinearGradient colors={G.btnPick} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.pickBtn}>
         <Text style={styles.pickBtnIcon}>🏏</Text>
         <View style={styles.pickBtnMeta}>
@@ -1004,7 +1004,7 @@ export default function HomeScreen() {
             maybeStartHomeTour so a stuck condition is visible without a
             debugger attached to a production build. */}
         <Text style={styles.wtDebug}>
-          WT-12 h{onboardingHydrated ? 1 : 0} c{contestsLoading ? 1 : 0} w{walkthroughEnabled ? 1 : 0}{' '}
+          WT-13 h{onboardingHydrated ? 1 : 0} c{contestsLoading ? 1 : 0} w{walkthroughEnabled ? 1 : 0}{' '}
           s{hasSeenHomeTour ? 1 : 0} tile={primaryTileId ?? '-'} a{tourActive ? 1 : 0} tg{tourTarget ? 1 : 0}{'\n'}
           {tourTargetDebug
             ? `  rn${tourTargetDebug.refNull ? 1 : 0} x${tourTargetDebug.lastX} y${tourTargetDebug.lastY} w${tourTargetDebug.lastW} h${tourTargetDebug.lastH} att${tourTargetDebug.attempts} done${tourTargetDebug.gaveUp ? 1 : 0}`
@@ -1088,7 +1088,7 @@ export default function HomeScreen() {
 
         {/* ── Daily Contest ──────────────────────────────────────────────── */}
         {dailyContest && (
-          <View ref={primaryTileId === 'daily' ? primaryTileRef : undefined}>
+          <View ref={primaryTileId === 'daily' ? primaryTileRef : undefined} collapsable={false}>
           <ContestTile
             id="daily"
             icon="📅"
@@ -1114,7 +1114,7 @@ export default function HomeScreen() {
 
         {/* ── Season Long ────────────────────────────────────────────────── */}
         {slContest && (
-          <View ref={primaryTileId === 'sl' ? primaryTileRef : undefined}>
+          <View ref={primaryTileId === 'sl' ? primaryTileRef : undefined} collapsable={false}>
           <ContestTile
             id="sl"
             icon="🏅"
@@ -1172,6 +1172,7 @@ export default function HomeScreen() {
             ))}
             <Pressable
               ref={createJoinRef as any}
+              collapsable={false}
               style={({ pressed }) => [styles.nestedRow, styles.nestedAddRow, pressed && { opacity: 0.8 }]}
               onPress={() => setLeagueModalOpen(true)}
             >

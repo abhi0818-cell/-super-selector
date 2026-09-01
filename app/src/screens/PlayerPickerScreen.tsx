@@ -529,7 +529,7 @@ export default function PlayerPickerScreen({
       {/* Temporary walkthrough debug readout — remove once Player Picker
           tips are confirmed firing reliably on-device. */}
       <Text style={styles.wtDebug}>
-        WT-11 h{onboardingHydrated ? 1 : 0} w{walkthroughEnabled ? 1 : 0} s{hasSeenPlayerPickerTips ? 1 : 0}{' '}
+        WT-13 h{onboardingHydrated ? 1 : 0} w{walkthroughEnabled ? 1 : 0} s{hasSeenPlayerPickerTips ? 1 : 0}{' '}
         a{tipsActive ? 1 : 0} tg{tipTarget ? 1 : 0}{'\n'}
         {tipTargetDebug
           ? `  rn${tipTargetDebug.refNull ? 1 : 0} x${tipTargetDebug.lastX} y${tipTargetDebug.lastY} w${tipTargetDebug.lastW} h${tipTargetDebug.lastH} att${tipTargetDebug.attempts} done${tipTargetDebug.gaveUp ? 1 : 0}`
@@ -567,7 +567,7 @@ export default function PlayerPickerScreen({
               "Custom rules" badge's old spot (dropped from this screen per
               request — the underlying custom scoring/boosters still apply
               to the contest, this just isn't the place to surface it). */}
-          <View ref={myxiScheduleRef} style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+          <View ref={myxiScheduleRef} collapsable={false} style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
           <Pressable
             onPress={onToggleMyXI}
             style={[styles.myxiBtn, myXIOpen && styles.myxiBtnActive]}
@@ -598,7 +598,7 @@ export default function PlayerPickerScreen({
       <View style={styles.header}>
 
         {/* Budget bar */}
-        <View ref={budgetBarRef}>
+        <View ref={budgetBarRef} collapsable={false}>
           <BudgetBar
             creditsSpent={creditsSpent}
             creditsLeft={creditsLeft}
