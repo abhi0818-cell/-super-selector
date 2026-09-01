@@ -14,7 +14,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { View } from 'react-native';
+import { View, InteractionManager } from 'react-native';
 
 export type CoachmarkTarget = { x: number; y: number; width: number; height: number };
 
@@ -105,10 +105,31 @@ export function useCoachmarkTarget(
       });
     };
 
-    const raf = requestAnimationFrame(tryMeasure);
+    // Both measure() and measureInWindow() were observed returning
+    // `undefined` for every field, every attempt, on-device -- not 0, not
+    // an error. The one structural thing every affected target has in
+    // common (Home's tile/pick button, Player Picker's budget bar) is
+    // living inside a react-native-screens-managed bottom-tab screen; the
+    // one working target (Captain/VC) lives inside a plain RN <Modal>,
+    // outside that machinery entirely. On Android, react-native-screens
+    // hosts each tab in its own Fragment, attached to the Activity window
+    // via an async FragmentTransaction -- JS can consider a screen
+    // "focused" and paint its content before that attachment has actually
+    // completed, and a measure call issued into that gap can silently
+    // fail rather than error. Deferring the first attempt (and by
+    // extension the whole retry chain) until the interaction queue -- which
+    // includes navigation transitions -- has drained targets exactly that
+    // window, instead of just hoping 4.8s of blind retries outruns it.
+    let raf: number | null = null;
+    const interactionHandle = InteractionManager.runAfterInteractions(() => {
+      if (cancelled) return;
+      raf = requestAnimationFrame(tryMeasure);
+    });
+
     return () => {
       cancelled = true;
-      cancelAnimationFrame(raf);
+      interactionHandle.cancel();
+      if (raf !== null) cancelAnimationFrame(raf);
       if (timer) clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

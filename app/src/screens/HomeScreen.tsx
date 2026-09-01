@@ -804,6 +804,27 @@ export default function HomeScreen() {
   const [tourTargetDebug, setTourTargetDebug] = useState<CoachmarkTargetDebug | null>(null);
   const tourTarget = useCoachmarkTarget(tourTargetRef, tourActive, `${tourStep}-${openTile}`, setTourTargetDebug);
 
+  // One-off diagnostic only: does measure() work AT ALL on this screen, for
+  // ANY view, or is it specifically the tile/button refs? screenRootRef is
+  // attached to the outermost SafeAreaView below -- about as shallow a
+  // target as exists on this screen. If this also comes back undefined,
+  // it's not about depth/nesting under the tile -- it's every measure call
+  // on this tab screen. Remove alongside the rest of the wtDebug scaffolding.
+  const screenRootRef = useRef<View>(null);
+  const [rootMeasure, setRootMeasure] = useState<string>('(not tried)');
+  useEffect(() => {
+    if (!tourActive) return;
+    let cancelled = false;
+    const t = setTimeout(() => {
+      if (cancelled) return;
+      screenRootRef.current?.measure((x: number, y: number, w: number, h: number, px: number, py: number) => {
+        if (cancelled) return;
+        setRootMeasure(`x${px} y${py} w${w} h${h}`);
+      });
+    }, 600);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [tourActive]);
+
   const finishHomeTour = useCallback(() => {
     setTourActive(false);
     setTourStep(0);
@@ -951,7 +972,7 @@ export default function HomeScreen() {
   const canSwitchTournament = tournaments.length > 1;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top']} ref={screenRootRef as any}>
       <LinearGradient colors={G.bg} style={StyleSheet.absoluteFill} />
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
@@ -983,11 +1004,12 @@ export default function HomeScreen() {
             maybeStartHomeTour so a stuck condition is visible without a
             debugger attached to a production build. */}
         <Text style={styles.wtDebug}>
-          WT-11 h{onboardingHydrated ? 1 : 0} c{contestsLoading ? 1 : 0} w{walkthroughEnabled ? 1 : 0}{' '}
+          WT-12 h{onboardingHydrated ? 1 : 0} c{contestsLoading ? 1 : 0} w{walkthroughEnabled ? 1 : 0}{' '}
           s{hasSeenHomeTour ? 1 : 0} tile={primaryTileId ?? '-'} a{tourActive ? 1 : 0} tg{tourTarget ? 1 : 0}{'\n'}
           {tourTargetDebug
             ? `  rn${tourTargetDebug.refNull ? 1 : 0} x${tourTargetDebug.lastX} y${tourTargetDebug.lastY} w${tourTargetDebug.lastW} h${tourTargetDebug.lastH} att${tourTargetDebug.attempts} done${tourTargetDebug.gaveUp ? 1 : 0}`
-            : '  (no target attempt yet)'}
+            : '  (no target attempt yet)'}{'\n'}
+          {'  root: '}{rootMeasure}
         </Text>
 
         {/* ── Notification ticker ───────────────────────────────────────── */}
