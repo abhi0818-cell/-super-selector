@@ -153,10 +153,13 @@ const DELAY_DECISION_BUFFER_MINUTES = 15
 // every source still gets fetched and still gets a chance to write to
 // toss_source_log — see the "alreadyConfirmed" branch in the main loop for
 // what's actually skipped on those ticks (no re-notify, no status rewrite).
-// Not unbounded: Cricbuzz's toss signal in particular stops being available
-// once match state moves past "Toss", so polling indefinitely past
-// confirmation buys nothing once every source that will ever answer has had
-// its chance. 30 minutes mirrors CHECK_WINDOW_MINUTES's pre-match window.
+// Not unbounded: CricAPI/CricketAddictor's toss text has a normal window it
+// shows up in, so polling indefinitely past confirmation buys nothing once
+// every source that will ever answer has had its chance. (Cricbuzz's own
+// per-match tossResults fallback — see fetchCricbuzzPerMatchToss — turned
+// out to persist far longer than this window, but this constant governs the
+// query's polling cutoff, not how long any one source's data stays valid.)
+// 30 minutes mirrors CHECK_WINDOW_MINUTES's pre-match window.
 const CORROBORATION_WINDOW_MINUTES = 30
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -512,6 +515,18 @@ async function fetchWithRetry(url: string, options: RequestInit, maxAttempts = 3
 // text (which doesn't disappear once the match progresses) is. That's fine
 // here: Cricbuzz is a third source, not a replacement for the other two.
 //
+// 2026-09-01 hardening: that limitation stopped being theoretical on CPL 2026
+// M22 — a toss that happened exactly on schedule (confirmed by the user; NOT
+// a rain-delay case) was still missed, despite check-toss polling every
+// single minute of the pre-match window with zero cron gaps (verified against
+// pg_cron's own run history). Cricbuzz's state machine simply never landed on
+// "Toss" during any of those 45 polls — it moved from "Preview" straight past
+// it, so there was no window to catch at all, not just a narrow one. See
+// fetchCricbuzzPerMatchToss below for the fix: a second, persistent signal on
+// each match's own page that doesn't depend on catching a one-minute-wide
+// state, tried as a fallback whenever this transient text parse comes up
+// empty.
+//
 // One page covers everything check-toss might be polling for (confirmed live:
 // CPL, TNPL, DPL, ETPL, County Championship, Duleep Trophy, Women's
 // Continental Cup, and a Bangladesh A tour all appeared on one fetch) — so
@@ -626,6 +641,62 @@ function parseCricbuzzToss(info: CricbuzzMatchInfo | null, homeTeam: string, awa
   const m = String(info.status || '').match(CRICBUZZ_TOSS_TEXT)
   if (!m) return null
   return { winnerName: resolveTeamCasing(m[1].trim(), homeTeam, awayTeam), decision: normalizeDecision(m[2]), delayText: null }
+}
+
+// 2026-09-01: the hardening fallback for the "state never actually hits
+// Toss" gap described above the CRICBUZZ_TOSS_TEXT regex. Each match's own
+// page (`/live-cricket-scores/{matchId}/anything-or-nothing` — confirmed
+// live that the slug is purely decorative; Cricbuzz resolves the same
+// canonical page off matchId alone, e.g. `.../154535/x` and `.../154535`
+// both returned identical content) embeds a `tossResults` object that is
+// SEPARATE from matchInfo.state/status and, unlike that transient status
+// line, doesn't go away once the match moves on — confirmed live on CPL 2026
+// M22, hours after full time with a DLS result already showing:
+// {"tossWinnerId":271,"tossWinnerName":"Trinbago Knight Riders",
+// "decision":"Bowling"} was still sitting in the page. That makes this a
+// genuinely persistent signal rather than a race against a one-minute-wide
+// state window, so it's worth the extra fetch as a fallback whenever the
+// cheap listing-page text parse above comes up empty but Cricbuzz is
+// tracking the match at all (i.e. findCricbuzzMatch resolved a matchId).
+//
+// Deliberately not folded into getCricbuzzMatches/the shared listing cache:
+// that one listing fetch covers every tournament check-toss might be
+// polling in a single request, but this is a per-match page — one fetch per
+// match that still needs it, only triggered on the (common, per the M22
+// finding) case where the transient signal didn't land this tick.
+const CRICBUZZ_TOSS_RESULTS =
+  /"tossResults"\s*:\s*\{\s*"tossWinnerId"\s*:\s*\d+\s*,\s*"tossWinnerName"\s*:\s*"([^"]*)"\s*,\s*"decision"\s*:\s*"([^"]*)"\s*\}/
+
+async function fetchCricbuzzPerMatchToss(
+  matchId: number, homeTeam: string, awayTeam: string,
+): Promise<TossResult | null> {
+  try {
+    const res = await fetchWithRetry(`https://www.cricbuzz.com/live-cricket-scores/${matchId}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36', 'Accept': 'text/html,*/*' },
+    })
+    if (!res.ok) return null
+    const html = await res.text()
+    // Same double-encoding as the listing page (see getCricbuzzMatches) —
+    // un-escape before regexing so embedded quotes don't break the match.
+    const unescaped = html.replace(/\\"/g, '"')
+    const m = unescaped.match(CRICBUZZ_TOSS_RESULTS)
+    if (!m) return null
+    const [, rawWinner, rawDecision] = m
+    // Defensive: this project has only ever observed tossResults POST-toss
+    // (every live sample so far has been a completed or in-progress match).
+    // Its pre-toss shape — absent entirely, or present with empty/placeholder
+    // fields — isn't confirmed either way, so treat blank fields as "not a
+    // real result yet" rather than risk surfacing an empty string as a winner.
+    if (!rawWinner.trim() || !rawDecision.trim()) return null
+    return {
+      winnerName: resolveTeamCasing(rawWinner.trim(), homeTeam, awayTeam),
+      decision: normalizeDecision(rawDecision),
+      delayText: null,
+    }
+  } catch (e) {
+    console.warn('[check-toss] Cricbuzz per-match fetch/parse failed:', (e as Error).message)
+    return null
+  }
 }
 
 async function fetchCricApiMatchInfo(externalId: string): Promise<any> {
@@ -852,6 +923,14 @@ Deno.serve(async (req) => {
         const cbMatches = await getCricbuzzMatches(cricbuzzCache)
         const cbInfo = findCricbuzzMatch(cbMatches, homeTeam, awayTeam, match.start_time)
         cricbuzzToss = parseCricbuzzToss(cbInfo, homeTeam, awayTeam)
+        // Hardening (2026-09-01, M22): the transient state==='Toss' text
+        // above can miss a perfectly on-time toss outright — see
+        // fetchCricbuzzPerMatchToss's header comment. Fall back to the
+        // per-match page's persistent tossResults field whenever the cheap
+        // parse came up empty but Cricbuzz is tracking this match at all.
+        if (!cricbuzzToss && cbInfo) {
+          cricbuzzToss = await fetchCricbuzzPerMatchToss(cbInfo.matchId, homeTeam, awayTeam)
+        }
       } catch (e: any) {
         console.warn(`[check-toss] Cricbuzz check failed for M${match.match_number}:`, e.message)
       }
