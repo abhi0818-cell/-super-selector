@@ -50,6 +50,15 @@ export function useCoachmarkTarget(
       setTarget(null);
       return;
     }
+    // Clear any position measured for a PREVIOUS resetKey (e.g. the last
+    // tour step) before starting to measure the new one. Without this, a
+    // multi-step tour briefly (or, if the new measurement is slow to
+    // resolve, not-so-briefly) draws the coachmark at the previous step's
+    // coordinates -- e.g. Player Picker's tip for the My XI/Schedule row
+    // (near the top of the screen) rendering down at the Budget Bar's
+    // position (its step) because that stale target hadn't been cleared
+    // yet when the step changed.
+    setTarget(null);
     let cancelled = false;
     let attempts = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;

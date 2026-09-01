@@ -1004,7 +1004,7 @@ export default function HomeScreen() {
             maybeStartHomeTour so a stuck condition is visible without a
             debugger attached to a production build. */}
         <Text style={styles.wtDebug}>
-          WT-13 h{onboardingHydrated ? 1 : 0} c{contestsLoading ? 1 : 0} w{walkthroughEnabled ? 1 : 0}{' '}
+          WT-14 h{onboardingHydrated ? 1 : 0} c{contestsLoading ? 1 : 0} w{walkthroughEnabled ? 1 : 0}{' '}
           s{hasSeenHomeTour ? 1 : 0} tile={primaryTileId ?? '-'} a{tourActive ? 1 : 0} tg{tourTarget ? 1 : 0}{'\n'}
           {tourTargetDebug
             ? `  rn${tourTargetDebug.refNull ? 1 : 0} x${tourTargetDebug.lastX} y${tourTargetDebug.lastY} w${tourTargetDebug.lastW} h${tourTargetDebug.lastH} att${tourTargetDebug.attempts} done${tourTargetDebug.gaveUp ? 1 : 0}`
