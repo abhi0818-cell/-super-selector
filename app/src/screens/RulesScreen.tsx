@@ -47,7 +47,7 @@ const G = {
 };
 
 // Bump this string on every walkthrough-related commit — see the build tag rendered under the Walkthrough card below.
-const WALKTHROUGH_BUILD_TAG = 'WT-16';
+const WALKTHROUGH_BUILD_TAG = 'WT-17';
 
 // ─── Scoring rule display config ──────────────────────────────────────────────
 

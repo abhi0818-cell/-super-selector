@@ -587,34 +587,38 @@ export default function PlayerPickerScreen({
       {/* Fixed header */}
       <View style={styles.header}>
 
-        {/* Budget bar */}
+        {/* Budget bar + Overseas counter + team formation (RoleStats) —
+            wrapped together as budgetBarRef's coachmark target, per
+            feedback that the "Your budget" tip's highlight should cover
+            the whole budget/team-formation block, not just the budget bar
+            on its own. */}
         <View ref={budgetBarRef} collapsable={false}>
           <BudgetBar
             creditsSpent={creditsSpent}
             creditsLeft={creditsLeft}
             playerCount={selected.length}
           />
-        </View>
 
-        {/* OS counter — only when tournament has a cap */}
-        {showOsCounter && (
-          <View style={[styles.osRow, osOver && styles.osRowBad]}>
-            <Text style={styles.osIcon}>✈️</Text>
-            <Text style={[styles.osLabel, osOver && styles.osLabelBad]}>
-              Overseas
-            </Text>
-            <View style={[styles.osPill, osOver && styles.osPillBad]}>
-              <Text style={[styles.osPillText, osOver && styles.osPillTextBad]}>
-                {osSelected} / {osCap}
+          {/* OS counter — only when tournament has a cap */}
+          {showOsCounter && (
+            <View style={[styles.osRow, osOver && styles.osRowBad]}>
+              <Text style={styles.osIcon}>✈️</Text>
+              <Text style={[styles.osLabel, osOver && styles.osLabelBad]}>
+                Overseas
               </Text>
+              <View style={[styles.osPill, osOver && styles.osPillBad]}>
+                <Text style={[styles.osPillText, osOver && styles.osPillTextBad]}>
+                  {osSelected} / {osCap}
+                </Text>
+              </View>
+              {osOver && (
+                <Text style={styles.osWarn}>cap exceeded</Text>
+              )}
             </View>
-            {osOver && (
-              <Text style={styles.osWarn}>cap exceeded</Text>
-            )}
-          </View>
-        )}
+          )}
 
-        <RoleStats roleCounts={roleCounts} />
+          <RoleStats roleCounts={roleCounts} />
+        </View>
 
         {/* Search + disclosure pills (Type / Teams / Matches) — mirrors web.
             Each pill independently shows/hides its panel below; with all three

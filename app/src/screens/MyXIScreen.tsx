@@ -346,9 +346,15 @@ export default function MyXIScreen({ route }: Props) {
   // useFocusEffect, not just a plain dependency effect — My XI is a tab
   // screen, and a backgrounded tab can lag behind a plain effect.
   const maybeShowBoostersTip = useCallback(() => {
-    if (!onboardingHydrated || boostersTipActive || !walkthroughEnabled || hasSeenBoostersTip || !boostersEligible) return;
+    // Also wait for boosters.length > 0: BoostersBar renders an empty
+    // (near-zero-height) tile row until useBoosterStore's boosters finish
+    // loading. useCoachmarkTarget measures once and locks that height in
+    // for the step -- firing before boosters populate meant the ring's
+    // height matched the label alone, with the tiles rendering in later
+    // (taller) but outside what was already measured.
+    if (!onboardingHydrated || boostersTipActive || !walkthroughEnabled || hasSeenBoostersTip || !boostersEligible || boosters.length === 0) return;
     setBoostersTipActive(true);
-  }, [onboardingHydrated, boostersTipActive, walkthroughEnabled, hasSeenBoostersTip, boostersEligible]);
+  }, [onboardingHydrated, boostersTipActive, walkthroughEnabled, hasSeenBoostersTip, boostersEligible, boosters.length]);
 
   useEffect(() => {
     const t = setTimeout(maybeShowBoostersTip, 500);
