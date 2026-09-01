@@ -2,28 +2,28 @@
  * Measures a ref for a Coachmark target, retrying for a bit instead of
  * giving up after one frame.
  *
- * Two measurement strategies, picked by whether a `containerRef` is passed:
+ * Two measurement strategies, picked by whether a `containerRef` is passed
+ * -- and this MUST be the same view Coachmark itself is mounted inside
+ * (a direct ancestor whose bounds Coachmark's StyleSheet.absoluteFill
+ * actually fills), not just "the screen root" in the abstract:
  *
  * 1. No containerRef: ref.current.measure() gives window-relative
- *    coordinates directly (pageX/pageY). Simple, and it's what Captain/VC's
- *    tip (inside a plain RN <Modal>) has always used successfully.
+ *    coordinates (pageX/pageY). What Captain/VC's tip uses -- it lives
+ *    inside a plain RN <Modal>, which itself covers the whole window, so
+ *    window-relative coordinates are exactly what its Coachmark needs.
  *
  * 2. containerRef passed: ref.current.measureLayout(containerNode, ...)
- *    gives the target's position RELATIVE TO that container instead --
- *    measured via the JS-side shadow-tree relationship rather than asking
- *    to be resolved against the window -- combined with a separate
- *    measure() of the container itself (window-relative) to get the same
- *    final page coordinates. This exists because, on Android, `measure()`
- *    on some deeply-nested targets (Home's tile, Player Picker's header
- *    row buttons) was observed returning coordinates offset from their
- *    true position by roughly a section's height, while measuring the
- *    screen's own root container the same way was consistently correct.
- *    Routing nested targets through their own screen's root sidesteps
- *    whatever is unreliable about resolving a deep view straight to window
- *    coordinates, since the root -> window resolution (known-good) and the
- *    target -> root resolution (a much shorter, simpler relationship) are
- *    now two separate calls instead of one that has to get everything
- *    right at once.
+ *    gives the target's position relative to that container -- and that
+ *    relative offset is used AS-IS, with nothing added for the
+ *    container's own window position. Coachmark, mounted as a child of
+ *    that same container, already interprets its coordinates relative to
+ *    it (RN's position:absolute is always relative to the immediate
+ *    parent, not the window) -- adding the container's own page offset on
+ *    top double-counts it. That bug was invisible on a screen whose
+ *    container happens to sit at the very top of the screen (offset ~0,
+ *    e.g. Home's tab), but very visible on one presented with its own
+ *    header above it (e.g. Player Picker inside "Make Transfers"), where
+ *    every target rendered low by roughly that header's height.
  */
 
 import { useEffect, useState } from 'react';
@@ -103,6 +103,17 @@ export function useCoachmarkTarget(
           scheduleRetry({ refNull: false, lastW: undefined, lastH: undefined, lastX: undefined, lastY: undefined, method: 'measureLayout' });
           return;
         }
+        // IMPORTANT: use the container-relative offset as-is -- do NOT add
+        // the container's own window position on top of it. Coachmark is
+        // rendered as a child of this same container (its
+        // StyleSheet.absoluteFill is relative to THAT container's bounds,
+        // not the true screen), so relX/relY is already exactly the
+        // coordinate space Coachmark draws in. Adding the container's own
+        // page offset here double-counts it -- invisible on a screen whose
+        // container happens to sit at the very top (offset ~0, e.g. Home),
+        // but very visible on a screen presented with its own header above
+        // it (e.g. Player Picker inside "Make Transfers"), where it shows
+        // up as the target rendering low by roughly that header's height.
         ref.current.measureLayout(
           containerNode,
           (relX: number, relY: number, width: number, height: number) => {
@@ -111,16 +122,8 @@ export function useCoachmarkTarget(
               scheduleRetry({ refNull: false, lastW: width, lastH: height, lastX: relX, lastY: relY, method: 'measureLayout' });
               return;
             }
-            containerRef.current?.measure((_cx: number, _cy: number, _cw: number, _ch: number, containerPageX: number, containerPageY: number) => {
-              if (cancelled) return;
-              const ok = typeof containerPageX === 'number' && typeof containerPageY === 'number';
-              if (ok) {
-                onDebug?.({ attempts, refNull: false, lastW: width, lastH: height, lastX: containerPageX + relX, lastY: containerPageY + relY, method: 'measureLayout', gaveUp: false });
-                setTarget({ x: containerPageX + relX, y: containerPageY + relY, width, height });
-              } else {
-                scheduleRetry({ refNull: false, lastW: width, lastH: height, lastX: relX, lastY: relY, method: 'measureLayout' });
-              }
-            });
+            onDebug?.({ attempts, refNull: false, lastW: width, lastH: height, lastX: relX, lastY: relY, method: 'measureLayout', gaveUp: false });
+            setTarget({ x: relX, y: relY, width, height });
           },
           () => {
             if (cancelled) return;
