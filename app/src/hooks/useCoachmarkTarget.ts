@@ -12,7 +12,7 @@
  *    inside a plain RN <Modal>, which itself covers the whole window, so
  *    window-relative coordinates are exactly what its Coachmark needs.
  *
- * 2. containerRef passed: ref.current.measureLayout(containerNode, ...)
+ * 2. containerRef passed: ref.current.measureLayout(containerRef.current, ...)
  *    gives the target's position relative to that container -- and that
  *    relative offset is used AS-IS, with nothing added for the
  *    container's own window position. Coachmark, mounted as a child of
@@ -27,7 +27,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { View, InteractionManager, findNodeHandle } from 'react-native';
+import { View, InteractionManager } from 'react-native';
 
 export type CoachmarkTarget = { x: number; y: number; width: number; height: number };
 
@@ -98,8 +98,7 @@ export function useCoachmarkTarget(
       }
 
       if (containerRef) {
-        const containerNode = containerRef.current ? findNodeHandle(containerRef.current) : null;
-        if (!containerNode) {
+        if (!containerRef.current) {
           scheduleRetry({ refNull: false, lastW: undefined, lastH: undefined, lastX: undefined, lastY: undefined, method: 'measureLayout' });
           return;
         }
@@ -114,8 +113,15 @@ export function useCoachmarkTarget(
         // but very visible on a screen presented with its own header above
         // it (e.g. Player Picker inside "Make Transfers"), where it shows
         // up as the target rendering low by roughly that header's height.
+        //
+        // Pass the container's REF directly, not findNodeHandle(ref) --
+        // on the New Architecture (Fabric, which Expo Go runs by default),
+        // measureLayout expects a ref to the other native component; a
+        // legacy numeric node handle from findNodeHandle() throws "ref.
+        // measureLayout must be called with a ref to a native component."
+        // findNodeHandle is deprecated for exactly this reason.
         ref.current.measureLayout(
-          containerNode,
+          containerRef.current,
           (relX: number, relY: number, width: number, height: number) => {
             if (cancelled) return;
             if (!(width > 0 && height > 0)) {
