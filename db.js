@@ -2305,6 +2305,45 @@ export function createDb(cfg = {}) {
     },
 
     /**
+     * Persist unmatched batter/bowler identities into the same
+     * scraper_unmatched queue the scraper/poll-cricapi cron jobs write to —
+     * so a manually pasted scorecard's unresolved player names reach
+     * Review → ⚠️ Unmatched Players instead of only ever being visible live
+     * in the Fantasy Scorecard panel's Link buttons (client-side, ephemeral,
+     * recomputed on every render and never persisted). Used by
+     * saveManualScorecardForMatch (admin.js) for the "📋 Manual" paste path;
+     * the cron paths (poll-cricapi/scrape-scorecard) already write here
+     * directly.
+     *
+     * `unmatchedPlayers` is mergeApiPlayersByLocalId()'s own `unmatched`
+     * array — each entry has `.name` and, depending on what the pasted
+     * scorecard had for them, `.batting` and/or `.bowling`. One row per raw
+     * name, tagged with whichever discipline it was seen in (mirrors the
+     * scraper's own dedup — see scrape-scorecard/index.ts's `unmatched.push`
+     * calls). Same UNIQUE (tournament_id, raw_name, source) as the scraper,
+     * so re-saving the same manual scorecard (or a later match with the same
+     * still-unresolved name) never creates a duplicate row.
+     */
+    async insertUnmatchedPlayers(tournamentId, matchId, unmatchedPlayers, source) {
+      if (!tournamentId || !matchId || !unmatchedPlayers?.length) return;
+      const sb = await getClient();
+      const rows = unmatchedPlayers
+        .filter(p => p.name && !this.isPlaceholderName(p.name))
+        .map(p => ({
+          tournament_id: tournamentId,
+          match_id     : matchId,
+          raw_name     : p.name,
+          source,
+          context      : p.batting ? 'batting' : 'bowling',
+        }));
+      if (!rows.length) return;
+      const { error } = await sb.from('scraper_unmatched').upsert(
+        rows, { onConflict: 'tournament_id,raw_name,source', ignoreDuplicates: true },
+      );
+      if (error) throw error;
+    },
+
+    /**
      * Apply a manual fielding/wicket-bonus credit directly to a player's
      * player_match_stats row for one match — the fallback the admin reaches for
      * when auto-derivation can't resolve a dismissal, AND the generic "add

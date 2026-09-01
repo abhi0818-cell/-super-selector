@@ -2213,6 +2213,23 @@
         }
       }
 
+      // Same treatment for unmatched batter/bowler *identities* (not just
+      // fielding credit): without this, a manually pasted scorecard's
+      // unmatched names only ever showed up live in the Fantasy Scorecard's
+      // red "Link" rows (recomputed client-side on every render) and never
+      // reached Review → ⚠️ Unmatched Players, which reads the persisted
+      // scraper_unmatched table — the cron paths (poll-cricapi/
+      // scrape-scorecard) write there directly, but this manual path never
+      // did. Best-effort, same reasoning as insertFieldingIssues above: a
+      // failure here shouldn't fail the save itself.
+      if (unmatched.length) {
+        try {
+          await state.db.insertUnmatchedPlayers(local.tournament_id, matchId, unmatched, 'manual');
+        } catch (upErr) {
+          console.warn('[Manual scorecard] insertUnmatchedPlayers failed (unmatched players still reported below, just not queued in Review):', upErr.message);
+        }
+      }
+
       // Persist the raw payload (dismissal text included) to match_scorecards
       // — the same cache table scrape-scorecard writes to and connectLiveViaScraper
       // prefers over its own stats-only reconstruction. Without this, a
