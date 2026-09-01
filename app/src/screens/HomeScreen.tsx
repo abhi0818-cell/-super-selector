@@ -39,7 +39,7 @@ import { fontSize, radius, spacing, shadow } from '../theme';
 import { fetchContestTransferConfig, fetchTournamentMatches, getTransferUsage, MatchLite } from '../lib/transferCap';
 import { findNextUnlockedMatch } from '../lib/matchLock';
 import Coachmark from '../components/Coachmark';
-import { useCoachmarkTarget, CoachmarkTargetDebug } from '../hooks/useCoachmarkTarget';
+import { useCoachmarkTarget } from '../hooks/useCoachmarkTarget';
 import { useOnboardingStore } from '../store/onboardingStore';
 
 type NavProp  = BottomTabNavigationProp<RootTabParamList, 'Home'>;
@@ -801,29 +801,7 @@ export default function HomeScreen() {
   // and a tab just reattached by react-native-screens can take more than
   // one frame to lay back out.
   const tourTargetRef = tourStep === 0 ? primaryTileRef : tourStep === 1 ? pickBtnRef : createJoinRef;
-  const [tourTargetDebug, setTourTargetDebug] = useState<CoachmarkTargetDebug | null>(null);
-  const tourTarget = useCoachmarkTarget(tourTargetRef, tourActive, `${tourStep}-${openTile}`, setTourTargetDebug);
-
-  // One-off diagnostic only: does measure() work AT ALL on this screen, for
-  // ANY view, or is it specifically the tile/button refs? screenRootRef is
-  // attached to the outermost SafeAreaView below -- about as shallow a
-  // target as exists on this screen. If this also comes back undefined,
-  // it's not about depth/nesting under the tile -- it's every measure call
-  // on this tab screen. Remove alongside the rest of the wtDebug scaffolding.
-  const screenRootRef = useRef<View>(null);
-  const [rootMeasure, setRootMeasure] = useState<string>('(not tried)');
-  useEffect(() => {
-    if (!tourActive) return;
-    let cancelled = false;
-    const t = setTimeout(() => {
-      if (cancelled) return;
-      screenRootRef.current?.measure((x: number, y: number, w: number, h: number, px: number, py: number) => {
-        if (cancelled) return;
-        setRootMeasure(`x${px} y${py} w${w} h${h}`);
-      });
-    }, 600);
-    return () => { cancelled = true; clearTimeout(t); };
-  }, [tourActive]);
+  const tourTarget = useCoachmarkTarget(tourTargetRef, tourActive, `${tourStep}-${openTile}`);
 
   const finishHomeTour = useCallback(() => {
     setTourActive(false);
@@ -972,7 +950,7 @@ export default function HomeScreen() {
   const canSwitchTournament = tournaments.length > 1;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']} ref={screenRootRef as any}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <LinearGradient colors={G.bg} style={StyleSheet.absoluteFill} />
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
@@ -998,19 +976,6 @@ export default function HomeScreen() {
             <Text style={styles.signOutLinkText}>Sign out</Text>
           </Pressable>
         </View>
-
-        {/* Temporary walkthrough debug readout — remove once Home tour is
-            confirmed firing reliably on-device. Shows the raw state behind
-            maybeStartHomeTour so a stuck condition is visible without a
-            debugger attached to a production build. */}
-        <Text style={styles.wtDebug}>
-          WT-14 h{onboardingHydrated ? 1 : 0} c{contestsLoading ? 1 : 0} w{walkthroughEnabled ? 1 : 0}{' '}
-          s{hasSeenHomeTour ? 1 : 0} tile={primaryTileId ?? '-'} a{tourActive ? 1 : 0} tg{tourTarget ? 1 : 0}{'\n'}
-          {tourTargetDebug
-            ? `  rn${tourTargetDebug.refNull ? 1 : 0} x${tourTargetDebug.lastX} y${tourTargetDebug.lastY} w${tourTargetDebug.lastW} h${tourTargetDebug.lastH} att${tourTargetDebug.attempts} done${tourTargetDebug.gaveUp ? 1 : 0}`
-            : '  (no target attempt yet)'}{'\n'}
-          {'  root: '}{rootMeasure}
-        </Text>
 
         {/* ── Notification ticker ───────────────────────────────────────── */}
         {/* Time-based, not read-based — stays up for each notification's own
@@ -1263,7 +1228,6 @@ const styles = StyleSheet.create({
   brandText:     { fontSize: fontSize.xl, letterSpacing: 0.2 },
   brandSuper:    { color: '#1C1F26', fontFamily: 'PlayfairDisplay_700Bold' },
   welcomeText: { color: C.muted, fontSize: fontSize.base, letterSpacing: 0.1, marginLeft: 18 },
-  wtDebug: { fontSize: 10, color: '#B4AA8E', marginTop: 2 },
   signOutLinkText: { color: C.muted, fontSize: fontSize.xs, fontWeight: '600', textDecorationLine: 'underline' },
 
   tournamentBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderRadius: radius.lg, borderWidth: 1, borderColor: 'rgba(28,31,38,0.1)', backgroundColor: 'rgba(0,0,0,0.03)', marginBottom: spacing.xs },

@@ -32,7 +32,7 @@ import PlayerStatsModal from '../components/PlayerStatsModal';
 import CricketPitch from '../components/CricketPitch';
 import BudgetBar from '../components/BudgetBar';
 import Coachmark from '../components/Coachmark';
-import { useCoachmarkTarget, CoachmarkTargetDebug } from '../hooks/useCoachmarkTarget';
+import { useCoachmarkTarget } from '../hooks/useCoachmarkTarget';
 import { useOnboardingStore } from '../store/onboardingStore';
 import RoleStats from '../components/RoleStats';
 import Jersey from '../components/Jersey';
@@ -207,8 +207,7 @@ export default function PlayerPickerScreen({
   }, [onboardingHydrated, tipsActive, walkthroughEnabled, hasSeenPlayerPickerTips]);
 
   const tipTargetRef = tipStep === 0 ? budgetBarRef : myxiScheduleRef;
-  const [tipTargetDebug, setTipTargetDebug] = useState<CoachmarkTargetDebug | null>(null);
-  const tipTarget = useCoachmarkTarget(tipTargetRef, tipsActive, tipStep, setTipTargetDebug);
+  const tipTarget = useCoachmarkTarget(tipTargetRef, tipsActive, tipStep);
 
   const finishPickerTips = useCallback(() => {
     setTipsActive(false);
@@ -525,16 +524,6 @@ export default function PlayerPickerScreen({
 
   return (
     <View style={styles.container}>
-
-      {/* Temporary walkthrough debug readout — remove once Player Picker
-          tips are confirmed firing reliably on-device. */}
-      <Text style={styles.wtDebug}>
-        WT-14 h{onboardingHydrated ? 1 : 0} w{walkthroughEnabled ? 1 : 0} s{hasSeenPlayerPickerTips ? 1 : 0}{' '}
-        a{tipsActive ? 1 : 0} tg{tipTarget ? 1 : 0}{'\n'}
-        {tipTargetDebug
-          ? `  rn${tipTargetDebug.refNull ? 1 : 0} x${tipTargetDebug.lastX} y${tipTargetDebug.lastY} w${tipTargetDebug.lastW} h${tipTargetDebug.lastH} att${tipTargetDebug.attempts} done${tipTargetDebug.gaveUp ? 1 : 0}`
-          : '  (no target attempt yet)'}
-      </Text>
 
       {/* Pinned block — context banner + budget/OS-counter/role-stats/search+pills.
           Measured above via handlePinnedLayout; the My XI drawer anchors its
@@ -1050,7 +1039,6 @@ export default function PlayerPickerScreen({
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
-  wtDebug: { fontSize: 10, color: '#B4AA8E', paddingHorizontal: 12, paddingTop: 4 },
   container: {
     flex:            1,
     backgroundColor: 'transparent',
