@@ -193,6 +193,7 @@ export default function PlayerPickerScreen({
   const [tipStep, setTipStep]       = useState(0);
   const budgetBarRef      = useRef<View>(null);
   const myxiScheduleRef   = useRef<View>(null);
+  const screenRootRef     = useRef<View>(null);
   const PICKER_TIP_COUNT = 2;
 
   useEffect(() => { hydrateOnboarding(); }, [hydrateOnboarding]);
@@ -207,7 +208,7 @@ export default function PlayerPickerScreen({
   }, [onboardingHydrated, tipsActive, walkthroughEnabled, hasSeenPlayerPickerTips]);
 
   const tipTargetRef = tipStep === 0 ? budgetBarRef : myxiScheduleRef;
-  const tipTarget = useCoachmarkTarget(tipTargetRef, tipsActive, tipStep);
+  const tipTarget = useCoachmarkTarget(tipTargetRef, tipsActive, tipStep, undefined, screenRootRef);
 
   const finishPickerTips = useCallback(() => {
     setTipsActive(false);
@@ -523,7 +524,7 @@ export default function PlayerPickerScreen({
   };
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} ref={screenRootRef}>
 
       {/* Pinned block — context banner + budget/OS-counter/role-stats/search+pills.
           Measured above via handlePinnedLayout; the My XI drawer anchors its

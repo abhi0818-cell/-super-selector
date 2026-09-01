@@ -337,6 +337,7 @@ export default function MyXIScreen({ route }: Props) {
   const { hasSeenBoostersTip, walkthroughEnabled, hydrated: onboardingHydrated, hydrate: hydrateOnboarding, completeBoostersTip } = useOnboardingStore();
   const [boostersTipActive, setBoostersTipActive] = useState(false);
   const boostersBarRef = useRef<View>(null);
+  const screenRootRef = useRef<View>(null);
   const boostersEligible = activeContext?.contestType === 'sl' || activeContext?.contestType === 'private';
 
   useEffect(() => { hydrateOnboarding(); }, [hydrateOnboarding]);
@@ -361,7 +362,7 @@ export default function MyXIScreen({ route }: Props) {
     }, [maybeShowBoostersTip])
   );
 
-  const boostersTipTarget = useCoachmarkTarget(boostersBarRef, boostersTipActive);
+  const boostersTipTarget = useCoachmarkTarget(boostersBarRef, boostersTipActive, null, undefined, screenRootRef);
 
   const finishBoostersTip = useCallback(() => {
     setBoostersTipActive(false);
@@ -833,7 +834,7 @@ export default function MyXIScreen({ route }: Props) {
   };
 
   return (
-    <View style={styles.root}>
+    <View style={styles.root} ref={screenRootRef}>
       {/* Full-screen gradient background */}
       <LinearGradient colors={G.bg} style={StyleSheet.absoluteFill} />
 

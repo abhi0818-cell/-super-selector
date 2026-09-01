@@ -671,6 +671,7 @@ export default function HomeScreen() {
   const primaryTileRef = useRef<View>(null);
   const pickBtnRef      = useRef<View>(null);
   const createJoinRef   = useRef<View>(null);
+  const screenRootRef   = useRef<View>(null);
 
   // Prefer the real first name from the profiles row; only fall back to the
   // raw email prefix (e.g. "abhi0818") if the profile hasn't loaded yet or
@@ -801,7 +802,7 @@ export default function HomeScreen() {
   // and a tab just reattached by react-native-screens can take more than
   // one frame to lay back out.
   const tourTargetRef = tourStep === 0 ? primaryTileRef : tourStep === 1 ? pickBtnRef : createJoinRef;
-  const tourTarget = useCoachmarkTarget(tourTargetRef, tourActive, `${tourStep}-${openTile}`);
+  const tourTarget = useCoachmarkTarget(tourTargetRef, tourActive, `${tourStep}-${openTile}`, undefined, screenRootRef);
 
   const finishHomeTour = useCallback(() => {
     setTourActive(false);
@@ -950,7 +951,7 @@ export default function HomeScreen() {
   const canSwitchTournament = tournaments.length > 1;
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
+    <SafeAreaView style={styles.container} edges={['top']} ref={screenRootRef as any}>
       <LinearGradient colors={G.bg} style={StyleSheet.absoluteFill} />
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
