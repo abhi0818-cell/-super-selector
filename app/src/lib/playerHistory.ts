@@ -16,6 +16,10 @@ export interface PlayerMatchHistoryRow {
   awayTeam:    string;
   startTime:   string | null;
   status:      string;
+  /** False means this player has no player_match_stats row for this match at
+   *  all (DNP — rested/dropped/not yet scored). Distinct from a row that
+   *  exists but has no batting/bowling/fielding contribution. */
+  played:      boolean;
   rawPoints:   number | null;
   batting:     BattingInnings | null;
   bowling:     BowlingSpell | null;
@@ -23,49 +27,80 @@ export interface PlayerMatchHistoryRow {
 }
 
 /**
- * Match-by-match fantasy history for one player, newest match first.
- * Mirrors db.js's getPlayerMatchHistory exactly.
+ * Match-by-match fantasy history for one player, newest match first —
+ * aligned to the player's OWN TEAM'S most recent finished matches, not just
+ * the matches this player has a player_match_stats row for. A match his
+ * team played but he sat out (rested/dropped — no stats row at all) still
+ * claims a slot instead of being silently skipped, so the caller can render
+ * it as "-" / DNP rather than reaching back further and showing an older
+ * performance in its place. Mirrors getRecentFormForPlayers below, and
+ * db.js's getPlayerMatchHistory on web.
+ *
+ * @param teamId - the player's team_id. The store already has this on each
+ *   Player (p.team), so passing it in avoids an extra players-table round
+ *   trip; when omitted, it's looked up here instead.
  */
 export async function getPlayerMatchHistory(
   playerId: string,
   limit = 8,
   tournamentId: string | null = null,
+  teamId: string | null = null,
 ): Promise<PlayerMatchHistoryRow[]> {
-  const { data: stats, error: statsErr } = await supabase
-    .from('player_match_stats')
-    .select('match_id, raw_points, batting, bowling, fielding')
-    .eq('player_id', playerId);
-  if (statsErr) throw statsErr;
-  if (!stats?.length) return [];
+  let team = teamId;
+  if (!team) {
+    const { data: prow, error: pErr } = await supabase
+      .from('players').select('team_id').eq('id', playerId).maybeSingle();
+    if (pErr) throw pErr;
+    team = prow?.team_id ?? null;
+  }
+  if (!team) return [];
 
-  const matchIds = stats.map((s: any) => s.match_id);
+  const teamList = `"${team}"`;
   let matchQuery = supabase
     .from('matches')
     .select('id, match_number, home_team_id, away_team_id, start_time, status, tournament_id')
-    .in('id', matchIds);
+    .or(`home_team_id.in.(${teamList}),away_team_id.in.(${teamList})`);
   if (tournamentId) matchQuery = matchQuery.eq('tournament_id', tournamentId);
-
-  const { data: matches, error: matchErr } = await matchQuery;
+  const { data: allMatches, error: matchErr } = await matchQuery;
   if (matchErr) throw matchErr;
-  const matchMap = Object.fromEntries((matches ?? []).map((m: any) => [m.id, m]));
+  if (!allMatches?.length) return [];
 
-  return stats
-    .map((s: any) => ({ ...s, match: matchMap[s.match_id] || null }))
-    .filter((s: any) => s.match)
-    .sort((a: any, b: any) => (b.match.match_number || 0) - (a.match.match_number || 0))
-    .slice(0, limit)
-    .map((s: any) => ({
-      matchId:     s.match_id,
-      matchNumber: s.match.match_number,
-      homeTeam:    s.match.home_team_id,
-      awayTeam:    s.match.away_team_id,
-      startTime:   s.match.start_time,
-      status:      s.match.status,
-      rawPoints:   s.raw_points != null ? Number(s.raw_points) : null,
-      batting:     s.batting  ?? null,
-      bowling:     s.bowling  ?? null,
-      fielding:    s.fielding ?? null,
-    }));
+  // A match "counts" toward the team's fixture history once it has a
+  // result — completed, or a no-result (abandoned/cancelled). Still
+  // upcoming/live matches don't claim a slot yet (mirrors
+  // getRecentFormForPlayers).
+  const playedStatuses = new Set(['completed', 'abandoned', 'cancelled']);
+  const finished = allMatches
+    .filter((m: any) => playedStatuses.has(m.status))
+    .sort((a: any, b: any) => (b.match_number || 0) - (a.match_number || 0))
+    .slice(0, limit);
+  if (!finished.length) return [];
+
+  const matchIds = finished.map((m: any) => m.id);
+  const { data: stats, error: statsErr } = await supabase
+    .from('player_match_stats')
+    .select('match_id, raw_points, batting, bowling, fielding')
+    .eq('player_id', playerId)
+    .in('match_id', matchIds);
+  if (statsErr) throw statsErr;
+  const statsByMatch = Object.fromEntries((stats ?? []).map((s: any) => [s.match_id, s]));
+
+  return finished.map((m: any) => {
+    const s = statsByMatch[m.id];
+    return {
+      matchId:     m.id,
+      matchNumber: m.match_number,
+      homeTeam:    m.home_team_id,
+      awayTeam:    m.away_team_id,
+      startTime:   m.start_time,
+      status:      m.status,
+      played:      !!s,
+      rawPoints:   s?.raw_points != null ? Number(s.raw_points) : null,
+      batting:     s?.batting  ?? null,
+      bowling:     s?.bowling  ?? null,
+      fielding:    s?.fielding ?? null,
+    };
+  });
 }
 
 /**

@@ -43,7 +43,7 @@ export default function PlayerStatsModal({ visible, player, tournamentId, onClos
     if (!visible || !player) { setRows([]); return; }
     let cancelled = false;
     setLoading(true);
-    getPlayerMatchHistory(player.id, 8, tournamentId)
+    getPlayerMatchHistory(player.id, 8, tournamentId, player.team)
       .then(data => { if (!cancelled) setRows(data); })
       .catch(err => {
         console.warn('[PlayerStatsModal] getPlayerMatchHistory failed:', err);
@@ -83,11 +83,18 @@ export default function PlayerStatsModal({ visible, player, tournamentId, onClos
               </View>
               {rows.map(r => {
                 const oppCode = r.homeTeam === player?.team ? r.awayTeam : r.homeTeam;
-                const lines = [
-                  formatBattingLine(r.batting),
-                  formatBowlingLine(r.bowling),
-                  formatFieldingLine(r.fielding),
-                ].filter(Boolean).join('\n');
+                // r.played === false means this player has no stats row for
+                // the match at all (DNP — rested/dropped/not yet scored),
+                // as opposed to a row that exists but has no batting/
+                // bowling/fielding contribution. Show '-' so a sat-out
+                // match reads distinctly from a played-but-quiet one.
+                const lines = r.played
+                  ? [
+                      formatBattingLine(r.batting),
+                      formatBowlingLine(r.bowling),
+                      formatFieldingLine(r.fielding),
+                    ].filter(Boolean).join('\n')
+                  : '-';
 
                 return (
                   <View key={r.matchId} style={styles.row}>
