@@ -3007,7 +3007,7 @@ export function createDb(cfg = {}) {
      *   false means this player has no stats row for that match (DNP or not yet scored),
      *   which the caller renders as "-" for both the performance line and the points column.
      */
-    async getPlayerMatchHistory(playerId, limit = 8, tournamentId = null, teamId = null) {
+    async getPlayerMatchHistory(playerId, limit = 100, tournamentId = null, teamId = null) {
       const sb = await getClient();
 
       // Resolve the player's team so history aligns to the team's fixture

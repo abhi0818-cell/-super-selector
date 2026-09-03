@@ -28,6 +28,13 @@ const C = {
   border: 'rgba(201,168,76,0.22)',
 } as const;
 
+// How far back the modal will show match history. Match-history rows
+// are cheap (one slice of an already-fetched array — see
+// getPlayerMatchHistory), so this just needs to comfortably cover a
+// full season/tournament rather than the old 8-match cap that made
+// scrolling stop well short of a player's earliest matches.
+const MAX_HISTORY_ROWS = 100;
+
 interface Props {
   visible:      boolean;
   player:       Player | null;
@@ -43,7 +50,7 @@ export default function PlayerStatsModal({ visible, player, tournamentId, onClos
     if (!visible || !player) { setRows([]); return; }
     let cancelled = false;
     setLoading(true);
-    getPlayerMatchHistory(player.id, 8, tournamentId, player.team)
+    getPlayerMatchHistory(player.id, MAX_HISTORY_ROWS, tournamentId, player.team)
       .then(data => { if (!cancelled) setRows(data); })
       .catch(err => {
         console.warn('[PlayerStatsModal] getPlayerMatchHistory failed:', err);
