@@ -224,8 +224,12 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
             onContentSizeChange={() => mwScrollRef.current?.scrollToEnd({ animated: false })}
           >
             {matchWeeks.map(w => {
-              const mt     = history.find(t => t.mwId === w.id);
-              const active = mwId === w.id;
+              const mt      = history.find(t => t.mwId === w.id);
+              const active  = mwId === w.id;
+              // Flags the tile gold when a booster was used in that match, so
+              // it's visible while scrolling through past matches without
+              // having to open each one — mirrors statTileValueLit below.
+              const boosted = !!mt && mt.boosters.length > 0;
               return active ? (
                 <LinearGradient
                   key={w.id}
@@ -236,7 +240,7 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
                 >
                   <Text style={[styles.mwTabLabel, styles.mwTabLabelActive]}>{w.label}</Text>
                   <Text style={[styles.mwTabMatch, styles.mwTabMatchActive]}>{w.match}</Text>
-                  <Text style={[styles.mwTabPts, styles.mwTabPtsActive]}>{mt ? `${mt.pts} pts` : '—'}</Text>
+                  <Text style={[styles.mwTabPts, styles.mwTabPtsActive, boosted && styles.mwTabPtsLit]}>{mt ? `${mt.pts} pts` : '—'}</Text>
                 </LinearGradient>
               ) : (
                 <Pressable
@@ -246,7 +250,7 @@ function TeamDetailModal({ entry, onClose, contestId, contestType, initialMwId }
                 >
                   <Text style={styles.mwTabLabel}>{w.label}</Text>
                   <Text style={styles.mwTabMatch}>{w.match}</Text>
-                  <Text style={styles.mwTabPts}>{mt ? `${mt.pts} pts` : '—'}</Text>
+                  <Text style={[styles.mwTabPts, boosted && styles.mwTabPtsLit]}>{mt ? `${mt.pts} pts` : '—'}</Text>
                 </Pressable>
               );
             })}
@@ -1143,6 +1147,7 @@ const styles = StyleSheet.create({
   mwTabMatchActive:  { color: C.muted },
   mwTabPts:          { color: C.muted, fontSize: fontSize.xs, fontWeight: '700' },
   mwTabPtsActive:    { color: C.text },
+  mwTabPtsLit:       { color: C.accent },
 
   // Body
   teamBody: {
